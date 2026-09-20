@@ -56,7 +56,7 @@ function syncCreditRemainderResets(targetMonth=curMonth()){
     const id=creditRemainderResetId(m),existing=state.transactions.find(t=>t.id===id||(t.type==="credit_remainder_reset"&&t.resetMonth===m));
     if(existing)state.transactions=state.transactions.filter(t=>t.id!==existing.id);
     const pm=prevMonth(m),as=`${pm}-${pad(daysInMonth(pm))}`,amount=creditRemainderAsOf(as);
-    if(amount>0)state.transactions.push({id,created:existing?.created||Date.now()+guard,date:`${m}-01`,type:"credit_remainder_reset",amount,from:"creditreserve",to:"",autoMonthlyRemainderReset:true,resetMonth:m,detail:`${pm}のクレカ端数をリセット`});
+    if(amount>0)state.transactions.push({id,created:existing?.created??-1,date:`${m}-01`,type:"credit_remainder_reset",amount,from:"creditreserve",to:"",autoMonthlyRemainderReset:true,resetMonth:m,detail:`${pm}のクレカ端数をリセット`});
     m=nextMonth(m);guard++;
   }
 }

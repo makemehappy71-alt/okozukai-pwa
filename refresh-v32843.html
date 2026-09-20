@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<meta name="theme-color" content="#050506">
+<title>お小遣い家計簿 更新</title>
+<style>
+html,body{margin:0;min-height:100%;background:#050506;color:#f7f7f8;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans JP",sans-serif}
+main{min-height:100vh;display:grid;place-items:center;padding:24px}
+.card{width:min(520px,100%);box-sizing:border-box;background:#111114;border:1px solid #2d2d34;border-radius:20px;padding:24px}
+h1{font-size:22px;margin:0 0 12px}p{color:#b6b6bf;line-height:1.7;margin:0 0 14px}.ok{color:#34d399}
+</style>
+</head>
+<body>
+<main><div class="card">
+<h1>お小遣い家計簿を更新しています</h1>
+<p id="status">古いPWAキャッシュだけを解除しています。家計簿データは削除しません。</p>
+</div></main>
+<script>
+(async()=>{
+ const status=document.getElementById("status");
+ try{
+   if("serviceWorker" in navigator){
+     const regs=await navigator.serviceWorker.getRegistrations();
+     await Promise.all(regs.filter(r=>r.scope.includes("/okozukai-pwa/")).map(r=>r.unregister()));
+   }
+   if("caches" in window){
+     const keys=await caches.keys();
+     await Promise.all(keys.filter(k=>k.startsWith("okozukai-")).map(k=>caches.delete(k)));
+   }
+   status.innerHTML='<span class="ok">更新準備が完了しました。</span><br>最新版を読み込みます。';
+   setTimeout(()=>location.replace("./index.html?fresh=32843"),500);
+ }catch(e){
+   status.textContent="更新処理に失敗しました。Chromeで再読み込みしてください。";
+ }
+})();
+</script>
+</body>
+</html>

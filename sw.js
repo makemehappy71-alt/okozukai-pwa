@@ -1,4 +1,4 @@
-const CACHE = "okozukai-v3.2.8.4.3-prod-1";
+const CACHE = "okozukai-v3.2.8.4.3-prod-2";
 const ASSETS = [
   "./",
   "./index.html",

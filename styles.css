@@ -94,3 +94,11 @@ html,body{max-width:100%;overflow-x:hidden}body{padding-top:env(safe-area-inset-
 }
 @media(max-width:430px){.quick-amounts{grid-template-columns:repeat(3,1fr)}.history-search-row{grid-template-columns:1fr 104px}.history-filters{grid-template-columns:1fr!important}.history-card-bottom{display:block}.history-card-bottom span{display:block;max-width:100%!important;text-align:left!important;margin-top:3px}.analysis-summary{grid-template-columns:1fr 1fr}.trend-plot{height:250px}.daily3{gap:5px}.daily3 .card{padding:9px}.daily3 .metric .value{font-size:15px}.hero-budget .hero-value{font-size:33px}.detail-grid{grid-template-columns:1fr}.detail-grid .full{grid-column:1}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;transition:none!important;animation:none!important}}
+
+/* V3.2.8.4.4 linked transaction history */
+.history-link-badge{display:inline-flex;align-items:center;justify-content:center;margin-left:7px;padding:2px 7px;border:1px solid #4b5563;border-radius:999px;background:#202027;color:#d4d4d8;font-size:10px;font-weight:800;line-height:1.4;vertical-align:middle}
+.linked-transaction-note,.transaction-note{display:flex;flex-direction:column;gap:6px;margin-top:14px;padding:12px 14px;border:1px solid var(--line);border-radius:13px;background:#151519;color:#d4d4d8;font-size:13px;line-height:1.55}
+.linked-transaction-note{border-style:dashed}
+.linked-transaction-note strong{color:#f4f4f5;font-size:13px}
+.linked-transaction-note small,.transaction-note small{color:var(--muted);font-size:11px}
+@media(max-width:700px){.history-link-badge{margin-left:5px}.linked-transaction-note,.transaction-note{padding:11px 12px}.sheet-actions button{min-height:50px}}

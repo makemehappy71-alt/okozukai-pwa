@@ -233,13 +233,18 @@ function isReceiptHeaderLine(line){
   return false;
 }
 function productSourceText(text){
-  return normalize(text).split("\n").filter(function(line){
+  return normalize(text).split("\n").map(function(line){
     var s=line.trim();
-    if(!s)return false;
-    if(isReceiptHeaderLine(s))return false;
-    if(/総合計|合計|小計|税込|お支払|お?預り|お?釣|釣銭|消費税|内税|外税|税率|軽減税率|対象金額|ポイント|楽天\s*(?:pay|ペイ)|paypay|d払い|au\s*pay|クレジット|visa|master|jcb|amex|領収/i.test(s))return false;
-    return true;
-  }).join("\n");
+    if(!s)return"";
+    if(/総合計|合計|小計|税込|お支払|お?預り|お?釣|釣銭|消費税|内税|外税|税率|軽減税率|対象金額|ポイント|楽天\s*(?:pay|ペイ)|paypay|d払い|au\s*pay|クレジット|visa|master|jcb|amex|領収/i.test(s))return"";
+    if(isReceiptHeaderLine(s)){
+      var stripped=stripReceiptHeaderNoise(s);
+      var core=stripped.replace(/[0-9０-９.,．\s¥￥@*_#\-＝=]/g,"");
+      if(core.length<2||!/[ぁ-んァ-ヶ一-龠A-Za-z]/.test(stripped))return"";
+      return stripped;
+    }
+    return s;
+  }).filter(Boolean).join("\n");
 }
 function paymentFromSources(bottom,raw,whole){
   return paymentFromText(bottom)||paymentFromText(raw)||paymentFromText(whole);
@@ -747,15 +752,26 @@ function receiptTests(){
     top:"薬 CREATE\nドラッグストア クリエイト\n2026年09月24日(木)17時12分",
     middle:"92キリン ラブズスポーツ. 159\njia、2 198\n8 キリン 午後の紅茶 白ぶどう\n@79 6 474\n@LbC_ サイダー 1.5L\n@99 2 198\nぷぷキリン ラブズスポポーツ 159\n@キリン 午後の紅茶 白ぶどう\n@79 6 474",
     bottom:"小計 ¥831\n合計 89\n含む消費税等 ¥66\n楽天ペイ ¥897\n前回累計ポイント 730P\n合計P 738P"
-  },meta:{passes:5,skew:.8,ratio:4}};
+  },whole:noisyText,meta:{passes:5,skew:.8,ratio:4}};
   var p4=parseReceiptText(noisyObj,"2026-09-24"),names=p4.itemRows.map(function(x){return x.name}),joined=names.join("|");
   var row159=p4.itemRows.find(function(x){return x.total===159}),row198=p4.itemRows.find(function(x){return x.total===198}),row474=p4.itemRows.find(function(x){return x.total===474});
+
+  // V3.2.8.5.5 actual-device regression:
+  // bottom/raw can miss Rakuten Pay while whole OCR still sees it, and the 198-yen
+  // product can be fused to a date/time/register header.
+  var deviceRaw="薬 CREATE\nドラッグストア クリエイト\n2026年09月24日(木)17時12分\n92キリン ラブズスポーツ. 159\n8 キリン 午後の紅茶 白ぶどう\n@79 6 474\n弓26年09月24日(木)17時12分 0716 LDC サイダー 1.5L\n@99 2 198\n小計 ¥831\n含む消費税等 ¥66\n合計 ¥897";
+  var deviceObj={text:deviceRaw,whole:deviceRaw+"\n楽 天 ペ イ ¥897",sections:{
+    top:"薬 CREATE\nドラッグストア クリエイト\n2026年09月24日(木)17時12分",
+    middle:"92キリン ラブズスポーツ. 159\n8 キリン 午後の紅茶 白ぶどう\n@79 6 474\n弓26年09月24日(木)17時12分 0716 LDC サイダー 1.5L\n@99 2 198",
+    bottom:"小計 ¥831\n含む消費税等 ¥66\n合計 ¥897"
+  },meta:{passes:5,skew:.6,ratio:4}};
+  var p5=parseReceiptText(deviceObj,"2026-09-24"),n5=p5.itemRows.map(function(x){return x.name}),j5=n5.join("|"),r198=p5.itemRows.find(function(x){return x.total===198}),r159=p5.itemRows.find(function(x){return x.total===159}),r474=p5.itemRows.find(function(x){return x.total===474});
 
   return[
     ["receipt image input test",captureHTML().indexOf('accept="image/*"')>=0&&captureHTML().indexOf('capture="environment"')>=0],
     ["receipt crop confirmation test",captureHTML().indexOf("範囲確認")>=0&&typeof detectReceiptBounds==="function"&&typeof readConfirmedReceipt==="function"],
     ["receipt OCR parser test",!!p&&typeof p==="object"&&!!p3],
-    ["receipt total detection test",p.amount===636&&p2.amount===940&&p3.amount===897&&p4.amount===897],
+    ["receipt total detection test",p.amount===636&&p2.amount===940&&p3.amount===897&&p4.amount===897&&p5.amount===897],
     ["receipt 89 vs 897 score test",p4.amount===897&&p4.amount!==89&&p4.amountConfidence==="high"],
     ["receipt leading digit cleanup test",!!row159&&row159.name==="キリン ラブズスポーツ"&&!!row474&&row474.name==="キリン 午後の紅茶 白ぶどう"],
     ["receipt bad short-name rejection test",!/\bjia\b/i.test(joined)],
@@ -765,12 +781,18 @@ function receiptTests(){
     ["receipt product totals test",!!row159&&row159.total===159&&!!row198&&row198.total===198&&!!row474&&row474.qty===6&&row474.total===474],
     ["receipt item subtotal consistency test",p4.itemSum===831&&p4.itemSubtotalMatch===true],
     ["receipt subtotal tax consistency test",p4.subtotal===831&&p4.tax===66&&p4.subtotalTaxMatch===true],
-    ["receipt date detection test",p4.date==="2026-09-24"],
-    ["receipt shop detection test",p4.shop==="クリエイト"],
+    ["receipt date detection test",p4.date==="2026-09-24"&&p5.date==="2026-09-24"],
+    ["receipt shop detection test",p4.shop==="クリエイト"&&p5.shop==="クリエイト"],
     ["receipt payment detection test",p4.paymentCandidate==="rakutenpay"],
-    ["receipt category suggestion test",p4.categoryCandidate&&p4.categoryCandidate.groupName==="食費"&&p4.categoryCandidate.subName==="飲み物"],
-    ["receipt detail normalized test",!/92|jia/i.test(p4.detail)&&p4.detail.length>0],
-    ["receipt item list normalized test",p4.items.length===3&&!p4.items.some(function(x){return /92|jia/i.test(x)})],
+    ["receipt payment whole fallback test",p5.paymentCandidate==="rakutenpay"],
+    ["receipt header-date product cleanup test",!/(?:2026|26年|09月24日|17時12分|0716)/.test(j5)],
+    ["receipt header-noise LDC recovery test",!!r198&&r198.name==="LDC サイダー 1.5L"&&r198.qty===2&&r198.total===198],
+    ["receipt actual-device three products test",p5.itemRows.length===3&&!!r159&&r159.name==="キリン ラブズスポーツ"&&!!r474&&r474.name==="キリン 午後の紅茶 白ぶどう"&&r474.qty===6],
+    ["receipt actual-device item subtotal test",p5.itemSum===831&&p5.itemSubtotalMatch===true],
+    ["receipt actual-device subtotal tax test",p5.subtotal===831&&p5.tax===66&&p5.subtotalTaxMatch===true],
+    ["receipt category suggestion test",p5.categoryCandidate&&p5.categoryCandidate.groupName==="食費"&&p5.categoryCandidate.subName==="飲み物"],
+    ["receipt detail header-free test",!/(?:2026|26年|09月24日|17時12分|0716)/.test(p5.detail)],
+    ["receipt item list header-free test",p5.items.length===3&&!p5.items.some(function(x){return /(?:2026|26年|09月24日|17時12分|0716)/.test(x)})],
     ["receipt preview only test",state.transactions.length===before],
     ["receipt no auto-save test",state.transactions.length===before]
   ];

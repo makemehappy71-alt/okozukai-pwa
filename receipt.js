@@ -59,7 +59,7 @@ function loadBitmap(file){
     img.src=url;
   });
 }
-async async function prepareImage(file){
+async function prepareImage(file){
   if(!file)throw new Error("画像が選択されていません");
   if(String(file.type||"").indexOf("image/")!==0)throw new Error("画像ファイルを選んでください");
   if(Number(file.size||0)>25*1024*1024)throw new Error("画像が大きすぎます。25MB以下の画像を使用してください");
@@ -286,7 +286,7 @@ function applyResult(){
   setBusy(false,"");
   var amountEl=document.getElementById("txAmount");if(amountEl)amountEl.scrollIntoView({behavior:"smooth",block:"center"});
 }
-async async function runOCR(bundle){
+async function runOCR(bundle){
   await loadOCR();setBusy(true,"OCRを初期化しています…");
   var worker=await globalThis.Tesseract.createWorker(["jpn","eng"],1,{logger:progress});
   try{

@@ -453,17 +453,21 @@ function itemRowsFromText(text){
     out.push({name:clean,rawName:rawName,unitPrice:unit,qty:qty,total:total,quality:productNameQuality(rawName),sourceIndex:Number(sourceIndex||0)});
   }
   function priceRowOf(s){return ocrMoneyClean(s).match(/^\s*[@＠]?\s*([0-9]{1,6})\s+(?:[x×]\s*)?([0-9]{1,3})\s+(?:¥\s*)?([0-9]{1,7})\s*$/i)}
+  function sameProductMatch(s){return ocrMoneyClean(s).match(/^(.{2,58}?[ぁ-んァ-ヶ一-龠A-Za-z][^¥￥]*?)\s+(?:¥|￥)?\s*([0-9]{1,7})\s*(?:円)?\s*$/)}
   for(var i=0;i<lines.length;i++){
     var line=ocrMoneyClean(lines[i]);if(bad.test(line))continue;
     var next=i+1<lines.length?ocrMoneyClean(lines[i+1]):"",next2=i+2<lines.length?ocrMoneyClean(lines[i+2]):"";
-    var priceRow=priceRowOf(next);
-    if(validName(cleanName(line),priceRow&&priceRow[3])&&priceRow){add(line,priceRow[1],priceRow[2],priceRow[3],i);continue}
-    var priceRow2=priceRowOf(next2);
-    if(priceRow2&&!bad.test(next)){
+    var linePrice=priceRowOf(line),nextPrice=priceRowOf(next),priceRow2=priceRowOf(next2),same=sameProductMatch(line),nextSame=sameProductMatch(next);
+
+    if(validName(cleanName(line),nextPrice&&nextPrice[3])&&nextPrice){add(line,nextPrice[1],nextPrice[2],nextPrice[3],i);continue}
+
+    // Join only genuine split-name lines. Never join an already-priced product or a price row
+    // to the next product just because a later quantity row follows.
+    if(priceRow2&&!linePrice&&!nextPrice&&!same&&!nextSame&&!bad.test(next)){
       var joined=joinProductNameParts(line,next);
       if(validName(joined,priceRow2[3]))add(joined,priceRow2[1],priceRow2[2],priceRow2[3],i);
     }
-    var same=line.match(/^(.{2,58}?[ぁ-んァ-ヶ一-龠A-Za-z][^¥￥]*?)\s+(?:¥|￥)?\s*([0-9]{1,7})\s*(?:円)?\s*$/);
+
     if(same){
       var nm=cleanName(same[1]),amt=Number(same[2]);
       if(!/[@＠]\s*[0-9]/.test(nm)&&validName(nm,amt))add(same[1],0,1,amt,i);

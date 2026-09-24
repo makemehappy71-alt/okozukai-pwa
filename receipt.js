@@ -1,15 +1,16 @@
 "use strict";
 (function(){
 var OCR_URL="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js";
-var previewUrl=null,busy=false,loadPromise=null,ocrPassLabel="";
+var previewUrl=null,busy=false,loadPromise=null,ocrPassLabel="",pendingReceipt=null;
 
 function e(s){return String(s==null?"":s).replace(/[&<>"']/g,function(m){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]})}
 function captureHTML(){
   return '<div id="receiptFeatureBox" class="receipt-capture-box full">'+
-    '<div class="receipt-capture-head"><div><strong>レシートから入力</strong><div class="small">撮影または画像を選択 → 読み取り結果を確認 → 支出入力へ反映</div></div></div>'+
+    '<div class="receipt-capture-head"><div><strong>レシートから入力</strong><div class="small">撮影 → 範囲確認 → 分割OCR → 結果確認 → 支出入力へ反映</div></div></div>'+
+    '<div class="receipt-guide"><strong>撮影のコツ</strong><span>レシート全体を画面内に入れ、できるだけ真上から。暗い場所・強い影・背景の映り込みを避けてください。</span></div>'+
     '<div class="receipt-capture-actions">'+
       '<button type="button" id="receiptCameraBtn" class="secondary receipt-camera-btn" aria-label="レシートをカメラで撮影">📷 レシートを撮影</button>'+
-      '<button type="button" id="receiptGalleryBtn" class="secondary" aria-label="レシート画像を選択">画像を選ぶ</button>'+
+      '<button type="button" id="receiptGalleryBtn" class="secondary" aria-label="レシート画像を選択">🖼 画像を選ぶ</button>'+
     '</div>'+
     '<input id="receiptCameraInput" class="receipt-file-input" type="file" accept="image/*" capture="environment">'+
     '<input id="receiptGalleryInput" class="receipt-file-input" type="file" accept="image/*">'+
@@ -18,7 +19,10 @@ function captureHTML(){
     '<div id="receiptOCRPanel"></div>'+
   '</div>';
 }
-function cleanupPreview(){if(previewUrl){try{URL.revokeObjectURL(previewUrl)}catch(_e){}previewUrl=null}}
+function cleanupPreview(){
+  if(previewUrl){try{URL.revokeObjectURL(previewUrl)}catch(_e){}previewUrl=null}
+  pendingReceipt=null;
+}
 function setBusy(v,msg){
   busy=!!v;
   ["receiptCameraBtn","receiptGalleryBtn"].forEach(function(id){var x=document.getElementById(id);if(x)x.disabled=busy});
@@ -59,56 +63,122 @@ function loadBitmap(file){
     img.src=url;
   });
 }
+
+function clamp(v,min,max){return Math.max(min,Math.min(max,v))}
+function sourceCanvasFromImage(img,maxSide,maxPixels){
+  var w=Number(img.width||img.naturalWidth||0),h=Number(img.height||img.naturalHeight||0);
+  if(!w||!h)throw new Error("画像サイズを取得できません");
+  var scale=Math.min(1,(maxSide||2800)/Math.max(w,h));
+  if(w*h*scale*scale>(maxPixels||6500000))scale=Math.sqrt((maxPixels||6500000)/(w*h));
+  var cw=Math.max(1,Math.round(w*scale)),ch=Math.max(1,Math.round(h*scale)),canvas=document.createElement("canvas");
+  canvas.width=cw;canvas.height=ch;canvas.getContext("2d",{willReadFrequently:true}).drawImage(img,0,0,cw,ch);
+  return canvas;
+}
+function detectReceiptBounds(canvas){
+  var maxW=260,maxH=360,scale=Math.min(1,maxW/canvas.width,maxH/canvas.height),w=Math.max(40,Math.round(canvas.width*scale)),h=Math.max(40,Math.round(canvas.height*scale));
+  var sm=document.createElement("canvas");sm.width=w;sm.height=h;var ctx=sm.getContext("2d",{willReadFrequently:true});ctx.drawImage(canvas,0,0,w,h);
+  var im=ctx.getImageData(0,0,w,h),d=im.data,lum=new Float32Array(w*h),sum=0;
+  for(var i=0,p=0;i<d.length;i+=4,p++){var mx=Math.max(d[i],d[i+1],d[i+2]),mn=Math.min(d[i],d[i+1],d[i+2]),l=.299*d[i]+.587*d[i+1]+.114*d[i+2];lum[p]=l;sum+=l}
+  var mean=sum/(w*h),thr=clamp(mean+22,145,215),mask=new Uint8Array(w*h);
+  for(var y=0;y<h;y++)for(var x=0;x<w;x++){var p=y*w+x,ii=p*4,mx=Math.max(d[ii],d[ii+1],d[ii+2]),mn=Math.min(d[ii],d[ii+1],d[ii+2]),chroma=mx-mn;if(lum[p]>=thr&&chroma<85)mask[p]=1}
+  var seen=new Uint8Array(w*h),best=null,stack=[];
+  for(var sy=0;sy<h;sy+=2)for(var sx=0;sx<w;sx+=2){
+    var sp=sy*w+sx;if(!mask[sp]||seen[sp])continue;
+    stack.length=0;stack.push(sp);seen[sp]=1;var minX=sx,maxX=sx,minY=sy,maxY=sy,count=0;
+    while(stack.length){
+      var p=stack.pop(),py=Math.floor(p/w),px=p-py*w;count++;if(px<minX)minX=px;if(px>maxX)maxX=px;if(py<minY)minY=py;if(py>maxY)maxY=py;
+      var ns=[p-1,p+1,p-w,p+w];
+      for(var ni=0;ni<4;ni++){var np=ns[ni];if(np<0||np>=w*h||seen[np]||!mask[np])continue;var ny=Math.floor(np/w),nx=np-ny*w;if(Math.abs(nx-px)+Math.abs(ny-py)!==1)continue;seen[np]=1;stack.push(np)}
+    }
+    var bw=maxX-minX+1,bh=maxY-minY+1,area=bw*bh,fill=count/area,aspect=bh/Math.max(1,bw),cx=(minX+maxX)/2/w,cy=(minY+maxY)/2/h,centerPenalty=Math.abs(cx-.5)*1.6+Math.abs(cy-.5)*.35;
+    if(area>w*h*.055&&bh>h*.28&&aspect>.9&&fill>.26){
+      var score=area*(.7+Math.min(2.5,aspect)*.25)*fill*(1-clamp(centerPenalty,0,.65));
+      if(!best||score>best.score)best={minX:minX,maxX:maxX,minY:minY,maxY:maxY,score:score};
+    }
+  }
+  if(!best)return{x:.08,y:.03,w:.84,h:.94,detected:false};
+  var padX=Math.max(3,(best.maxX-best.minX)*.045),padY=Math.max(3,(best.maxY-best.minY)*.025);
+  var x1=clamp((best.minX-padX)/w,0,1),x2=clamp((best.maxX+padX)/w,0,1),y1=clamp((best.minY-padY)/h,0,1),y2=clamp((best.maxY+padY)/h,0,1);
+  if(x2-x1<.22||y2-y1<.35)return{x:.08,y:.03,w:.84,h:.94,detected:false};
+  return{x:x1,y:y1,w:x2-x1,h:y2-y1,detected:true};
+}
+function cropFromSliders(){
+  if(!pendingReceipt)return null;
+  var l=Number(document.getElementById("receiptCropLeft")?.value||0)/100,r=Number(document.getElementById("receiptCropRight")?.value||100)/100,t=Number(document.getElementById("receiptCropTop")?.value||0)/100,b=Number(document.getElementById("receiptCropBottom")?.value||100)/100;
+  if(r-l<.08){r=Math.min(1,l+.08)}if(b-t<.12){b=Math.min(1,t+.12)}
+  return{x:clamp(l,0,.92),y:clamp(t,0,.88),w:clamp(r-l,.08,1),h:clamp(b-t,.12,1)};
+}
+function setCropSliders(crop){
+  var vals={receiptCropLeft:Math.round(crop.x*100),receiptCropRight:Math.round((crop.x+crop.w)*100),receiptCropTop:Math.round(crop.y*100),receiptCropBottom:Math.round((crop.y+crop.h)*100)};
+  Object.keys(vals).forEach(function(id){var el=document.getElementById(id);if(el)el.value=String(vals[id])});
+  pendingReceipt.crop=crop;drawCropPreview();
+}
+function drawCropPreview(){
+  if(!pendingReceipt)return;
+  var canvas=document.getElementById("receiptCropPreview"),src=pendingReceipt.source;if(!canvas||!src)return;
+  var max=620,scale=Math.min(1,max/src.width),w=Math.max(1,Math.round(src.width*scale)),h=Math.max(1,Math.round(src.height*scale));
+  canvas.width=w;canvas.height=h;var ctx=canvas.getContext("2d");ctx.drawImage(src,0,0,w,h);
+  var crop=cropFromSliders()||pendingReceipt.crop;pendingReceipt.crop=crop;
+  var x=crop.x*w,y=crop.y*h,cw=crop.w*w,ch=crop.h*h;
+  ctx.save();ctx.fillStyle="rgba(0,0,0,.52)";ctx.fillRect(0,0,w,h);ctx.clearRect(x,y,cw,ch);ctx.drawImage(src,crop.x*src.width,crop.y*src.height,crop.w*src.width,crop.h*src.height,x,y,cw,ch);ctx.strokeStyle="#22c55e";ctx.lineWidth=Math.max(2,w/180);ctx.strokeRect(x+1,y+1,Math.max(1,cw-2),Math.max(1,ch-2));ctx.restore();
+  var info=document.getElementById("receiptCropInfo");if(info)info.textContent="読み取り範囲："+Math.round(crop.w*100)+"% × "+Math.round(crop.h*100)+"%";
+}
+function renderCropConfirm(){
+  var panel=document.getElementById("receiptOCRPanel");if(!panel||!pendingReceipt)return;
+  panel.innerHTML='<div class="receipt-crop-card">'+
+    '<div class="receipt-result-title"><strong>この範囲を読み取ります</strong><span class="small">緑の枠にレシートだけが入るよう調整してください。</span></div>'+
+    '<canvas id="receiptCropPreview" class="receipt-crop-preview" aria-label="レシート読み取り範囲プレビュー"></canvas>'+
+    '<div id="receiptCropInfo" class="small"></div>'+
+    '<div class="receipt-crop-controls">'+
+      '<label>左<input id="receiptCropLeft" type="range" min="0" max="90" step="1"></label>'+
+      '<label>右<input id="receiptCropRight" type="range" min="10" max="100" step="1"></label>'+
+      '<label>上<input id="receiptCropTop" type="range" min="0" max="88" step="1"></label>'+
+      '<label>下<input id="receiptCropBottom" type="range" min="12" max="100" step="1"></label>'+
+    '</div>'+
+    '<div class="receipt-crop-actions"><button type="button" id="receiptAutoCropBtn" class="secondary">範囲を自動検出</button><button type="button" id="receiptFullCropBtn" class="secondary">画像全体を使う</button></div>'+
+    '<div class="receipt-result-actions"><button type="button" id="receiptCropRetakeBtn" class="secondary">↻ 撮り直す</button><button type="button" id="receiptCropReadBtn" class="primary">この範囲で読み取る</button></div>'+
+  '</div>';
+  setCropSliders(pendingReceipt.crop);
+  ["receiptCropLeft","receiptCropRight","receiptCropTop","receiptCropBottom"].forEach(function(id){document.getElementById(id).oninput=drawCropPreview});
+  document.getElementById("receiptAutoCropBtn").onclick=function(){setCropSliders(pendingReceipt.detectedCrop)};
+  document.getElementById("receiptFullCropBtn").onclick=function(){setCropSliders({x:0,y:0,w:1,h:1})};
+  document.getElementById("receiptCropRetakeBtn").onclick=function(){var x=document.getElementById("receiptCameraInput");if(x)x.click()};
+  document.getElementById("receiptCropReadBtn").onclick=readConfirmedReceipt;
+}
+function cropCanvas(source,crop){
+  var sx=Math.round(crop.x*source.width),sy=Math.round(crop.y*source.height),sw=Math.max(1,Math.round(crop.w*source.width)),sh=Math.max(1,Math.round(crop.h*source.height));
+  sx=clamp(sx,0,source.width-1);sy=clamp(sy,0,source.height-1);sw=Math.min(sw,source.width-sx);sh=Math.min(sh,source.height-sy);
+  var out=document.createElement("canvas");out.width=sw;out.height=sh;out.getContext("2d",{willReadFrequently:true}).drawImage(source,sx,sy,sw,sh,0,0,sw,sh);return out;
+}
+function estimateSkew(canvas){
+  var targetW=Math.min(360,canvas.width),scale=targetW/canvas.width,w=targetW,h=Math.max(40,Math.round(canvas.height*scale)),sm=document.createElement("canvas");sm.width=w;sm.height=h;var ctx=sm.getContext("2d",{willReadFrequently:true});ctx.drawImage(canvas,0,0,w,h);
+  var d=ctx.getImageData(0,0,w,h).data,dark=[];for(var y=0;y<h;y+=2)for(var x=0;x<w;x+=2){var i=(y*w+x)*4,l=.299*d[i]+.587*d[i+1]+.114*d[i+2];if(l<145)dark.push([x,y])}
+  if(dark.length<120)return 0;
+  function score(deg){var tan=Math.tan(deg*Math.PI/180),rows=new Uint16Array(h+40),off=20;for(var k=0;k<dark.length;k++){var pt=dark[k],yy=Math.round(pt[1]+tan*(pt[0]-w/2))+off;if(yy>=0&&yy<rows.length)rows[yy]++}var s=0;for(var j=0;j<rows.length;j++)s+=rows[j]*rows[j];return s}
+  var base=score(0),best={a:0,s:base};for(var a=-4;a<=4;a+=1){var sc=score(a);if(sc>best.s)best={a:a,s:sc}}
+  return best.s>base*1.025?best.a:0;
+}
+function rotateCanvas(canvas,deg){
+  if(!deg||Math.abs(deg)<.3)return canvas;var rad=deg*Math.PI/180,w=canvas.width,h=canvas.height,c=Math.abs(Math.cos(rad)),s=Math.abs(Math.sin(rad)),nw=Math.ceil(w*c+h*s),nh=Math.ceil(w*s+h*c),out=document.createElement("canvas");out.width=nw;out.height=nh;var ctx=out.getContext("2d",{willReadFrequently:true});ctx.fillStyle="#fff";ctx.fillRect(0,0,nw,nh);ctx.translate(nw/2,nh/2);ctx.rotate(rad);ctx.drawImage(canvas,-w/2,-h/2);return out;
+}
+function makeOCRSlice(canvas,start,end){
+  var sy=Math.floor(canvas.height*start),ey=Math.ceil(canvas.height*end),h=Math.max(1,ey-sy),out=document.createElement("canvas");out.width=canvas.width;out.height=h;out.getContext("2d").drawImage(canvas,0,sy,canvas.width,h,0,0,canvas.width,h);return out;
+}
 async function prepareImage(file){
   if(!file)throw new Error("画像が選択されていません");
   if(String(file.type||"").indexOf("image/")!==0)throw new Error("画像ファイルを選んでください");
   if(Number(file.size||0)>25*1024*1024)throw new Error("画像が大きすぎます。25MB以下の画像を使用してください");
-  setBusy(true,"画像を読み込んでいます…");
-  var img=await loadBitmap(file),w=Number(img.width||img.naturalWidth||0),h=Number(img.height||img.naturalHeight||0);
-  if(!w||!h)throw new Error("画像サイズを取得できません");
-  var ratio=h/w,maxPixels=5500000,maxDim=4600,targetWidth=ratio>=2?1100:Math.max(900,Math.min(1400,w));
-  var scale=Math.max(1,targetWidth/w);
-  scale=Math.min(scale,3,maxDim/Math.max(w,h));
-  if(w*h*scale*scale>maxPixels)scale=Math.sqrt(maxPixels/(w*h));
-  scale=Math.max(.5,scale);
-  var cw=Math.max(1,Math.round(w*scale)),ch=Math.max(1,Math.round(h*scale));
-  var base=document.createElement("canvas");base.width=cw;base.height=ch;
-  var bctx=base.getContext("2d",{willReadFrequently:true});bctx.drawImage(img,0,0,cw,ch);
+  setBusy(true,"撮影画像を確認用に準備しています…");
+  var img=await loadBitmap(file),source=sourceCanvasFromImage(img,2800,6500000);
   try{if(img.close)img.close()}catch(_e){}
+  var detected=detectReceiptBounds(source);
+  pendingReceipt={source:source,crop:{x:detected.x,y:detected.y,w:detected.w,h:detected.h},detectedCrop:{x:detected.x,y:detected.y,w:detected.w,h:detected.h},detected:detected.detected};
   cleanupPreview();
-  var pblob=await new Promise(function(resolve){base.toBlob(resolve,"image/jpeg",.9)});
-  if(pblob)previewUrl=URL.createObjectURL(pblob);
-
-  setBusy(true,"縦長レシートを読みやすく補正しています…");
-  var gray=document.createElement("canvas");gray.width=cw;gray.height=ch;
-  var gctx=gray.getContext("2d",{willReadFrequently:true});gctx.drawImage(base,0,0);
-  var binary=document.createElement("canvas");binary.width=cw;binary.height=ch;
-  var tctx=binary.getContext("2d",{willReadFrequently:true});
-  try{
-    var im=gctx.getImageData(0,0,cw,ch),d=im.data,hist=new Uint32Array(256),contrast=1.32;
-    for(var i=0;i<d.length;i+=4){
-      var lum=.299*d[i]+.587*d[i+1]+.114*d[i+2];
-      var v=Math.max(0,Math.min(255,(lum-128)*contrast+138));
-      d[i]=d[i+1]=d[i+2]=v;hist[Math.round(v)]++;
-    }
-    gctx.putImageData(im,0,0);
-    var total=cw*ch,sumAll=0;for(var hidx=0;hidx<256;hidx++)sumAll+=hidx*hist[hidx];
-    var sumB=0,wB=0,maxVar=0,threshold=180;
-    for(var th=0;th<256;th++){
-      wB+=hist[th];if(!wB)continue;
-      var wF=total-wB;if(!wF)break;
-      sumB+=th*hist[th];
-      var mB=sumB/wB,mF=(sumAll-sumB)/wF,between=wB*wF*(mB-mF)*(mB-mF);
-      if(between>maxVar){maxVar=between;threshold=th}
-    }
-    threshold=Math.max(145,Math.min(210,threshold+10));
-    var bim=new ImageData(new Uint8ClampedArray(d),cw,ch),bd=bim.data;
-    for(var j=0;j<bd.length;j+=4){var bv=bd[j]<threshold?0:255;bd[j]=bd[j+1]=bd[j+2]=bv;bd[j+3]=255}
-    tctx.putImageData(bim,0,0);
-  }catch(_e){
-    tctx.drawImage(gray,0,0);
-  }
-  return{gray:gray,binary:binary,width:cw,height:ch,scale:scale};
+  pendingReceipt={source:source,crop:{x:detected.x,y:detected.y,w:detected.w,h:detected.h},detectedCrop:{x:detected.x,y:detected.y,w:detected.w,h:detected.h},detected:detected.detected};
+  var blob=await new Promise(function(resolve){source.toBlob(resolve,"image/jpeg",.88)});if(blob)previewUrl=URL.createObjectURL(blob);
+  setBusy(false,detected.detected?"レシート範囲を自動検出しました。緑の枠を確認してください。":"自動検出が不確実です。緑の枠を調整してください。");
+  renderCropConfirm();
+  return pendingReceipt;
 }
 function normalize(text){return String(text||"").replace(/\r/g,"").replace(/[￥]/g,"¥").replace(/[，]/g,",").replace(/[ \t]+/g," ").replace(/\n{3,}/g,"\n\n").trim()}
 function numberFromLine(line){
@@ -286,6 +356,39 @@ function applyResult(){
   setBusy(false,"");
   var amountEl=document.getElementById("txAmount");if(amountEl)amountEl.scrollIntoView({behavior:"smooth",block:"center"});
 }
+
+function buildOCRBundle(){
+  if(!pendingReceipt)throw new Error("読み取る画像がありません");
+  var crop=cropFromSliders()||pendingReceipt.crop,rawCrop=cropCanvas(pendingReceipt.source,crop),skew=estimateSkew(rawCrop),deskewed=rotateCanvas(rawCrop,skew);
+  var ratio=deskewed.height/deskewed.width,targetWidth=ratio>2?1200:Math.max(1000,Math.min(1400,deskewed.width)),scale=Math.max(1,targetWidth/deskewed.width),maxPixels=6500000,maxDim=5200;
+  scale=Math.min(scale,3.2,maxDim/Math.max(deskewed.width,deskewed.height));if(deskewed.width*deskewed.height*scale*scale>maxPixels)scale=Math.sqrt(maxPixels/(deskewed.width*deskewed.height));scale=Math.max(.7,scale);
+  var w=Math.max(1,Math.round(deskewed.width*scale)),h=Math.max(1,Math.round(deskewed.height*scale)),base=document.createElement("canvas");base.width=w;base.height=h;base.getContext("2d",{willReadFrequently:true}).drawImage(deskewed,0,0,w,h);
+  var gray=document.createElement("canvas");gray.width=w;gray.height=h;var gctx=gray.getContext("2d",{willReadFrequently:true});gctx.drawImage(base,0,0);
+  var binary=document.createElement("canvas");binary.width=w;binary.height=h;var bctx=binary.getContext("2d",{willReadFrequently:true});
+  try{
+    var im=gctx.getImageData(0,0,w,h),d=im.data,hist=new Uint32Array(256),contrast=1.34;
+    for(var i=0;i<d.length;i+=4){var lum=.299*d[i]+.587*d[i+1]+.114*d[i+2],v=clamp((lum-128)*contrast+142,0,255);d[i]=d[i+1]=d[i+2]=v;hist[Math.round(v)]++}
+    gctx.putImageData(im,0,0);var total=w*h,sumAll=0;for(var hi=0;hi<256;hi++)sumAll+=hi*hist[hi];var sumB=0,wB=0,maxVar=0,thr=180;
+    for(var th=0;th<256;th++){wB+=hist[th];if(!wB)continue;var wF=total-wB;if(!wF)break;sumB+=th*hist[th];var mB=sumB/wB,mF=(sumAll-sumB)/wF,between=wB*wF*(mB-mF)*(mB-mF);if(between>maxVar){maxVar=between;thr=th}}
+    thr=clamp(thr+8,140,210);var bd=new Uint8ClampedArray(d);for(var j=0;j<bd.length;j+=4){var bv=bd[j]<thr?0:255;bd[j]=bd[j+1]=bd[j+2]=bv;bd[j+3]=255}bctx.putImageData(new ImageData(bd,w,h),0,0);
+  }catch(_e){bctx.drawImage(gray,0,0)}
+  var count=ratio>=3.2?4:ratio>=2?3:2,overlap=.055,slices=[];
+  for(var s=0;s<count;s++){var st=Math.max(0,s/count-overlap),en=Math.min(1,(s+1)/count+overlap),role=s===0?"top":s===count-1?"bottom":"middle";slices.push({role:role,index:s,canvas:makeOCRSlice(binary,st,en)})}
+  return{gray:gray,binary:binary,slices:slices,skew:skew,ratio:ratio};
+}
+async function readConfirmedReceipt(){
+  if(busy||!pendingReceipt)return;
+  try{
+    setBusy(true,"選択範囲をOCR用に補正しています…");
+    var bundle=buildOCRBundle(),ocr=await runOCR(bundle),parsed=parseReceiptText(ocr,document.getElementById("txDate")&&document.getElementById("txDate").value||defaultDate());
+    var raw=typeof ocr==="string"?ocr:ocr.text||"";
+    setBusy(false,raw.trim()?"分割OCRが完了しました。結果を確認してください。":"文字を十分に読み取れませんでした。手入力で補完できます。");
+    renderResult(parsed,raw.trim()?"":"OCRで文字を十分に読み取れませんでした。");
+  }catch(err){
+    setBusy(false,"レシートの読み取りに失敗しました。");
+    renderResult({rawText:"",date:document.getElementById("txDate")&&document.getElementById("txDate").value||defaultDate(),shop:"",amount:0,paymentCandidate:"",categoryCandidate:null,items:[],itemRows:[],detail:""},err&&err.message||"レシートの読み取りに失敗しました。");
+  }finally{busy=false}
+}
 async function runOCR(bundle){
   await loadOCR();setBusy(true,"OCRを初期化しています…");
   var worker=await globalThis.Tesseract.createWorker(["jpn","eng"],1,{logger:progress});
@@ -303,14 +406,8 @@ async function runOCR(bundle){
 async function handleFile(file){
   if(busy||!file)return;
   var panel=document.getElementById("receiptOCRPanel");if(panel)panel.innerHTML="";
-  try{
-    var canvas=await prepareImage(file),raw=await runOCR(canvas),parsed=parseReceiptText(raw,document.getElementById("txDate")&&document.getElementById("txDate").value||defaultDate());
-    setBusy(false,raw.trim()?"読み取りが完了しました。結果を確認してください。":"文字を十分に読み取れませんでした。手入力で補完できます。");
-    renderResult(parsed,raw.trim()?"":"OCRで文字を十分に読み取れませんでした。");
-  }catch(err){
-    setBusy(false,"レシートの読み取りに失敗しました。");
-    renderResult({rawText:"",date:document.getElementById("txDate")&&document.getElementById("txDate").value||defaultDate(),shop:"",amount:0,paymentCandidate:"",categoryCandidate:null,items:[],detail:""},err&&err.message||"レシートの読み取りに失敗しました。");
-  }finally{busy=false}
+  try{await prepareImage(file)}
+  catch(err){setBusy(false,"画像の準備に失敗しました。");if(panel)panel.innerHTML='<div class="errorbox">'+e(err&&err.message||"画像を読み込めませんでした。")+'</div>';busy=false}
 }
 function bindBox(){
   var cam=document.getElementById("receiptCameraInput"),gal=document.getElementById("receiptGalleryInput");

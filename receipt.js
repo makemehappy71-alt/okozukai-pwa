@@ -210,17 +210,28 @@ function receiptHeaderPattern(){
   return /(?:19|20)?\d{2}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日|\d{2,4}[\/\-.]\d{1,2}[\/\-.]\d{1,2}|\d{1,2}\s*月\s*\d{1,2}\s*日|\d{1,2}\s*時\s*\d{1,2}\s*分|\b\d{1,2}:\d{2}\b|[\(（][日月火水木金土][\)）]|(?:TEL|電話|〒|登録番号|取引ID|受付番号|カード\s*No|カード番号|店番号|店\s*[:：]|レジ\s*[:：]?|担当|バーコード|領収証|レシート)/i;
 }
 function stripReceiptHeaderNoise(name){
-  var s=String(name||"").normalize?String(name||"").normalize("NFKC"):String(name||"");
-  // Remove date/time fragments wherever they leaked into a product candidate.
+  var original=String(name||""),s=original.normalize?original.normalize("NFKC"):original,hadHeader=receiptHeaderPattern().test(s);
+
+  // Remove date/time fragments independently so an OCR stray character cannot stop cleanup.
   s=s.replace(/(?:19|20)?\d{2}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日\s*(?:[\(（][日月火水木金土][\)）])?/g," ");
-  s=s.replace(/\b\d{2,4}[\/\-.]\d{1,2}[\/\-.]\d{1,2}\b/g," ");
-  s=s.replace(/\b\d{1,2}\s*月\s*\d{1,2}\s*日\b/g," ");
-  s=s.replace(/\b\d{1,2}\s*時\s*\d{1,2}\s*分\b/g," ").replace(/\b\d{1,2}:\d{2}\b/g," ");
+  s=s.replace(/\d{2,4}[\/\-.]\d{1,2}[\/\-.]\d{1,2}/g," ");
+  s=s.replace(/\d{1,2}\s*月\s*\d{1,2}\s*日/g," ");
+  s=s.replace(/\d{1,2}\s*時\s*\d{1,2}\s*分/g," ");
+  s=s.replace(/\d{1,2}:\d{2}/g," ");
   s=s.replace(/[\(（][日月火水木金土][\)）]/g," ");
   s=s.replace(/(?:TEL|電話|〒|登録番号|取引ID|受付番号|カード\s*No|カード番号|店番号|店\s*[:：]|レジ\s*[:：]?|担当|バーコード)\s*[A-Za-z0-9\-:：]*/gi," ");
-  // A standalone 4-digit counter/register token in front of a real name is header noise.
-  s=s.replace(/^\s*[^ぁ-んァ-ヶ一-龠A-Za-z0-9]{0,2}#?\s*\d{4}\s+(?=[A-Za-zぁ-んァ-ヶ一-龠])/,"");
-  s=s.replace(/^\s*[弓〒#※*・.,、。，_-]*\s*\d{4}\s+(?=[A-Za-zぁ-んァ-ヶ一-龠])/,"");
+
+  // Remove standalone counter/register IDs around the beginning of a rescued product name.
+  s=s.replace(/(^|\s)#?\d{4}(?=\s+[A-Za-zぁ-んァ-ヶ一-龠])/g,"$1");
+  s=s.replace(/^\s*[#※*・.,、。，_\-]+\s*/,"");
+
+  // If the original line was clearly a receipt header line, isolated OCR garbage
+  // before a substantial Latin/Japanese product token is not part of the product.
+  if(hadHeader){
+    s=s.replace(/^\s*[ぁ-んァ-ヶ一-龠]{1,2}\s+(?=[A-Za-z]{2,}\b)/,"");
+    s=s.replace(/^\s*[ぁ-んァ-ヶ一-龠]{1,2}(?=[A-Za-z]{2,}\b)/,"");
+  }
+
   s=s.replace(/\s+/g," ").trim();
   return s;
 }

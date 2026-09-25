@@ -207,31 +207,24 @@ function findCategoryPair(groupName,subName){
 
 
 function receiptHeaderPattern(){
-  return /(?:19|20)?\d{2}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日|\d{2,4}[\/\-.]\d{1,2}[\/\-.]\d{1,2}|\d{1,2}\s*月\s*\d{1,2}\s*日|\d{1,2}\s*時\s*\d{1,2}\s*分|\b\d{1,2}:\d{2}\b|[\(（][日月火水木金土][\)）]|(?:TEL|電話|〒|登録番号|取引ID|受付番号|カード\s*No|カード番号|店番号|店\s*[:：]|レジ\s*[:：]?|担当|バーコード|領収証|レシート)/i;
+  return /(?:19|20)?\d{2}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日|\d{2,4}[\/\-.]\d{1,2}[\/\-.]\d{1,2}|\d{1,2}\s*月\s*\d{1,2}\s*日|\d{1,2}\s*時\s*\d{1,2}\s*分|\b\d{1,2}:\d{2}\b|[\(（][日月火水木金土][\)）]|(?:TEL|電話|〒|登録番号|取引ID|受付番号|レシート\s*No|伝票\s*No|カード\s*No|カード番号|店番号|店舗番号|店\s*[:：]|レジ\s*[:：]?|担当|係員|スタッフ|責任者|端末番号|バーコード|領収証|レシート|No[.．:]?\s*\d{3,})|(?:^|\s)\d{8,}(?:\s|$)/i;
 }
 function stripReceiptHeaderNoise(name){
   var original=String(name||""),s=original.normalize?original.normalize("NFKC"):original,hadHeader=receiptHeaderPattern().test(s);
-
-  // Remove date/time fragments independently so an OCR stray character cannot stop cleanup.
   s=s.replace(/(?:19|20)?\d{2}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日\s*(?:[\(（][日月火水木金土][\)）])?/g," ");
   s=s.replace(/\d{2,4}[\/\-.]\d{1,2}[\/\-.]\d{1,2}/g," ");
   s=s.replace(/\d{1,2}\s*月\s*\d{1,2}\s*日/g," ");
   s=s.replace(/\d{1,2}\s*時\s*\d{1,2}\s*分/g," ");
   s=s.replace(/\d{1,2}:\d{2}/g," ");
   s=s.replace(/[\(（][日月火水木金土][\)）]/g," ");
-  s=s.replace(/(?:TEL|電話|〒|登録番号|取引ID|受付番号|カード\s*No|カード番号|店番号|店\s*[:：]|レジ\s*[:：]?|担当|バーコード)\s*[A-Za-z0-9\-:：]*/gi," ");
-
-  // Remove standalone counter/register IDs around the beginning of a rescued product name.
-  s=s.replace(/(^|\s)#?\d{4}(?=\s+[A-Za-zぁ-んァ-ヶ一-龠])/g,"$1");
+  s=s.replace(/(?:TEL|電話|〒|登録番号|取引ID|受付番号|レシート\s*No|伝票\s*No|カード\s*No|カード番号|店番号|店舗番号|店\s*[:：]|レジ\s*[:：]?|担当|係員|スタッフ|責任者|端末番号|バーコード|No[.．:]?)\s*[A-Za-z0-9\-:：.]*/gi," ");
+  s=s.replace(/(?:^|\s)\d{8,}(?=\s|$)/g," ");
+  s=s.replace(/(^|\s)#?\d{3,6}(?=\s+[A-Za-zぁ-んァ-ヶ一-龠])/g,"$1");
   s=s.replace(/^\s*[#※*・.,、。，_\-]+\s*/,"");
-
-  // If the original line was clearly a receipt header line, isolated OCR garbage
-  // before a substantial Latin/Japanese product token is not part of the product.
   if(hadHeader){
     s=s.replace(/^\s*[ぁ-んァ-ヶ一-龠]{1,2}\s+(?=[A-Za-z]{2,}\b)/,"");
     s=s.replace(/^\s*[ぁ-んァ-ヶ一-龠]{1,2}(?=[A-Za-z]{2,}\b)/,"");
   }
-
   s=s.replace(/\s+/g," ").trim();
   return s;
 }
@@ -239,16 +232,28 @@ function isReceiptHeaderLine(line){
   var s=normalize(line);
   if(!s)return true;
   if(receiptHeaderPattern().test(s))return true;
-  if(/^\s*#?\d{4}\s*$/.test(s))return true;
-  if(/(?:^|\s)#\d{3,6}(?:\s|$)/.test(s))return true;
+  if(/^\s*#?\d{3,6}\s*$/.test(s))return true;
+  if(/(?:^|\s)#\d{3,8}(?:\s|$)/.test(s))return true;
+  var digits=(s.match(/\d/g)||[]).length,letters=(s.match(/[ぁ-んァ-ヶ一-龠A-Za-z]/g)||[]).length;
+  if(digits>=8&&letters<3)return true;
   return false;
+}
+function classifyReceiptLine(line){
+  var s=normalize(line);
+  if(!s)return"empty";
+  if(/楽天\s*(?:pay|ペイ|べイ|へイ)|rakuten\s*pay|(?:^|\s)r\s*pay(?:\s|$)|paypay|d払い|au\s*pay|クレジット|visa|master\s*card|mastercard|\bjcb\b|amex|現金|cash/i.test(s))return"payment";
+  if(/総合計|合計|小計|税込|お支払|お?預り|お?釣|釣銭|消費税|内税|外税|税率|軽減税率|対象金額|ポイント|合計P/i.test(s))return"accounting";
+  if(/^\s*[@＠]?\s*\d{1,6}\s+(?:[x×]\s*)?\d{1,3}\s+(?:¥\s*)?\d{1,7}\s*$/i.test(ocrMoneyClean(s)))return"quantity";
+  if(isReceiptHeaderLine(s))return"header";
+  return"product";
 }
 function productSourceText(text){
   return normalize(text).split("\n").map(function(line){
     var s=line.trim();
     if(!s)return"";
-    if(/総合計|合計|小計|税込|お支払|お?預り|お?釣|釣銭|消費税|内税|外税|税率|軽減税率|対象金額|ポイント|楽天\s*(?:pay|ペイ)|paypay|d払い|au\s*pay|クレジット|visa|master|jcb|amex|領収/i.test(s))return"";
-    if(isReceiptHeaderLine(s)){
+    var kind=classifyReceiptLine(s);
+    if(kind==="payment"||kind==="accounting")return"";
+    if(kind==="header"){
       var stripped=stripReceiptHeaderNoise(s);
       var core=stripped.replace(/[0-9０-９.,．\s¥￥@*_#\-＝=]/g,"");
       if(core.length<2||!/[ぁ-んァ-ヶ一-龠A-Za-z]/.test(stripped))return"";
@@ -547,17 +552,15 @@ function amountFromText(text){
   return analyzeAmount(text,"").amount;
 }
 function paymentFromText(text){
-  var original=normalize(text),compact=original.replace(/[\s　]+/g,""),t=original.toLowerCase(),tc=compact.toLowerCase();
-
-  // Rakuten Pay: tolerate common OCR spacing and close Japanese glyph errors,
-  // but require the Rakuten token plus a Pay-like token to avoid broad false positives.
-  if(/楽天\s*(?:pay|ペイ|べイ|へイ)/i.test(original)||/楽天(?:pay|ペイ|べイ|へイ)/i.test(compact)||/rakuten\s*pay/i.test(t))return"rakutenpay";
-  if(/楽\s*天\s*(?:p\s*a\s*y|ペ\s*イ|べ\s*イ|へ\s*イ)/i.test(original))return"rakutenpay";
-
+  var original=normalize(text),nfkc=original.normalize?original.normalize("NFKC"):original;
+  var compact=nfkc.replace(/[\s　._\-・:：/]+/g,""),t=nfkc.toLowerCase(),tc=compact.toLowerCase();
+  if(/楽天\s*(?:pay|ペイ|べイ|へイ)/i.test(nfkc)||/楽天(?:pay|ペイ|べイ|へイ)/i.test(compact)||/rakuten\s*pay/i.test(t)||/rakutenpay/i.test(tc))return"rakutenpay";
+  if(/楽\s*天\s*(?:p\s*a\s*y|ペ\s*イ|べ\s*イ|へ\s*イ)/i.test(nfkc))return"rakutenpay";
+  if(/(?:^|[^a-z])r\s*pay(?:[^a-z]|$)/i.test(nfkc)||/(?:^|[^a-z])rpay(?:[^a-z]|$)/i.test(tc))return"rakutenpay";
   if(/pasmo/i.test(t)||/pasmo/i.test(tc))return"pasmo";
   if(/suica|交通系\s*ic|交通系ic|icカード/i.test(t))return"pasmo";
   if(/visa|master\s*card|mastercard|\bjcb\b|amex|american express|クレジット|カード決済|card payment/i.test(t))return"credit";
-  if(/現金|cash|お\s*預り|お\s*釣り|釣銭/i.test(original))return"wallet";
+  if(/現金|cash|お\s*預り|お\s*釣り|釣銭/i.test(nfkc))return"wallet";
   return"";
 }
 function shopFromText(text){
@@ -767,7 +770,7 @@ function receiptTests(){
   var p4=parseReceiptText(noisyObj,"2026-09-24"),names=p4.itemRows.map(function(x){return x.name}),joined=names.join("|");
   var row159=p4.itemRows.find(function(x){return x.total===159}),row198=p4.itemRows.find(function(x){return x.total===198}),row474=p4.itemRows.find(function(x){return x.total===474});
 
-  // V3.2.8.5.5 actual-device regression:
+  // V3.2.8.5.6 actual-device regression:
   // bottom/raw can miss Rakuten Pay while whole OCR still sees it, and the 198-yen
   // product can be fused to a date/time/register header.
   var deviceRaw="薬 CREATE\nドラッグストア クリエイト\n2026年09月24日(木)17時12分\n92キリン ラブズスポーツ. 159\n8 キリン 午後の紅茶 白ぶどう\n@79 6 474\n弓26年09月24日(木)17時12分 0716 LDC サイダー 1.5L\n@99 2 198\n小計 ¥831\n含む消費税等 ¥66\n合計 ¥897";
@@ -778,7 +781,16 @@ function receiptTests(){
   },meta:{passes:5,skew:.6,ratio:4}};
   var p5=parseReceiptText(deviceObj,"2026-09-24"),n5=p5.itemRows.map(function(x){return x.name}),j5=n5.join("|"),r198=p5.itemRows.find(function(x){return x.total===198}),r159=p5.itemRows.find(function(x){return x.total===159}),r474=p5.itemRows.find(function(x){return x.total===474});
 
+  var paymentVariants=["楽天Pay","楽天ペイ","楽天 Pay","楽天PAY","Rakuten Pay","R Pay","Ｒ　Ｐａｙ","楽 天 ペ イ"].every(function(x){return paymentFromText(x+" ¥897")==="rakutenpay"});
+  var paymentNegative=paymentFromText("PayPay ¥897")!=="rakutenpay"&&paymentFromText("d払い ¥897")!=="rakutenpay";
+  var headerStress="2026/09/24 17:12 レジ03 No.1234 担当001 4901234567890 LDC サイダー 1.5L";
+  var headerClean=stripReceiptHeaderNoise(headerStress);
+
   return[
+    ["receipt payment variants test",paymentVariants],
+    ["receipt payment negative test",paymentNegative],
+    ["receipt header long-number cleanup test",headerClean==="LDC サイダー 1.5L"],
+    ["receipt capacity preserve test",normalizeProductName("LDC サイダー 1.5L")==="LDC サイダー 1.5L"],
     ["receipt image input test",captureHTML().indexOf('accept="image/*"')>=0&&captureHTML().indexOf('capture="environment"')>=0],
     ["receipt crop confirmation test",captureHTML().indexOf("範囲確認")>=0&&typeof detectReceiptBounds==="function"&&typeof readConfirmedReceipt==="function"],
     ["receipt OCR parser test",!!p&&typeof p==="object"&&!!p3],
@@ -811,7 +823,7 @@ function receiptTests(){
 function attachTests(){
   var b=document.getElementById("selfTest");if(!b||b.dataset.receiptWrapped)return;
   var base=b.onclick;b.dataset.receiptWrapped="1";
-  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),pass=out.every(function(x){return x[1]}),box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">V3.2.8.5.5 レシート機能テストもすべて合格しました。</div>':'<div class="errorbox">レシート機能テストに失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
+  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),pass=out.every(function(x){return x[1]}),box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">V3.2.8.5.6 レシート機能テストもすべて合格しました。</div>':'<div class="errorbox">レシート機能テストに失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
 }
 var body=document.getElementById("modalBody");
 if(body){new MutationObserver(function(){enhance()}).observe(body,{childList:true,subtree:true})}

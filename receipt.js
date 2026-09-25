@@ -565,6 +565,7 @@ function paymentFromText(text){
     var at=alphaTokens[ai];
     if(editDistance(at,"rpay")<=1||editDistance(at,"rakutenpay")<=1)return"rakutenpay";
   }
+  if(/楽[天大夭夫][ペベべヘへ]イ/.test(compact))return"rakutenpay";
   if(/pasmo/i.test(t)||/pasmo/i.test(tc))return"pasmo";
   if(/suica|交通系\s*ic|交通系ic|icカード/i.test(t))return"pasmo";
   if(/visa|master\s*card|mastercard|\bjcb\b|amex|american express|クレジット|カード決済|card payment/i.test(t))return"credit";
@@ -703,8 +704,13 @@ function buildOCRBundle(){
   }catch(_e){bctx.drawImage(gray,0,0)}
   var count=ratio>=3.2?4:ratio>=2?3:2,overlap=.055,slices=[];
   for(var s=0;s<count;s++){var st=Math.max(0,s/count-overlap),en=Math.min(1,(s+1)/count+overlap),role=s===0?"top":s===count-1?"bottom":"middle";slices.push({role:role,index:s,canvas:makeOCRSlice(binary,st,en)})}
-  var paymentSlice=makeOCRSlice(gray,.58,1);
-  return{gray:gray,binary:binary,slices:slices,paymentSlice:paymentSlice,skew:skew,ratio:ratio};
+  var paymentSlices=[
+    {canvas:makeOCRSlice(gray,.50,.84),mode:"6",label:"支払方法1"},
+    {canvas:makeOCRSlice(binary,.50,.84),mode:"6",label:"支払方法2"},
+    {canvas:makeOCRSlice(gray,.64,1),mode:"11",label:"支払方法3"},
+    {canvas:makeOCRSlice(binary,.64,1),mode:"11",label:"支払方法4"}
+  ];
+  return{gray:gray,binary:binary,slices:slices,paymentSlices:paymentSlices,skew:skew,ratio:ratio};
 }
 async function readConfirmedReceipt(){
   if(busy||!pendingReceipt)return;
@@ -737,19 +743,22 @@ async function runOCR(bundle){
       else if(sl.role==="bottom")sectionMap.bottom=mergeOCRTexts(sectionMap.bottom,txt);
       else sectionMap.middle=mergeOCRTexts(sectionMap.middle,txt);
     }
-    var paymentText="";
-    if(bundle.paymentSlice){
-      ocrPassLabel="支払方法";
-      try{await worker.setParameters({preserve_interword_spaces:"1",tessedit_pageseg_mode:"11"})}catch(_e){}
+    var paymentText="",paymentPasses=0,paymentParts=bundle.paymentSlices||[];
+    for(var pi=0;pi<paymentParts.length;pi++){
+      var pp=paymentParts[pi];
+      ocrPassLabel=pp.label||("支払方法"+(pi+1));
+      try{await worker.setParameters({preserve_interword_spaces:"1",tessedit_pageseg_mode:pp.mode||"11"})}catch(_e){}
       try{
-        var pret=await worker.recognize(bundle.paymentSlice);
-        paymentText=String(pret&&pret.data&&pret.data.text||"");
-        sectionMap.bottom=mergeOCRTexts(sectionMap.bottom,paymentText);
+        var pret=await worker.recognize(pp.canvas),ptxt=String(pret&&pret.data&&pret.data.text||"");
+        paymentPasses++;
+        paymentText=mergeOCRTexts(paymentText,ptxt);
+        sectionMap.bottom=mergeOCRTexts(sectionMap.bottom,ptxt);
+        if(paymentFromText(paymentText))break;
       }catch(_e){}
     }
     var merged=full;parts.forEach(function(x){merged=mergeOCRTexts(merged,x)});if(paymentText)merged=mergeOCRTexts(merged,paymentText);
     ocrPassLabel="";
-    return{text:merged,whole:normalize(full),sections:{top:normalize(sectionMap.top),middle:normalize(sectionMap.middle),bottom:normalize(sectionMap.bottom)},paymentText:normalize(paymentText),meta:{passes:1+parts.length+(bundle.paymentSlice?1:0),skew:Number(bundle.skew||0),ratio:Number(bundle.ratio||0)}};
+    return{text:merged,whole:normalize(full),sections:{top:normalize(sectionMap.top),middle:normalize(sectionMap.middle),bottom:normalize(sectionMap.bottom)},paymentText:normalize(paymentText),meta:{passes:1+parts.length+paymentPasses,skew:Number(bundle.skew||0),ratio:Number(bundle.ratio||0)}};
   }finally{ocrPassLabel="";try{await worker.terminate()}catch(_e){}}
 }
 async function handleFile(file){
@@ -789,7 +798,7 @@ function receiptTests(){
   var p4=parseReceiptText(noisyObj,"2026-09-24"),names=p4.itemRows.map(function(x){return x.name}),joined=names.join("|");
   var row159=p4.itemRows.find(function(x){return x.total===159}),row198=p4.itemRows.find(function(x){return x.total===198}),row474=p4.itemRows.find(function(x){return x.total===474});
 
-  // V3.2.8.5.7 actual-device regression:
+  // V3.2.8.5.8 actual-device regression:
   // bottom/raw can miss Rakuten Pay while whole OCR still sees it, and the 198-yen
   // product can be fused to a date/time/register header.
   var deviceRaw="薬 CREATE\nドラッグストア クリエイト\n2026年09月24日(木)17時12分\n92キリン ラブズスポーツ. 159\n8 キリン 午後の紅茶 白ぶどう\n@79 6 474\n弓26年09月24日(木)17時12分 0716 LDC サイダー 1.5L\n@99 2 198\n小計 ¥831\n含む消費税等 ¥66\n合計 ¥897";
@@ -809,7 +818,12 @@ function receiptTests(){
   var paymentFuzzy=["R Pey","R Pak","Rakuten Pey"].every(function(x){return paymentFromText(x+" ¥897")==="rakutenpay"});
   var paymentDedicated=parseReceiptText({text:"合計 ¥897",whole:"合計 ¥897",paymentText:"R Pey ¥897",sections:{bottom:"合計 ¥897"}},"2026-09-24");
 
+  var paymentJapaneseFuzzy=["楽大ペイ","楽天ベイ","楽天へイ","楽夭ペイ"].every(function(x){return paymentFromText(x+" ¥897")==="rakutenpay"});
+  var paymentJapaneseNegative=paymentFromText("天気ペイ ¥897")!=="rakutenpay"&&paymentFromText("楽園ペイ ¥897")!=="rakutenpay";
+
   return[
+    ["receipt Japanese fuzzy Rakuten Pay test",paymentJapaneseFuzzy],
+    ["receipt Japanese fuzzy negative test",paymentJapaneseNegative],
     ["receipt locality and capacity cleanup test",localityCapacity==="LDC サイダー 1.5L"],
     ["receipt fuzzy Rakuten Pay OCR test",paymentFuzzy],
     ["receipt dedicated payment OCR fallback test",paymentDedicated.paymentCandidate==="rakutenpay"],
@@ -849,7 +863,7 @@ function receiptTests(){
 function attachTests(){
   var b=document.getElementById("selfTest");if(!b||b.dataset.receiptWrapped)return;
   var base=b.onclick;b.dataset.receiptWrapped="1";
-  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),pass=out.every(function(x){return x[1]}),box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">V3.2.8.5.7 レシート機能テストもすべて合格しました。</div>':'<div class="errorbox">レシート機能テストに失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
+  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),pass=out.every(function(x){return x[1]}),box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">V3.2.8.5.8 レシート機能テストもすべて合格しました。</div>':'<div class="errorbox">レシート機能テストに失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
 }
 var body=document.getElementById("modalBody");
 if(body){new MutationObserver(function(){enhance()}).observe(body,{childList:true,subtree:true})}

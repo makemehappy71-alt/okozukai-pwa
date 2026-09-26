@@ -144,7 +144,7 @@ html,body{max-width:100%;overflow-x:hidden}body{padding-top:env(safe-area-inset-
   .receipt-crop-preview{max-height:46vh}
 }
 
-/* V3.2.8.5.16 practical back / home navigation */
+/* V3.2.8.5.17 practical back / home navigation */
 .page-history-nav{position:fixed;left:50%;bottom:calc(72px + env(safe-area-inset-bottom));z-index:70;width:min(720px,calc(100% - 16px));transform:translateX(-50%);display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:7px;border:1px solid var(--line);border-radius:16px;background:rgba(17,17,20,.97);backdrop-filter:blur(16px);box-shadow:0 -8px 24px rgba(0,0,0,.28)}
 .page-history-nav .nav-main-action{min-height:54px;border:0;border-radius:11px;background:var(--panel2);color:var(--text);font-size:15px;font-weight:850;padding:10px 8px;white-space:nowrap}
 .page-history-nav .nav-main-action span{font-size:20px;vertical-align:-2px;margin-right:3px}
@@ -161,5 +161,11 @@ body.modal-open .page-history-nav .nav-forward-mini:not([hidden]){display:block!
   .page-history-nav .nav-main-action{min-height:56px;font-size:15px}
 }
 
-/* V3.2.8.5.16: input stays at the center of the five-item bottom navigation */
+/* V3.2.8.5.17: input stays at the center of the five-item bottom navigation */
 .bottom-nav #navPlus{grid-column:3}
+
+/* V3.2.8.5.17: next transaction while browsing history details */
+.page-history-nav .nav-detail-next{position:absolute;left:8px;top:-46px;min-height:38px;border:1px solid var(--line);border-radius:999px;background:#f4f4f5;color:#09090b;font-size:13px;font-weight:850;padding:7px 14px;box-shadow:0 5px 16px rgba(0,0,0,.30)}
+.page-history-nav .nav-detail-next span{font-size:16px;vertical-align:-1px;margin-left:3px}
+.page-history-nav .nav-detail-next[hidden]{display:none!important}
+body.modal-open .page-history-nav .nav-detail-next:not([hidden]){display:block!important}

@@ -143,3 +143,13 @@ html,body{max-width:100%;overflow-x:hidden}body{padding-top:env(safe-area-inset-
   .receipt-crop-actions{grid-template-columns:1fr}
   .receipt-crop-preview{max-height:46vh}
 }
+
+/* V3.2.8.5.14 page back / forward navigation */
+.page-history-nav{position:fixed;left:50%;bottom:calc(67px + env(safe-area-inset-bottom));z-index:29;width:min(720px,calc(100% - 16px));transform:translateX(-50%);display:grid;grid-template-columns:1fr 1.25fr 1fr;gap:6px;padding:6px;border:1px solid var(--line);border-radius:14px;background:rgba(17,17,20,.96);backdrop-filter:blur(16px);box-shadow:0 -8px 24px rgba(0,0,0,.22)}
+.page-history-nav button{min-height:38px;border:0;border-radius:9px;background:var(--panel2);color:var(--text);font-size:13px;font-weight:750;padding:7px 6px;white-space:nowrap}
+.page-history-nav button span{font-size:16px;vertical-align:-1px}
+.page-history-nav button:disabled{opacity:.34;color:var(--muted)}
+.page-history-nav button:not(:disabled):active{transform:translateY(1px)}
+body.modal-open .page-history-nav{visibility:hidden}
+.app{padding-bottom:150px}
+@media(max-width:560px){.app{padding-bottom:150px}.page-history-nav{width:calc(100% - 12px);grid-template-columns:1fr 1.35fr 1fr}.page-history-nav button{font-size:12px;padding-left:4px;padding-right:4px}}

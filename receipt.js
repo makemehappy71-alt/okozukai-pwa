@@ -164,6 +164,11 @@ function rotateCanvas(canvas,deg){
 function makeOCRSlice(canvas,start,end){
   var sy=Math.floor(canvas.height*start),ey=Math.ceil(canvas.height*end),h=Math.max(1,ey-sy),out=document.createElement("canvas");out.width=canvas.width;out.height=h;out.getContext("2d").drawImage(canvas,0,sy,canvas.width,h,0,0,canvas.width,h);return out;
 }
+function makeOCRScaledSlice(canvas,start,end,scale){
+  var src=makeOCRSlice(canvas,start,end),k=Math.max(1,Number(scale||1)),out=document.createElement("canvas");
+  out.width=Math.max(1,Math.round(src.width*k));out.height=Math.max(1,Math.round(src.height*k));
+  var ctx=out.getContext("2d",{willReadFrequently:true});ctx.fillStyle="#fff";ctx.fillRect(0,0,out.width,out.height);ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality="high";ctx.drawImage(src,0,0,out.width,out.height);return out;
+}
 async function prepareImage(file){
   if(!file)throw new Error("画像が選択されていません");
   if(String(file.type||"").indexOf("image/")!==0)throw new Error("画像ファイルを選んでください");
@@ -276,6 +281,7 @@ function normalizeProductName(name){
 
   var dm=s.match(/^([0-9]{1,3})\s*([ぁ-んァ-ヶー一-龠].{3,})$/);
   if(dm&&!/^(?:[0-9]+(?:ml|l|g|kg)|7up)\b/i.test(s))s=dm[2].trim();
+  s=s.replace(/^(?:[Xx※*#]\s*)?\d{1,3}\s*[「『\[\(（]?\s*(?=[A-Za-zぁ-んァ-ヶー一-龠])/,"");
   s=s.replace(/^\d{1,3}\s+(?=[A-Za-z]{1,8}\b)/,"");
 
   s=s.replace(/^\s*[ぁ-んァ-ヶ]{1,2}\s*(?=キリン|LDC|UCC|AGF|BOSS)/i,"");
@@ -323,7 +329,9 @@ function productMeaningfulScore(name){
   score+=Math.min(24,jp*1.5);
   score+=Math.min(12,tokens.length*4);
   if(/LDC|UCC|AGF|BOSS|キリン|サントリー|アサヒ|コカ.?コーラ|伊藤園/i.test(s))score+=14;
-  if(/サイダー|スポーツ|紅茶|コーヒー|ジュース|ミルク|お茶|ウォーター|水|ぶどう|レモン/i.test(s))score+=12;
+  if(/サイダー|スポーツ|紅茶|コーヒー|ジュース|ミルク|お茶|ウォーター|水|ぶどう|レモン|オーレ|サワー/i.test(s))score+=12;
+  if(/(.)\1{2,}|(?:ピ|ビ|ペ|ベ){4,}|(?:ホ|水|沙){4,}/.test(s))score-=24;
+  if(/[A-Za-z]{3,}\s+[ァ-ヶー]{4,}/.test(s)&&!/TR\s*クリスプサワー/i.test(s))score-=8;
   if(/^[A-Za-z]{1,3}\s*[,、.]?\s*\d+$/i.test(s)||(/^[A-Za-z]{1,3}\b/i.test(s)&&jp===0&&tokens.length<=2))score-=45;
   if(/^[0-9]{1,3}\s*[ぁ-んァ-ヶ一-龠]/.test(s))score-=25;
   if(latin<=3&&jp===0&&tokens.length<=1)score-=25;
@@ -593,7 +601,7 @@ function paymentFromText(text){
   if(/現金|cash|お\s*預り|お\s*釣り|釣銭/i.test(nfkc))return"wallet";
   return"";
 }
-function shopFromText(text){
+function shopFromText(text,knownOnly){
   var lines=normalize(text).split("\n").map(function(x){return x.trim()}).filter(Boolean).slice(0,18),joined=lines.join(" ");
   if(/CREATE|クリエイト|ドラッグストア\s*クリエイト/i.test(joined))return"クリエイト";
   if(/\bSEIYU\b|西友/i.test(joined))return"西友";
@@ -605,8 +613,14 @@ function shopFromText(text){
   if(/マツモトキヨシ|マツキヨ/i.test(joined))return"マツモトキヨシ";
   if(/ウエルシア/i.test(joined))return"ウエルシア";
   if(/スギ薬局/i.test(joined))return"スギ薬局";
+  if(knownOnly)return"";
   var bad=/(領収|レシート|receipt|tel|電話|〒|登録番号|担当|レジ|日時|日付|合計|小計|お支払|現金|visa|master|jcb|ポイント|取引id|受付番号)/i;
-  for(var i=0;i<lines.length;i++){var line=lines[i];if(line.length<2||line.length>45||bad.test(line)||/^\d[\d\s\/\-:.]*$/.test(line)||/^[¥\d,\s円]+$/.test(line))continue;if(/[ぁ-んァ-ヶ一-龠A-Za-z]/.test(line))return line.replace(/^[*#\-=\s]+|[*#\-=\s]+$/g,"").trim()}
+  for(var i=0;i<lines.length;i++){
+    var line=lines[i],digits=(line.match(/\d/g)||[]).length,letters=(line.match(/[A-Za-z]/g)||[]).length;
+    if(line.length<2||line.length>45||bad.test(line)||digits>=5||/[A-Za-z]{3,}\d{4,}/.test(line)||/^\d[\d\s\/\-:.]*$/.test(line)||/^[¥\d,\s円]+$/.test(line))continue;
+    if(letters>=4&&digits>=2&&digits>=letters)continue;
+    if(/[ぁ-んァ-ヶ一-龠A-Za-z]/.test(line))return line.replace(/^[*#\-=\s]+|[*#\-=\s]+$/g,"").trim();
+  }
   return"";
 }
 function itemsFromText(text){
@@ -646,7 +660,7 @@ function uniqueItemRows(rows){
 }
 function parseReceiptText(input,baseDate){
   var obj=input&&typeof input==="object"&&!Array.isArray(input)?input:null,raw=normalize(obj?obj.text:input),whole=normalize(obj&&obj.whole||""),shopText=normalize(obj&&obj.shopText||""),itemText=normalize(obj&&obj.itemText||""),paymentText=normalize(obj&&obj.paymentText||""),sections=obj&&obj.sections||{},top=normalize(sections.top||""),middle=normalize(sections.middle||""),bottom=normalize(sections.bottom||"");
-  var shop=shopFromText(shopText)||shopFromText(top)||shopFromText(raw);
+  var shop=shopFromText(shopText,true)||shopFromText(top,true)||shopFromText(raw);
   var date=dateFromText(top,baseDate||defaultDate(),true)||dateFromText(raw,baseDate||defaultDate());
   var amountInfo=analyzeAmount(raw,[bottom,paymentText].filter(Boolean).join("\n")),amount=amountInfo.amount;
   var payment=paymentFromText(paymentText)||paymentFromSources(bottom,raw,whole);
@@ -734,15 +748,15 @@ function buildOCRBundle(){
   var count=ratio>=3.2?4:ratio>=2?3:2,overlap=.055,slices=[];
   for(var s=0;s<count;s++){var st=Math.max(0,s/count-overlap),en=Math.min(1,(s+1)/count+overlap),role=s===0?"top":s===count-1?"bottom":"middle";slices.push({role:role,index:s,canvas:makeOCRSlice(binary,st,en)})}
   var shopSlices=[
-    {canvas:makeOCRSlice(base,0,.13),mode:"6",label:"店名ロゴ1",whitelist:"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"},
-    {canvas:makeOCRSlice(gray,0,.16),mode:"11",label:"店名ロゴ2",whitelist:"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"},
-    {canvas:makeOCRSlice(binary,0,.20),mode:"11",label:"店名3",whitelist:""}
+    {canvas:makeOCRScaledSlice(base,0,.085,3),mode:"7",label:"店名ロゴ拡大1",whitelist:"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"},
+    {canvas:makeOCRScaledSlice(gray,0,.105,2.5),mode:"11",label:"店名ロゴ拡大2",whitelist:"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"},
+    {canvas:makeOCRScaledSlice(binary,0,.12,2),mode:"11",label:"店名ロゴ拡大3",whitelist:"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"}
   ];
   var itemSlices=[
-    {canvas:makeOCRSlice(base,.16,.36),mode:"6",label:"商品狭域1"},
-    {canvas:makeOCRSlice(gray,.16,.36),mode:"6",label:"商品狭域2"},
-    {canvas:makeOCRSlice(binary,.16,.36),mode:"6",label:"商品狭域3"},
-    {canvas:makeOCRSlice(gray,.12,.44),mode:"11",label:"商品広域"}
+    {canvas:makeOCRScaledSlice(base,.17,.31,2),mode:"6",label:"商品拡大1"},
+    {canvas:makeOCRScaledSlice(gray,.17,.31,2),mode:"6",label:"商品拡大2"},
+    {canvas:makeOCRScaledSlice(binary,.17,.31,2),mode:"6",label:"商品拡大3"},
+    {canvas:makeOCRSlice(gray,.13,.40),mode:"11",label:"商品広域"}
   ];
   var paymentSlices=[
     {canvas:makeOCRSlice(gray,.50,.84),mode:"6",label:"支払方法1"},
@@ -844,7 +858,7 @@ function receiptTests(){
   var p4=parseReceiptText(noisyObj,"2026-09-24"),names=p4.itemRows.map(function(x){return x.name}),joined=names.join("|");
   var row159=p4.itemRows.find(function(x){return x.total===159}),row198=p4.itemRows.find(function(x){return x.total===198}),row474=p4.itemRows.find(function(x){return x.total===474});
 
-  // V3.2.8.5.10 actual-device regression:
+  // V3.2.8.5.11 actual-device regression:
   // bottom/raw can miss Rakuten Pay while whole OCR still sees it, and the 198-yen
   // product can be fused to a date/time/register header.
   var deviceRaw="薬 CREATE\nドラッグストア クリエイト\n2026年09月24日(木)17時12分\n92キリン ラブズスポーツ. 159\n8 キリン 午後の紅茶 白ぶどう\n@79 6 474\n弓26年09月24日(木)17時12分 0716 LDC サイダー 1.5L\n@99 2 198\n小計 ¥831\n含む消費税等 ¥66\n合計 ¥897";
@@ -874,7 +888,20 @@ function receiptTests(){
   var seiyuWeakObj={text:"SE1YU\n2025年 9月26日 (土) 10:59\n小計 2点 ¥237\n8Y 2点 ¥18",whole:"SE1YU\n小計 2点 ¥237\n8Y 2点 ¥18",shopText:"SE1YU",itemText:"※90 バナナオーレ\n値下(元 ¥139) ¥88C\n※01 TRクリスプサワー ¥149C",paymentText:"楽天ベイ",sections:{top:"SE1YU\n2025年 9月26日 (土) 10:59",middle:"",bottom:"小計 2点 ¥237\n8Y 2点 ¥18"},meta:{passes:12,skew:0,ratio:4}};
   var psw=parseReceiptText(seiyuWeakObj,"2026-09-26");
 
+  var observed510Shop=shopFromText("EIRES18011503002037",false);
+  var observed510Code=normalizeProductName('X01「TRクリスプサワー');
+  var observed510Good=productMeaningfulScore("バナナオーレ");
+  var observed510Bad=productMeaningfulScore("テニーコ ピピビピピムて");
+  var observed510Obj={text:"2026年9月26日(土)\n小計 ¥237\n8Y 2点 ¥18",whole:"",shopText:"SEIYU",itemText:"X01「TRクリスプサワー ¥149C\nバナナオーレ\n値下(元 ¥139) ¥88C\nテニーコ ピピビピピムて ¥88C",paymentText:"楽天ペイ",sections:{top:"2026年9月26日(土)",middle:"",bottom:"小計 ¥237\n8Y 2点 ¥18"},meta:{passes:16,skew:0,ratio:4}};
+  var p510=parseReceiptText(observed510Obj,"2026-09-26"),p51088=p510.itemRows.find(function(x){return x.total===88}),p510149=p510.itemRows.find(function(x){return x.total===149});
+
   return[
+    ["receipt 5.10 digit-heavy shop garbage rejection test",observed510Shop===""],
+    ["receipt 5.10 X01 product-code cleanup test",observed510Code==="TRクリスプサワー"],
+    ["receipt 5.10 product quality prefers natural beverage test",observed510Good>observed510Bad],
+    ["receipt 5.10 alternate product candidate selection test",!!p51088&&p51088.name==="バナナオーレ"&&!!p510149&&p510149.name==="TRクリスプサワー"],
+    ["receipt 5.10 preserved accounting test",p510.amount===255&&p510.paymentCandidate==="rakutenpay"&&p510.date==="2026-09-26"],
+    ["receipt 5.10 category after name recovery test",p510.categoryCandidate&&p510.categoryCandidate.groupName==="食費"&&p510.categoryCandidate.subName==="飲み物"],
     ["receipt SEIYU weak payment amount derived total test",psw.amount===255&&psw.subtotal===237&&psw.tax===18&&psw.subtotalTaxMatch===true],
     ["receipt SEIYU fuzzy logo test",psw.shop==="西友"],
     ["receipt SEIYU weak payment detection test",psw.paymentCandidate==="rakutenpay"],
@@ -929,7 +956,7 @@ function receiptTests(){
 function attachTests(){
   var b=document.getElementById("selfTest");if(!b||b.dataset.receiptWrapped)return;
   var base=b.onclick;b.dataset.receiptWrapped="1";
-  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),pass=out.every(function(x){return x[1]}),box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">V3.2.8.5.10 レシート機能テストもすべて合格しました。</div>':'<div class="errorbox">レシート機能テストに失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
+  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),pass=out.every(function(x){return x[1]}),box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">V3.2.8.5.11 レシート機能テストもすべて合格しました。</div>':'<div class="errorbox">レシート機能テストに失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
 }
 var body=document.getElementById("modalBody");
 if(body){new MutationObserver(function(){enhance()}).observe(body,{childList:true,subtree:true})}

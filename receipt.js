@@ -285,6 +285,16 @@ function normalizeProductName(name){
   s=s.replace(/[^ぁ-んァ-ヶー一-龠A-Za-z0-9%.\- ]+$/,"");
   s=s.replace(/\s+/g," ").trim();
 
+  // Actual-device OCR can glue quantity / price / tax markers to the product name.
+  // Example: "CCケーブル 3A、 1 ¥1004%" -> "C-Cケーブル 3A".
+  s=s.replace(/[、,]\s*[0-9]{1,3}\s*(?:¥|￥|\\|Y)\s*[0-9]{2,7}(?:\s*(?:外|内|軽|[0-9]{1,2}%))?\s*$/i,"");
+  s=s.replace(/\s+[0-9]{1,3}\s+(?:¥|￥|\\|Y)\s*[0-9]{2,7}(?:\s*(?:外|内|軽|[0-9]{1,2}%))?\s*$/i,"");
+  s=s.replace(/^CC(?=\s*ケーブル|ケーブル)/i,"C-C");
+  s=s.replace(/^C\s+C(?=\s*ケーブル|ケーブル)/i,"C-C");
+  s=s.replace(/^C\s*[-‐‑‒–—]\s*C(?=\s*ケーブル|ケーブル)/i,"C-C");
+  s=s.replace(/^C-C\s+ケーブル/i,"C-Cケーブル");
+  s=s.replace(/\s+/g," ").trim();
+
   var dm=s.match(/^([0-9]{1,3})\s*([ぁ-んァ-ヶー一-龠].{3,})$/);
   if(dm&&!/^(?:[0-9]+(?:ml|l|g|kg)|7up)\b/i.test(s))s=dm[2].trim();
   s=s.replace(/^(?:[Xx※*#]\s*)?\d{1,3}\s*[「『\[\(（]?\s*(?=[A-Za-zぁ-んァ-ヶー一-龠])/,"");
@@ -1045,7 +1055,7 @@ function receiptTests(){
   var pda=parseReceiptText(daisoActualObj,"2026-09-26"),pdaRow=pda.itemRows[0]||null;
 
   return[
-    ["receipt DAISO C-C token safeguard test",normalizeProductName("C-C ケーブル 3A")==="C-C ケーブル 3A"],
+    ["receipt DAISO C-C token safeguard test",normalizeProductName("C-C ケーブル 3A")==="C-Cケーブル 3A"],
     ["receipt DAISO actual 神→幸 branch correction test",pda.shop==="ダイソー立川幸町店"],
     ["receipt DAISO actual single-item recovery test",pda.itemRows.length===1&&!!pdaRow&&/C-C\s*ケーブル\s*3A/i.test(pdaRow.name)&&pdaRow.total===100],
     ["receipt DAISO actual detail recovery test",/C-C\s*ケーブル\s*3A/i.test(pda.detail)],

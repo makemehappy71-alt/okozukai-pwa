@@ -611,6 +611,7 @@ function shopFromText(text,knownOnly){
   var lines=normalize(text).split("\n").map(function(x){return x.trim()}).filter(Boolean).slice(0,18),joined=lines.join(" ");
   if(/CREATE|クリエイト|ドラッグストア\s*クリエイト/i.test(joined))return"クリエイト";
   if(/\bSEIYU\b|西友/i.test(joined))return"西友";
+  if(/(?:登録番号\s*)?T?\s*8011503002037/i.test(joined.replace(/[\s-]/g,"")))return"西友";
   var shopTokens=(joined.toUpperCase().match(/[A-Z0-9]{4,8}/g)||[]);
   for(var sti=0;sti<shopTokens.length;sti++){
     var st=shopTokens[sti].replace(/1/g,"I").replace(/5/g,"S").replace(/0/g,"O");
@@ -719,7 +720,7 @@ function renderResult(p,errorText){
   if(p.amountConfidence==="high")metaHtml+='<div class="receipt-ocr-meta">金額判定：高信頼'+(p.subtotalTaxMatch?" / 小計＋税一致":"")+(p.itemSubtotalMatch?" / 商品合計＝小計":"")+'</div>';
   var confidenceWarn=p.amountConfidence==="low"?'<div class="warning">金額候補の信頼度が低いため、合計金額を確認してください。</div>':"";
   var rowHtml=rows.length?'<div class="receipt-item-summary"><div class="small"><strong>商品解析</strong></div>'+rows.map(function(x){var tail="";if(x.qty>1)tail+="×"+x.qty;if(x.total)tail+=(tail?" = ":"= ")+yen(x.total);return'<div><span>'+e(x.name)+'</span><strong>'+e(tail.trim())+'</strong></div>'}).join("")+'</div>':"";
-  var splitHtml=splitRows.length>=2?'<div class="receipt-item-summary" id="receiptSplitBox"><label style="display:flex;gap:8px;align-items:center;margin-bottom:10px"><input id="receiptSplitEnabled" type="checkbox" checked style="width:auto;min-height:auto"><strong>商品ごとにカテゴリを振り分ける</strong></label><div class="small" style="margin-bottom:8px">税込合計が '+e(yen(p.amount||0))+' になるよう税額を自動按分します。</div>'+splitRows.map(function(x,i){return'<div style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px 12px;align-items:center;padding:8px 0"><div><strong>'+e(x.name)+'</strong><div class="small">商品 '+e(yen(x.net))+' → 税込 '+e(yen(x.gross))+'</div></div><select class="receipt-split-category" data-index="'+i+'">'+categoryOptions(x.categoryId,x.subcategoryId)+'</select></div>'}).join("")+'</div>':"";
+  var splitHtml=splitRows.length>=2?'<div class="receipt-item-summary" id="receiptSplitBox"><label style="display:flex;gap:8px;align-items:center;margin-bottom:10px"><input id="receiptSplitEnabled" type="checkbox" checked style="width:auto;min-height:auto"><strong>商品ごとにカテゴリを振り分ける</strong></label><div class="small" style="margin-bottom:10px">税込合計が '+e(yen(p.amount||0))+' になるよう税額を自動按分します。</div>'+splitRows.map(function(x,i){return'<div style="display:flex;flex-direction:column;gap:8px;padding:12px 0;border-top:'+(i?'1px solid var(--line,rgba(255,255,255,.10))':'0')+'"><strong style="font-size:1.02em;line-height:1.45">'+e(x.name)+'</strong><div class="small" style="line-height:1.55">商品 '+e(yen(x.net))+' ＋ 税 '+e(yen(x.extra))+' ＝ 税込 <strong>'+e(yen(x.gross))+'</strong></div><select class="receipt-split-category" data-index="'+i+'" style="width:100%">'+categoryOptions(x.categoryId,x.subcategoryId)+'</select></div>'}).join("")+'</div>':"";
   panel.innerHTML='<div class="receipt-result-card">'+preview+
     '<div class="receipt-result-title"><strong>レシート読み取り結果</strong><span class="small">確認・修正してから支出入力へ反映してください。</span>'+metaHtml+'</div>'+
     (errorText?'<div class="warning">'+e(errorText)+' 手入力で補完できます。</div>':"")+confidenceWarn+
@@ -737,7 +738,20 @@ function renderResult(p,errorText){
   '</div>';
   var ps=document.getElementById("receiptPayment");if(ps)ps.value=pay;
   var panelData=document.getElementById("receiptOCRPanel");if(panelData)panelData.dataset.splitRows=JSON.stringify(splitRows);
-  var cs=document.getElementById("receiptCategory");if(cs&&cat)cs.value=cat.categoryId+"|||"+cat.subcategoryId;
+  var cs=document.getElementById("receiptCategory"),splitToggle=document.getElementById("receiptSplitEnabled"),fallbackCat=cat?cat.categoryId+"|||"+cat.subcategoryId:"";
+  function syncOverallCategoryDisplay(){
+    if(!cs)return;
+    var first=cs.options&&cs.options[0];
+    if(splitToggle&&splitToggle.checked&&splitRows.length>=2){
+      if(first)first.textContent="商品別振り分け";
+      cs.value="";
+    }else{
+      if(first)first.textContent="未判定";
+      cs.value=fallbackCat;
+    }
+  }
+  if(splitToggle)splitToggle.onchange=syncOverallCategoryDisplay;
+  syncOverallCategoryDisplay();
   document.getElementById("receiptRetakeBtn").onclick=function(){var x=document.getElementById("receiptCameraInput");if(x)x.click()};
   document.getElementById("receiptApplyBtn").onclick=applyResult;
 }
@@ -793,9 +807,10 @@ function buildOCRBundle(){
   var count=ratio>=3.2?4:ratio>=2?3:2,overlap=.055,slices=[];
   for(var s=0;s<count;s++){var st=Math.max(0,s/count-overlap),en=Math.min(1,(s+1)/count+overlap),role=s===0?"top":s===count-1?"bottom":"middle";slices.push({role:role,index:s,canvas:makeOCRSlice(binary,st,en)})}
   var shopSlices=[
-    {canvas:makeOCRRegion(base,.18,0,.82,.12,4),mode:"7",label:"店名ロゴ中央1",whitelist:"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"},
-    {canvas:makeOCRRegion(gray,.15,0,.85,.14,3),mode:"11",label:"店名ロゴ中央2",whitelist:"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"},
-    {canvas:makeOCRRegion(binary,.12,0,.88,.16,2.5),mode:"11",label:"店名ロゴ中央3",whitelist:"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"}
+    {canvas:makeOCRRegion(base,.24,.005,.72,.085,5),mode:"7",label:"店名ロゴ中央1",whitelist:"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"},
+    {canvas:makeOCRRegion(gray,.22,.005,.74,.10,4),mode:"8",label:"店名ロゴ中央2",whitelist:"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"},
+    {canvas:makeOCRRegion(binary,.20,.005,.76,.11,3),mode:"11",label:"店名ロゴ中央3",whitelist:"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"},
+    {canvas:makeOCRRegion(gray,.14,0,.86,.17,2),mode:"11",label:"店名ロゴ広域",whitelist:"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"}
   ];
   var itemSlices=[
     {canvas:makeOCRScaledSlice(base,.17,.31,2),mode:"6",label:"商品拡大1"},
@@ -903,7 +918,7 @@ function receiptTests(){
   var p4=parseReceiptText(noisyObj,"2026-09-24"),names=p4.itemRows.map(function(x){return x.name}),joined=names.join("|");
   var row159=p4.itemRows.find(function(x){return x.total===159}),row198=p4.itemRows.find(function(x){return x.total===198}),row474=p4.itemRows.find(function(x){return x.total===474});
 
-  // V3.2.8.5.12 actual-device regression:
+  // V3.2.8.5.13 actual-device regression:
   // bottom/raw can miss Rakuten Pay while whole OCR still sees it, and the 198-yen
   // product can be fused to a date/time/register header.
   var deviceRaw="薬 CREATE\nドラッグストア クリエイト\n2026年09月24日(木)17時12分\n92キリン ラブズスポーツ. 159\n8 キリン 午後の紅茶 白ぶどう\n@79 6 474\n弓26年09月24日(木)17時12分 0716 LDC サイダー 1.5L\n@99 2 198\n小計 ¥831\n含む消費税等 ¥66\n合計 ¥897";
@@ -943,12 +958,15 @@ function receiptTests(){
   var splitCats=allocateReceiptRows([{name:"TRクリスプサワー",total:149},{name:"バナナオーレ",total:88}],237,18,255,"西友");
   var splitSnack=splitCats.find(function(x){return /クリスプ/.test(x.name)}),splitDrink=splitCats.find(function(x){return /オーレ/.test(x.name)});
 
+  var seiyuRegShop=shopFromText("東大和\n登録番号 T8011503002037\n電話 042-349-3738",false);
+
   return[
+    ["receipt SEIYU registration fingerprint test",seiyuRegShop==="西友"],
     ["receipt item category snack test",splitSnack&&/お菓子|スイーツ/.test(splitSnack.categoryLabel)],
     ["receipt item category drink test",splitDrink&&/飲み物/.test(splitDrink.categoryLabel)],
     ["receipt split tax allocation total test",splitCats.reduce(function(a,x){return a+x.gross},0)===255],
     ["receipt split tax allocation expected test",splitSnack&&splitDrink&&splitSnack.gross===160&&splitDrink.gross===95],
-    ["receipt 5.10 digit-heavy shop garbage rejection test",observed510Shop===""],
+    ["receipt 5.10 digit-heavy SEIYU recovery test",observed510Shop==="西友"],
     ["receipt 5.10 X01 product-code cleanup test",observed510Code==="TRクリスプサワー"],
     ["receipt 5.10 product quality prefers natural beverage test",observed510Good>observed510Bad],
     ["receipt 5.10 alternate product candidate selection test",!!p51088&&p51088.name==="バナナオーレ"&&!!p510149&&p510149.name==="TRクリスプサワー"],
@@ -1008,7 +1026,7 @@ function receiptTests(){
 function attachTests(){
   var b=document.getElementById("selfTest");if(!b||b.dataset.receiptWrapped)return;
   var base=b.onclick;b.dataset.receiptWrapped="1";
-  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),pass=out.every(function(x){return x[1]}),box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">V3.2.8.5.12 レシート機能テストもすべて合格しました。</div>':'<div class="errorbox">レシート機能テストに失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
+  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),pass=out.every(function(x){return x[1]}),box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">V3.2.8.5.13 レシート機能テストもすべて合格しました。</div>':'<div class="errorbox">レシート機能テストに失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
 }
 var body=document.getElementById("modalBody");
 if(body){new MutationObserver(function(){enhance()}).observe(body,{childList:true,subtree:true})}

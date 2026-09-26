@@ -270,12 +270,13 @@ function normalizeProductName(name){
   s=s.normalize?s.normalize("NFKC"):s;
   s=s.replace(/[\r\n]+/g," ").replace(/[◎○●※◆◇■□★☆⑧⑩⑨⑦⑥⑤④③②①]+/g," ");
   s=s.replace(/[＠@*#]+/g," ").replace(/[_＿]+/g," ").replace(/[＝=]+$/g," ");
-  s=s.replace(/^\s*[^ぁ-んァ-ヶ一-龠A-Za-z0-9]+/,"");
-  s=s.replace(/[^ぁ-んァ-ヶ一-龠A-Za-z0-9%.\- ]+$/,"");
+  s=s.replace(/^\s*[^ぁ-んァ-ヶー一-龠A-Za-z0-9]+/,"");
+  s=s.replace(/[^ぁ-んァ-ヶー一-龠A-Za-z0-9%.\- ]+$/,"");
   s=s.replace(/\s+/g," ").trim();
 
-  var dm=s.match(/^([0-9]{1,3})\s*([ぁ-んァ-ヶ一-龠].{3,})$/);
+  var dm=s.match(/^([0-9]{1,3})\s*([ぁ-んァ-ヶー一-龠].{3,})$/);
   if(dm&&!/^(?:[0-9]+(?:ml|l|g|kg)|7up)\b/i.test(s))s=dm[2].trim();
+  s=s.replace(/^\d{1,3}\s+(?=[A-Za-z]{1,8}\b)/,"");
 
   s=s.replace(/^\s*[ぁ-んァ-ヶ]{1,2}\s*(?=キリン|LDC|UCC|AGF|BOSS)/i,"");
   s=s.replace(/^\s*[A-Za-z]{1,2}\s+(?=[ぁ-んァ-ヶ一-龠])/,"");
@@ -475,7 +476,7 @@ function analyzeAmount(text,extraText){
     if(/お支払(?:い)?額|お買上(?:げ)?額|領収金額|総合計|税込合計|合計金額/i.test(line)){add(n,"total",100,line);return}
     if(/(?:^|[\s:：])合\s*計(?:[\s:：]|¥|\\|Y|[0-9]|$)/i.test(line)){add(n,"total",100,line);return}
     if(/含計|台計|合汁|合言十/i.test(line)){add(n,"fuzzyTotal",70,line);return}
-    if(/楽天\s*(?:pay|ペイ)|paypay|d払い|au\s*pay|visa|mastercard|master\s*card|\bjcb\b|amex|クレジット|カード決済/i.test(line)){add(n,"payment",90,line);return}
+    if(paymentFromText(line)){add(n,"payment",90,line);return}
     if(/現金|cash/i.test(line)){add(n,"cash",85,line);return}
   });
   var cand=Object.keys(map).map(function(k){return map[k]});
@@ -517,13 +518,15 @@ function itemRowsFromText(text,sourcePriority){
     if(!validName(clean,total,rawName))return;
     out.push({name:clean,rawName:rawName,unitPrice:unit,qty:qty,total:total,quality:productNameQuality(rawName)+priority*10,sourceIndex:Number(sourceIndex||0),sourcePriority:priority});
   }
-  function priceRowOf(s){return ocrMoneyClean(s).match(/^\s*[@＠]?\s*([0-9]{1,6})\s+(?:[x×]\s*)?([0-9]{1,3})\s+(?:¥\s*)?([0-9]{1,7})\s*$/i)}
-  function sameProductMatch(s){return ocrMoneyClean(s).match(/^(.{2,58}?[ぁ-んァ-ヶ一-龠A-Za-z][^¥￥]*?)\s+(?:¥|￥)?\s*([0-9]{1,7})\s*(?:円)?\s*$/)}
+  function priceRowOf(s){return ocrMoneyClean(s).match(/^\s*[@＠]?\s*([0-9]{1,6})\s+(?:[x×]\s*)?([0-9]{1,3})\s+(?:¥\s*)?([0-9]{1,7})\s*(?:[A-Z※*])?\s*$/i)}
+  function sameProductMatch(s){return ocrMoneyClean(s).match(/^(.{2,58}?[ぁ-んァ-ヶー一-龠A-Za-z][^¥￥]*?)\s+(?:¥|￥)?\s*([0-9]{1,7})\s*(?:円)?\s*(?:[A-Z※*])?\s*$/i)}
+  function discountTotal(s){var x=ocrMoneyClean(s);if(!/値下|値引|割引|特価|sale/i.test(x))return 0;var nums=[],re=/(?:¥|￥)?\s*([0-9]{1,7})/g,m;while((m=re.exec(x)))nums.push(Number(m[1]||0));return nums.length?nums[nums.length-1]:0;}
   for(var i=0;i<lines.length;i++){
     var line=ocrMoneyClean(lines[i]);if(bad.test(line))continue;
     var next=i+1<lines.length?ocrMoneyClean(lines[i+1]):"",next2=i+2<lines.length?ocrMoneyClean(lines[i+2]):"";
-    var linePrice=priceRowOf(line),nextPrice=priceRowOf(next),priceRow2=priceRowOf(next2),same=sameProductMatch(line),nextSame=sameProductMatch(next);
+    var linePrice=priceRowOf(line),nextPrice=priceRowOf(next),priceRow2=priceRowOf(next2),same=sameProductMatch(line),nextSame=sameProductMatch(next),nextDiscount=discountTotal(next);
 
+    if(nextDiscount&&validName(cleanName(line),nextDiscount,line)){add(line,0,1,nextDiscount,i);continue}
     if(validName(cleanName(line),nextPrice&&nextPrice[3],line)&&nextPrice){add(line,nextPrice[1],nextPrice[2],nextPrice[3],i);continue}
 
     if(priceRow2&&!linePrice&&!nextPrice&&!same&&!nextSame&&!bad.test(next)&&!isReceiptHeaderLine(line)&&!isReceiptHeaderLine(next)){
@@ -543,8 +546,15 @@ function dateFromText(text,baseDate,emptyOnMissing){
   var t=normalize(text),base=new Date(String(baseDate||defaultDate())+"T12:00:00");
   t=t.replace(/([0-9])[OoＯ](?=[0-9年月日\/\-.])/g,"$10").replace(/([0-9])[Il｜](?=[0-9年月日\/\-.])/g,"$11");
   function make(y,m,d){var dt=new Date(y,m-1,d);if(dt.getFullYear()!==y||dt.getMonth()!==m-1||dt.getDate()!==d)return"";return dstr(dt)}
+  function weekdayAdjusted(y,m,d,src){
+    var wd={"日":0,"月":1,"火":2,"水":3,"木":4,"金":5,"土":6},wm=String(src||"").match(/[（(]\s*([日月火水木金土])\s*[)）]/);
+    if(!wm)return y;
+    var wanted=wd[wm[1]],baseYear=base.getFullYear(),years=[y,baseYear,y-1,y+1],seen={};
+    for(var wi=0;wi<years.length;wi++){var yy=years[wi];if(seen[yy])continue;seen[yy]=1;var dt=new Date(yy,m-1,d);if(dt.getFullYear()===yy&&dt.getMonth()===m-1&&dt.getDate()===d&&dt.getDay()===wanted&&Math.abs(yy-baseYear)<=1)return yy}
+    return y;
+  }
   var full=[/((?:19|20)\d{2})[\/\-.年]\s*(\d{1,2})[\/\-.月]\s*(\d{1,2})日?/,/((?:19|20)\d{2})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日/];
-  for(var i=0;i<full.length;i++){var m=t.match(full[i]);if(m){var v=make(Number(m[1]),Number(m[2]),Number(m[3]));if(v)return v}}
+  for(var i=0;i<full.length;i++){var m=t.match(full[i]);if(m){var yy=weekdayAdjusted(Number(m[1]),Number(m[2]),Number(m[3]),t),v=make(yy,Number(m[2]),Number(m[3]));if(v)return v}}
   var short=t.match(/(?:^|\D)(\d{2})[\/\-.](\d{1,2})[\/\-.](\d{1,2})(?:\D|$)/);
   if(short){var sv=make(2000+Number(short[1]),Number(short[2]),Number(short[3]));if(sv)return sv}
   var md=t.match(/(?:^|\D)(\d{1,2})\s*月\s*(\d{1,2})\s*日|(?:^|\D)(\d{1,2})[\/\-](\d{1,2})(?:\D|$)/);
@@ -575,6 +585,7 @@ function paymentFromText(text){
 function shopFromText(text){
   var lines=normalize(text).split("\n").map(function(x){return x.trim()}).filter(Boolean).slice(0,18),joined=lines.join(" ");
   if(/CREATE|クリエイト|ドラッグストア\s*クリエイト/i.test(joined))return"クリエイト";
+  if(/\bSEIYU\b|西友/i.test(joined))return"西友";
   if(/マツモトキヨシ|マツキヨ/i.test(joined))return"マツモトキヨシ";
   if(/ウエルシア/i.test(joined))return"ウエルシア";
   if(/スギ薬局/i.test(joined))return"スギ薬局";
@@ -587,13 +598,13 @@ function itemsFromText(text){
 }
 function categorySuggestion(text,shop,itemRows){
   var raw=normalize(text).toLowerCase(),rows=Array.isArray(itemRows)?itemRows:[],names=rows.map(function(x){return x.name}).join(" ").toLowerCase();
-  var coffee=/コーヒー|coffee|カフェラテ|cafe latte/i,drink=/サイダー|紅茶|スポーツドリンク|ラブズスポーツ|飲料|ジュース|コーラ|炭酸|緑茶|麦茶|ウーロン茶|午後の紅茶|ミネラルウォーター|お茶/i;
+  var coffee=/コーヒー|coffee|カフェラテ|cafe latte/i,drink=/サイダー|紅茶|スポーツドリンク|ラブズスポーツ|飲料|ジュース|コーラ|炭酸|緑茶|麦茶|ウーロン茶|午後の紅茶|ミネラルウォーター|お茶|オーレ|サワー/i;
   if(names&&coffee.test(names))return findCategoryPair("食費","コーヒー")||findCategoryPair("食費","飲み物");
   if(rows.length){
     var bev=rows.filter(function(x){return drink.test(x.name)}).length;
     if(bev>=Math.max(1,Math.ceil(rows.length*.6)))return findCategoryPair("食費","飲み物");
   }
-  if(/スーパー|market/i.test(String(shop||"")))return findCategoryPair("食費","スーパー・食材");
+  if(/スーパー|market|西友|seiyu/i.test(String(shop||"")))return findCategoryPair("食費","スーパー・食材");
   var rules=[
     ["食費","ラーメン・つけ麺・油そば",/ラーメン|らーめん|ramen|つけ麺|油そば/],
     ["医療・健康","薬品代",/医薬品|風邪薬|錠剤|カプセル|ロキソ|薬品/],
@@ -618,16 +629,17 @@ function uniqueItemRows(rows){
   return mergeProductRows(rows);
 }
 function parseReceiptText(input,baseDate){
-  var obj=input&&typeof input==="object"&&!Array.isArray(input)?input:null,raw=normalize(obj?obj.text:input),whole=normalize(obj&&obj.whole||""),paymentText=normalize(obj&&obj.paymentText||""),sections=obj&&obj.sections||{},top=normalize(sections.top||""),middle=normalize(sections.middle||""),bottom=normalize(sections.bottom||"");
-  var shop=shopFromText(top)||shopFromText(raw);
+  var obj=input&&typeof input==="object"&&!Array.isArray(input)?input:null,raw=normalize(obj?obj.text:input),whole=normalize(obj&&obj.whole||""),shopText=normalize(obj&&obj.shopText||""),itemText=normalize(obj&&obj.itemText||""),paymentText=normalize(obj&&obj.paymentText||""),sections=obj&&obj.sections||{},top=normalize(sections.top||""),middle=normalize(sections.middle||""),bottom=normalize(sections.bottom||"");
+  var shop=shopFromText(shopText)||shopFromText(top)||shopFromText(raw);
   var date=dateFromText(top,baseDate||defaultDate(),true)||dateFromText(raw,baseDate||defaultDate());
-  var amountInfo=analyzeAmount(raw,bottom),amount=amountInfo.amount;
+  var amountInfo=analyzeAmount(raw,[bottom,paymentText].filter(Boolean).join("\n")),amount=amountInfo.amount;
   var payment=paymentFromText(paymentText)||paymentFromSources(bottom,raw,whole);
 
   // Product extraction is deliberately separate from payment/header parsing.
   // Middle-section candidates get the strongest priority. Whole/raw are fallback
   // sources only after receipt header/payment/summary rows are removed.
   var initialRows=[];
+  if(itemText)initialRows=initialRows.concat(itemRowsFromText(productSourceText(itemText),4));
   if(middle)initialRows=initialRows.concat(itemRowsFromText(productSourceText(middle),3));
   if(whole)initialRows=initialRows.concat(itemRowsFromText(productSourceText(whole),2));
   initialRows=initialRows.concat(itemRowsFromText(productSourceText(raw),1));
@@ -704,13 +716,21 @@ function buildOCRBundle(){
   }catch(_e){bctx.drawImage(gray,0,0)}
   var count=ratio>=3.2?4:ratio>=2?3:2,overlap=.055,slices=[];
   for(var s=0;s<count;s++){var st=Math.max(0,s/count-overlap),en=Math.min(1,(s+1)/count+overlap),role=s===0?"top":s===count-1?"bottom":"middle";slices.push({role:role,index:s,canvas:makeOCRSlice(binary,st,en)})}
+  var shopSlices=[
+    {canvas:makeOCRSlice(gray,0,.18),mode:"7",label:"店名1"},
+    {canvas:makeOCRSlice(binary,0,.18),mode:"7",label:"店名2"}
+  ];
+  var itemSlices=[
+    {canvas:makeOCRSlice(gray,.12,.46),mode:"6",label:"商品1"},
+    {canvas:makeOCRSlice(binary,.12,.46),mode:"6",label:"商品2"}
+  ];
   var paymentSlices=[
     {canvas:makeOCRSlice(gray,.50,.84),mode:"6",label:"支払方法1"},
     {canvas:makeOCRSlice(binary,.50,.84),mode:"6",label:"支払方法2"},
     {canvas:makeOCRSlice(gray,.64,1),mode:"11",label:"支払方法3"},
     {canvas:makeOCRSlice(binary,.64,1),mode:"11",label:"支払方法4"}
   ];
-  return{gray:gray,binary:binary,slices:slices,paymentSlices:paymentSlices,skew:skew,ratio:ratio};
+  return{gray:gray,binary:binary,slices:slices,shopSlices:shopSlices,itemSlices:itemSlices,paymentSlices:paymentSlices,skew:skew,ratio:ratio};
 }
 async function readConfirmedReceipt(){
   if(busy||!pendingReceipt)return;
@@ -743,22 +763,27 @@ async function runOCR(bundle){
       else if(sl.role==="bottom")sectionMap.bottom=mergeOCRTexts(sectionMap.bottom,txt);
       else sectionMap.middle=mergeOCRTexts(sectionMap.middle,txt);
     }
+    var shopText="",shopPasses=0,shopParts=bundle.shopSlices||[];
+    for(var si=0;si<shopParts.length;si++){
+      var sp=shopParts[si];ocrPassLabel=sp.label||("店名"+(si+1));
+      try{await worker.setParameters({preserve_interword_spaces:"1",tessedit_pageseg_mode:sp.mode||"7"})}catch(_e){}
+      try{var sret=await worker.recognize(sp.canvas),stxt=String(sret&&sret.data&&sret.data.text||"");shopPasses++;shopText=mergeOCRTexts(shopText,stxt);if(shopFromText(shopText))break}catch(_e){}
+    }
+    var itemText="",itemPasses=0,itemParts=bundle.itemSlices||[];
+    for(var ii=0;ii<itemParts.length;ii++){
+      var ip=itemParts[ii];ocrPassLabel=ip.label||("商品"+(ii+1));
+      try{await worker.setParameters({preserve_interword_spaces:"1",tessedit_pageseg_mode:ip.mode||"6"})}catch(_e){}
+      try{var iret=await worker.recognize(ip.canvas),itxt=String(iret&&iret.data&&iret.data.text||"");itemPasses++;itemText=mergeOCRTexts(itemText,itxt)}catch(_e){}
+    }
     var paymentText="",paymentPasses=0,paymentParts=bundle.paymentSlices||[];
     for(var pi=0;pi<paymentParts.length;pi++){
-      var pp=paymentParts[pi];
-      ocrPassLabel=pp.label||("支払方法"+(pi+1));
+      var pp=paymentParts[pi];ocrPassLabel=pp.label||("支払方法"+(pi+1));
       try{await worker.setParameters({preserve_interword_spaces:"1",tessedit_pageseg_mode:pp.mode||"11"})}catch(_e){}
-      try{
-        var pret=await worker.recognize(pp.canvas),ptxt=String(pret&&pret.data&&pret.data.text||"");
-        paymentPasses++;
-        paymentText=mergeOCRTexts(paymentText,ptxt);
-        sectionMap.bottom=mergeOCRTexts(sectionMap.bottom,ptxt);
-        if(paymentFromText(paymentText))break;
-      }catch(_e){}
+      try{var pret=await worker.recognize(pp.canvas),ptxt=String(pret&&pret.data&&pret.data.text||"");paymentPasses++;paymentText=mergeOCRTexts(paymentText,ptxt);if(paymentFromText(paymentText))break}catch(_e){}
     }
-    var merged=full;parts.forEach(function(x){merged=mergeOCRTexts(merged,x)});if(paymentText)merged=mergeOCRTexts(merged,paymentText);
+    var merged=full;parts.forEach(function(x){merged=mergeOCRTexts(merged,x)});
     ocrPassLabel="";
-    return{text:merged,whole:normalize(full),sections:{top:normalize(sectionMap.top),middle:normalize(sectionMap.middle),bottom:normalize(sectionMap.bottom)},paymentText:normalize(paymentText),meta:{passes:1+parts.length+paymentPasses,skew:Number(bundle.skew||0),ratio:Number(bundle.ratio||0)}};
+    return{text:merged,whole:normalize(full),sections:{top:normalize(sectionMap.top),middle:normalize(sectionMap.middle),bottom:normalize(sectionMap.bottom)},shopText:normalize(shopText),itemText:normalize(itemText),paymentText:normalize(paymentText),meta:{passes:1+parts.length+shopPasses+itemPasses+paymentPasses,skew:Number(bundle.skew||0),ratio:Number(bundle.ratio||0)}};
   }finally{ocrPassLabel="";try{await worker.terminate()}catch(_e){}}
 }
 async function handleFile(file){
@@ -798,7 +823,7 @@ function receiptTests(){
   var p4=parseReceiptText(noisyObj,"2026-09-24"),names=p4.itemRows.map(function(x){return x.name}),joined=names.join("|");
   var row159=p4.itemRows.find(function(x){return x.total===159}),row198=p4.itemRows.find(function(x){return x.total===198}),row474=p4.itemRows.find(function(x){return x.total===474});
 
-  // V3.2.8.5.8 actual-device regression:
+  // V3.2.8.5.9 actual-device regression:
   // bottom/raw can miss Rakuten Pay while whole OCR still sees it, and the 198-yen
   // product can be fused to a date/time/register header.
   var deviceRaw="薬 CREATE\nドラッグストア クリエイト\n2026年09月24日(木)17時12分\n92キリン ラブズスポーツ. 159\n8 キリン 午後の紅茶 白ぶどう\n@79 6 474\n弓26年09月24日(木)17時12分 0716 LDC サイダー 1.5L\n@99 2 198\n小計 ¥831\n含む消費税等 ¥66\n合計 ¥897";
@@ -821,7 +846,19 @@ function receiptTests(){
   var paymentJapaneseFuzzy=["楽大ペイ","楽天ベイ","楽天へイ","楽夭ペイ"].every(function(x){return paymentFromText(x+" ¥897")==="rakutenpay"});
   var paymentJapaneseNegative=paymentFromText("天気ペイ ¥897")!=="rakutenpay"&&paymentFromText("楽園ペイ ¥897")!=="rakutenpay";
 
+  var seiyuNoisy="Ismwu\n東大和\n2025年 9月26日 (土) 10:59\nFRkk kfopk ホホ 984\n8Y 2点 18\nできき上 265\n沙水沙水 ホ水水水 kkx 984\n小計 2点 ¥237";
+  var seiyuObj={text:seiyuNoisy,whole:seiyuNoisy,shopText:"SEIYU",itemText:"※90 バナナオーレ\n値下(元 ¥139) ¥88C\n※01 TRクリスプサワー ¥149C",paymentText:"楽天ベイ ¥255",sections:{top:"Ismwu\n東大和\n2025年 9月26日 (土) 10:59",middle:"FRkk kfopk ホホ 984\n8Y 2点 18",bottom:"小計 2点 ¥237\n消費税額 8% 2点 ¥18"},meta:{passes:9,skew:0,ratio:4}};
+  var ps=parseReceiptText(seiyuObj,"2026-09-26"),ps88=ps.itemRows.find(function(x){return x.total===88}),ps149=ps.itemRows.find(function(x){return x.total===149});
+
   return[
+    ["receipt SEIYU date weekday correction test",ps.date==="2026-09-26"],
+    ["receipt SEIYU total test",ps.amount===255&&ps.subtotal===237&&ps.tax===18&&ps.subtotalTaxMatch===true],
+    ["receipt SEIYU shop supplemental OCR test",ps.shop==="西友"],
+    ["receipt SEIYU payment test",ps.paymentCandidate==="rakutenpay"],
+    ["receipt SEIYU product discount test",!!ps88&&ps88.name==="バナナオーレ"&&!!ps149&&ps149.name==="TRクリスプサワー"],
+    ["receipt SEIYU item subtotal test",ps.itemSum===237&&ps.itemSubtotalMatch===true],
+    ["receipt SEIYU category test",ps.categoryCandidate&&ps.categoryCandidate.groupName==="食費"&&ps.categoryCandidate.subName==="飲み物"],
+    ["receipt supplemental OCR isolation test",!ps.items.some(function(x){return /楽天|0984|ポイント|取引ID|FRkk|kkx/i.test(x)})],
     ["receipt Japanese fuzzy Rakuten Pay test",paymentJapaneseFuzzy],
     ["receipt Japanese fuzzy negative test",paymentJapaneseNegative],
     ["receipt locality and capacity cleanup test",localityCapacity==="LDC サイダー 1.5L"],
@@ -863,7 +900,7 @@ function receiptTests(){
 function attachTests(){
   var b=document.getElementById("selfTest");if(!b||b.dataset.receiptWrapped)return;
   var base=b.onclick;b.dataset.receiptWrapped="1";
-  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),pass=out.every(function(x){return x[1]}),box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">V3.2.8.5.8 レシート機能テストもすべて合格しました。</div>':'<div class="errorbox">レシート機能テストに失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
+  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),pass=out.every(function(x){return x[1]}),box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">V3.2.8.5.9 レシート機能テストもすべて合格しました。</div>':'<div class="errorbox">レシート機能テストに失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
 }
 var body=document.getElementById("modalBody");
 if(body){new MutationObserver(function(){enhance()}).observe(body,{childList:true,subtree:true})}

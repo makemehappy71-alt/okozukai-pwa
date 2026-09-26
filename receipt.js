@@ -1054,7 +1054,22 @@ function receiptTests(){
   };
   var pda=parseReceiptText(daisoActualObj,"2026-09-26"),pdaRow=pda.itemRows[0]||null;
 
+  var daiso522Name=normalizeProductName("CCケーブル 3A、 1 ¥1004%");
+  var daiso522Obj={
+    text:"DAISO\nダイソー立川幸町店\n2026年09月26日(土)17:54\nCCケーブル 3A、 1 ¥1004%\n小計 1点 ¥100\n10%税額 ¥10\n合計 ¥110\n楽天ペイ ¥110",
+    whole:"DAISO\nダイソー立川幸町店\nCCケーブル 3A、 1 ¥1004%\n小計 1点 ¥100\n合計 ¥110\n楽天ペイ ¥110",
+    shopText:"DAISO",
+    itemText:"CCケーブル 3A、 1 ¥1004%",
+    paymentText:"楽天ペイ ¥110",
+    sections:{top:"DAISO\nダイソー立川幸町店\n2026年09月26日(土)17:54",middle:"CCケーブル 3A、 1 ¥1004%",bottom:"小計 1点 ¥100\n10%税額 ¥10\n合計 ¥110\n楽天ペイ ¥110"},
+    meta:{passes:14,skew:0,ratio:4}
+  };
+  var p522=parseReceiptText(daiso522Obj,"2026-09-26"),p522Row=p522.itemRows[0]||null;
+
   return[
+    ["receipt DAISO 5.22 exact product-name cleanup test",daiso522Name==="C-Cケーブル 3A"],
+    ["receipt DAISO 5.22 exact device row test",p522.itemRows.length===1&&!!p522Row&&p522Row.name==="C-Cケーブル 3A"&&p522Row.total===100],
+    ["receipt DAISO 5.22 exact device detail test",p522.detail==="C-Cケーブル 3A"],
     ["receipt DAISO C-C token safeguard test",normalizeProductName("C-C ケーブル 3A")==="C-Cケーブル 3A"],
     ["receipt DAISO actual 神→幸 branch correction test",pda.shop==="ダイソー立川幸町店"],
     ["receipt DAISO actual single-item recovery test",pda.itemRows.length===1&&!!pdaRow&&/C-C\s*ケーブル\s*3A/i.test(pdaRow.name)&&pdaRow.total===100],

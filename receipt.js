@@ -317,6 +317,7 @@ function editDistance(a,b){
 function canonicalizeBrandTokens(name){
   var brands=["LDC","UCC","AGF","BOSS"],parts=String(name||"").split(/\s+/);
   return parts.map(function(part){
+    if(/[ぁ-んァ-ヶ一-龠]/.test(part))return part;
     var clean=part.replace(/[^A-Za-z0-9]/g,"");
     if(clean.length<2||clean.length>5)return part;
     var best=null,dist=99;
@@ -456,9 +457,12 @@ function mergeProductRows(rows){
     return{name:name,unitPrice:g.unitPrice,qty:g.qty,total:g.total,quality:quality,candidateCount:g.candidates.length};
   });
 }
-function chooseItemsForSubtotal(rows,subtotal){
+function chooseItemsForSubtotal(rows,subtotal,receiptTotal){
   rows=mergeProductRows(rows).filter(function(x){return x.total>0});
-  subtotal=Number(subtotal||0);if(!subtotal||rows.length<2||rows.length>14)return{rows:rows,matched:false,sum:rows.reduce(function(a,x){return a+x.total},0)};
+  subtotal=Number(subtotal||0);receiptTotal=Number(receiptTotal||0);
+  var maxItem=receiptTotal>0?receiptTotal:(subtotal>0?subtotal:0);
+  if(maxItem>0)rows=rows.filter(function(x){return Number(x.total||0)<=maxItem});
+  if(!subtotal||rows.length<2||rows.length>14)return{rows:rows,matched:false,sum:rows.reduce(function(a,x){return a+x.total},0)};
   var n=rows.length,best=null,max=1<<n;
   for(var mask=1;mask<max;mask++){
     var sum=0,quality=0,count=0;
@@ -528,7 +532,7 @@ function analyzeAmount(text,extraText){
 }
 function itemRowsFromText(text,sourcePriority){
   var lines=normalize(text).split("\n").map(function(x){return x.trim()}).filter(Boolean),priority=Number(sourcePriority||1);
-  var bad=/(総合計|合計|小計|税込|お支払|お?預り|お?釣|釣銭|消費税|内税|外税|税率|8\s*%|10\s*%|軽減税率|対象金額|ポイント|合計P|楽天\s*(?:pay|ペイ)|paypay|d払い|au\s*pay|クレジット|visa|master|jcb|amex|残高|receipt|領収|tel|電話|〒|登録番号|取引ID|受付番号|カード\s*no|カード番号|レジ|店番号|担当|日時|日付|バーコード)/i,out=[];
+  var bad=/(総合計|合計|小計|税込|お支払|お?預り|お?釣|釣銭|消費税|内税|外税|税率|8\s*%|10\s*%|軽減税率|対象金額|ポイント|合計P|楽天\s*(?:pay|ペイ)|paypay|d払い|au\s*pay|クレジット|visa|master|jcb|amex|残高|receipt|領収|tel|電話|〒|登録番号|取引ID|受付番号|伝票番号|承認番号|決済手段|取引内容|ご利用金額|カード\s*no|カード番号|レジ|店番号|担当|日時|日付|バーコード|QR|LINEスタンプ|ハッピープライス|公式通販|オンラインショップ)/i,out=[];
   function cleanName(s){return normalizeProductName(s)}
   function validName(s,total,raw){
     if(!s||s.length<2||s.length>58||bad.test(s)||!/[ぁ-んァ-ヶ一-龠A-Za-z]/.test(s))return false;
@@ -544,13 +548,17 @@ function itemRowsFromText(text,sourcePriority){
     out.push({name:clean,rawName:rawName,unitPrice:unit,qty:qty,total:total,quality:productNameQuality(rawName)+priority*10,sourceIndex:Number(sourceIndex||0),sourcePriority:priority});
   }
   function priceRowOf(s){return ocrMoneyClean(s).match(/^\s*[@＠]?\s*([0-9]{1,6})\s+(?:[x×]\s*)?([0-9]{1,3})\s+(?:¥\s*)?([0-9]{1,7})\s*(?:[A-Z※*])?\s*$/i)}
-  function sameProductMatch(s){return ocrMoneyClean(s).match(/^(.{2,58}?[ぁ-んァ-ヶー一-龠A-Za-z][^¥￥]*?)\s+(?:¥|￥)?\s*([0-9]{1,7})\s*(?:円)?\s*(?:[A-Z※*])?\s*$/i)}
+  function sameProductMatch(s){return ocrMoneyClean(s).match(/^(.{2,58}?[ぁ-んァ-ヶー一-龠A-Za-z][^¥￥]*?)\s+(?:¥|￥)?\s*([0-9]{1,7})\s*(?:円)?\s*(?:外|内|軽|[A-Z※*])?\s*$/i)}
+  function productQtyPriceMatch(s){return ocrMoneyClean(s).match(/^(.{2,58}?[ぁ-んァ-ヶー一-龠A-Za-z][^¥￥]*?)[\s,、]+([0-9]{1,3})\s+(?:¥|￥)\s*([0-9]{1,7})\s*(?:円)?\s*(?:外|内|軽|[A-Z※*])?\s*$/i)}
   function discountTotal(s){var x=ocrMoneyClean(s);if(!/値下|値引|割引|特価|sale/i.test(x))return 0;var nums=[],re=/(?:¥|￥)?\s*([0-9]{1,7})/g,m;while((m=re.exec(x)))nums.push(Number(m[1]||0));return nums.length?nums[nums.length-1]:0;}
   for(var i=0;i<lines.length;i++){
     var line=ocrMoneyClean(lines[i]);if(bad.test(line))continue;
     var next=i+1<lines.length?ocrMoneyClean(lines[i+1]):"",next2=i+2<lines.length?ocrMoneyClean(lines[i+2]):"";
-    var linePrice=priceRowOf(line),nextPrice=priceRowOf(next),priceRow2=priceRowOf(next2),same=sameProductMatch(line),nextSame=sameProductMatch(next),nextDiscount=discountTotal(next);
-
+    var linePrice=priceRowOf(line),nextPrice=priceRowOf(next),priceRow2=priceRowOf(next2),qtySame=productQtyPriceMatch(line),same=sameProductMatch(line),nextSame=sameProductMatch(next),nextDiscount=discountTotal(next);
+    if(qtySame){
+      var qname=cleanName(qtySame[1]),qqty=Number(qtySame[2]||1),qtotal=Number(qtySame[3]||0);
+      if(validName(qname,qtotal,qtySame[1])){add(qtySame[1],qqty?Math.round(qtotal/qqty):0,qqty,qtotal,i);continue}
+    }
     if(nextDiscount&&validName(cleanName(line),nextDiscount,line)){add(line,0,1,nextDiscount,i);continue}
     if(validName(cleanName(line),nextPrice&&nextPrice[3],line)&&nextPrice){add(line,nextPrice[1],nextPrice[2],nextPrice[3],i);continue}
 
@@ -610,6 +618,14 @@ function paymentFromText(text){
 function shopFromText(text,knownOnly){
   var lines=normalize(text).split("\n").map(function(x){return x.trim()}).filter(Boolean).slice(0,18),joined=lines.join(" ");
   if(/CREATE|クリエイト|ドラッグストア\s*クリエイト/i.test(joined))return"クリエイト";
+  var daisoBranch="";
+  for(var di=0;di<lines.length;di++){
+    var dl=(lines[di].normalize?lines[di].normalize("NFKC"):lines[di]).replace(/\s+/g,"").replace(/^[^ダ]*?(?=ダイソー)/,"");
+    var dm=dl.match(/(ダイソー[^\n]{1,24}?店)/);
+    if(dm){daisoBranch=dm[1];break}
+  }
+  if(daisoBranch)return daisoBranch;
+  if(/\bDAISO\b|ダイソー|だんぜん!?\s*ダイソー/i.test(joined))return"ダイソー";
   if(/\bSEIYU\b|西友/i.test(joined))return"西友";
   if(/(?:登録番号\s*)?T?\s*8011503002037/i.test(joined.replace(/[\s-]/g,"")))return"西友";
   var shopTokens=(joined.toUpperCase().match(/[A-Z0-9]{4,8}/g)||[]);
@@ -672,6 +688,7 @@ function categorySuggestion(text,shop,itemRows){
     ["医療・健康","薬品代",/医薬品|風邪薬|錠剤|カプセル|ロキソ|薬品/],
     ["娯楽","映画",/toho|シネマ|cinema|映画館|ムービー/],
     ["交通","ガソリン",/eneos|出光|apollostation|ガソリン|給油/],
+    ["デジタル・IT","スマホ用品",/USB\s*[- ]?C|TYPE\s*[- ]?C|C\s*[- ]?C\s*ケーブル|充電\s*ケーブル|スマホ\s*ケーブル|ケーブル\s*3A/i],
     ["デジタル・IT","PC用品",/キーボード|マウス|usb|pc用品|パソコン用品/],
     ["食費","コーヒー",/コーヒー|coffee|カフェラテ/],
     ["食費","飲み物",/サイダー|紅茶|スポーツドリンク|ラブズスポーツ|飲料|ジュース|コーラ|炭酸|緑茶|麦茶|ウーロン茶|午後の紅茶|ミネラルウォーター/],
@@ -693,6 +710,10 @@ function uniqueItemRows(rows){
 function parseReceiptText(input,baseDate){
   var obj=input&&typeof input==="object"&&!Array.isArray(input)?input:null,raw=normalize(obj?obj.text:input),whole=normalize(obj&&obj.whole||""),shopText=normalize(obj&&obj.shopText||""),itemText=normalize(obj&&obj.itemText||""),paymentText=normalize(obj&&obj.paymentText||""),sections=obj&&obj.sections||{},top=normalize(sections.top||""),middle=normalize(sections.middle||""),bottom=normalize(sections.bottom||"");
   var shop=shopFromText(shopText,true)||shopFromText(top,true)||shopFromText(raw);
+  if(shop==="ダイソー"){
+    var daisoDetailed=shopFromText([top,raw,whole].filter(Boolean).join("\n"),true);
+    if(/^ダイソー.+店$/.test(daisoDetailed))shop=daisoDetailed;
+  }
   var date=dateFromText(top,baseDate||defaultDate(),true)||dateFromText(raw,baseDate||defaultDate());
   var amountInfo=analyzeAmount(raw,[bottom,paymentText].filter(Boolean).join("\n")),amount=amountInfo.amount;
   var payment=paymentFromText(paymentText)||paymentFromSources(bottom,raw,whole);
@@ -706,7 +727,7 @@ function parseReceiptText(input,baseDate){
   if(whole)initialRows=initialRows.concat(itemRowsFromText(productSourceText(whole),2));
   initialRows=initialRows.concat(itemRowsFromText(productSourceText(raw),1));
 
-  var itemChoice=chooseItemsForSubtotal(initialRows,amountInfo.subtotal),rows=itemChoice.rows,items=rows.map(function(x){return x.name}),cat=categorySuggestion(raw,shop,rows);
+  var itemChoice=chooseItemsForSubtotal(initialRows,amountInfo.subtotal,amount),rows=itemChoice.rows,items=rows.map(function(x){return x.name}),cat=categorySuggestion(raw,shop,rows);
   var itemSum=rows.reduce(function(a,x){return a+Number(x.total||0)},0),subtotalTaxMatch=!!(amountInfo.subtotal&&amountInfo.tax&&amountInfo.subtotal+amountInfo.tax===amount);
   var splitRows=allocateReceiptRows(rows,amountInfo.subtotal,amountInfo.tax,amount,shop);
   var debugText=[raw,shopText?"--- 店名専用OCR ---\n"+shopText:"",itemText?"--- 商品専用OCR ---\n"+itemText:"",paymentText?"--- 支払専用OCR ---\n"+paymentText:""].filter(Boolean).join("\n\n");
@@ -960,7 +981,24 @@ function receiptTests(){
 
   var seiyuRegShop=shopFromText("東大和\n登録番号 T8011503002037\n電話 042-349-3738",false);
 
+  var daisoObj={
+    text:"だんぜん!ダイソー\nDAISO\nダイソー立川幸町店\n2026年09月26日(土)17:54\nC-Cケーブル 3A、1 ¥100外\n小計 1点 ¥100\n10%税抜対象額 ¥100\n10%税額 ¥10\n合計 ¥110\n楽天ペイ ¥110\n登録番号 T7240001022681\n伝票番号 P20260926175419\nご利用金額 ¥110",
+    whole:"だんぜん!ダイソー\nDAISO\nダイソー立川幸町店\nC-Cケーブル 3A、1 ¥100外\n合計 ¥110\n楽天ペイ ¥110",
+    shopText:"だんぜん!ダイソー\nDAISO",
+    itemText:"レツ 貴 ¥9999939\nハーバハーーールー人及A1 ¥1008\nC-Cケーブル 3A、1 ¥100外",
+    paymentText:"決済手段 楽天ペイ\nご利用金額 ¥110",
+    sections:{top:"だんぜん!ダイソー\nDAISO\nダイソー立川幸町店\n2026年09月26日(土)17:54",middle:"C-Cケーブル 3A、1 ¥100外",bottom:"小計 1点 ¥100\n10%税額 ¥10\n合計 ¥110\n楽天ペイ ¥110"},
+    meta:{passes:14,skew:0,ratio:4}
+  };
+  var pd=parseReceiptText(daisoObj,"2026-09-26"),pd100=pd.itemRows.find(function(x){return x.total===100});
+
   return[
+    ["receipt DAISO shop branch test",pd.shop==="ダイソー立川幸町店"],
+    ["receipt DAISO accounting test",pd.date==="2026-09-26"&&pd.amount===110&&pd.subtotal===100&&pd.tax===10&&pd.paymentCandidate==="rakutenpay"],
+    ["receipt DAISO rejects over-total fake items test",pd.itemRows.length===1&&!!pd100],
+    ["receipt DAISO C-C cable product test",!!pd100&&/C-Cケーブル\s*3A/i.test(pd100.name)&&pd100.total===100],
+    ["receipt DAISO single item no split test",pd.splitRows.length===1],
+    ["receipt DAISO cable category test",pd.categoryCandidate&&pd.categoryCandidate.groupName==="デジタル・IT"&&pd.categoryCandidate.subName==="スマホ用品"],
     ["receipt SEIYU registration fingerprint test",seiyuRegShop==="西友"],
     ["receipt item category snack test",splitSnack&&/お菓子|スイーツ/.test(splitSnack.categoryLabel)],
     ["receipt item category drink test",splitDrink&&/飲み物/.test(splitDrink.categoryLabel)],

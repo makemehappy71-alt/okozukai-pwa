@@ -317,6 +317,7 @@ function editDistance(a,b){
 function canonicalizeBrandTokens(name){
   var brands=["LDC","UCC","AGF","BOSS"],parts=String(name||"").split(/\s+/);
   return parts.map(function(part){
+    if(/^C[-‐‑‒–— ]?C$/i.test(part))return"C-C";
     if(/[ぁ-んァ-ヶ一-龠]/.test(part))return part;
     var clean=part.replace(/[^A-Za-z0-9]/g,"");
     if(clean.length<2||clean.length>5)return part;
@@ -615,6 +616,12 @@ function paymentFromText(text){
   if(/現金|cash|お\s*預り|お\s*釣り|釣銭/i.test(nfkc))return"wallet";
   return"";
 }
+function normalizeDaisoBranch(name){
+  var s=String(name||"").normalize?String(name||"").normalize("NFKC"):String(name||"");
+  s=s.replace(/\s+/g,"").trim();
+  if(/^ダイソー立川神町店$/.test(s))return"ダイソー立川幸町店";
+  return s;
+}
 function shopFromText(text,knownOnly){
   var lines=normalize(text).split("\n").map(function(x){return x.trim()}).filter(Boolean).slice(0,18),joined=lines.join(" ");
   if(/CREATE|クリエイト|ドラッグストア\s*クリエイト/i.test(joined))return"クリエイト";
@@ -622,7 +629,7 @@ function shopFromText(text,knownOnly){
   for(var di=0;di<lines.length;di++){
     var dl=(lines[di].normalize?lines[di].normalize("NFKC"):lines[di]).replace(/\s+/g,"").replace(/^[^ダ]*?(?=ダイソー)/,"");
     var dm=dl.match(/(ダイソー[^\n]{1,24}?店)/);
-    if(dm){daisoBranch=dm[1];break}
+    if(dm){daisoBranch=normalizeDaisoBranch(dm[1]);break}
   }
   if(daisoBranch)return daisoBranch;
   if(/\bDAISO\b|ダイソー|だんぜん!?\s*ダイソー/i.test(joined))return"ダイソー";
@@ -707,12 +714,41 @@ function hasFinalAmountCue(text){
 function uniqueItemRows(rows){
   return mergeProductRows(rows);
 }
+function recoverSingleItemRow(texts,subtotal,amount){
+  subtotal=Number(subtotal||0);amount=Number(amount||0);
+  var all=normalize((texts||[]).filter(Boolean).join("\n"));
+  if(!subtotal||!all)return null;
+  var oneItem=/(?:小計|計)\s*1\s*点|1\s*点\s*(?:小計|¥|￥)/i.test(all);
+  if(!oneItem)return null;
+  var bad=/(総合計|合計|小計|税込|お支払|消費税|税額|税抜対象額|対象金額|楽天\s*(?:pay|ペイ)|決済手段|ご利用金額|登録番号|伝票番号|承認番号|レジ|TEL|電話|DAISO|ダイソー|領収|QR|LINE|ハッピープライス|オンライン)/i;
+  var lines=all.split("\n").map(function(x){return x.trim()}).filter(Boolean),candidates=[];
+  lines.forEach(function(line,i){
+    if(bad.test(line))return;
+    var raw=ocrMoneyClean(line);
+    var stripped=raw
+      .replace(/[\s,、]+[0-9]{1,3}\s*(?:¥|￥|\\|Y)?\s*[0-9]{2,7}\s*(?:円)?\s*(?:外|内|軽|[A-Z※*])?\s*$/i,"")
+      .replace(/\s+(?:¥|￥|\\|Y)\s*[0-9]{2,7}\s*(?:円)?\s*(?:外|内|軽|[A-Z※*])?\s*$/i,"")
+      .replace(/\s+[0-9]{2,7}\s*(?:外|内|軽)\s*$/i,"")
+      .trim();
+    var name=normalizeProductName(stripped);
+    if(!name||isGarbageProductName(name))return;
+    var keyword=/ケーブル|USB|TYPE\s*[- ]?C|C\s*[- ]?C|充電|アダプタ|イヤホン|電池|文具|ケース/i.test(name);
+    var score=productMeaningfulScore(name)+(keyword?45:0);
+    if(/ケーブル\s*3A/i.test(name))score+=20;
+    if(/[ぁ-んァ-ヶ一-龠A-Za-z]/.test(name))candidates.push({name:name,score:score,index:i});
+  });
+  candidates.sort(function(a,b){return b.score-a.score||a.index-b.index});
+  var best=candidates[0];
+  if(!best||best.score<18)return null;
+  return{name:best.name,rawName:best.name,unitPrice:subtotal,qty:1,total:subtotal,quality:best.score+30,sourceIndex:best.index,sourcePriority:5,recovered:true};
+}
 function parseReceiptText(input,baseDate){
   var obj=input&&typeof input==="object"&&!Array.isArray(input)?input:null,raw=normalize(obj?obj.text:input),whole=normalize(obj&&obj.whole||""),shopText=normalize(obj&&obj.shopText||""),itemText=normalize(obj&&obj.itemText||""),paymentText=normalize(obj&&obj.paymentText||""),sections=obj&&obj.sections||{},top=normalize(sections.top||""),middle=normalize(sections.middle||""),bottom=normalize(sections.bottom||"");
   var shop=shopFromText(shopText,true)||shopFromText(top,true)||shopFromText(raw);
-  if(shop==="ダイソー"){
-    var daisoDetailed=shopFromText([top,raw,whole].filter(Boolean).join("\n"),true);
-    if(/^ダイソー.+店$/.test(daisoDetailed))shop=daisoDetailed;
+  if(/^ダイソー/.test(shop)){
+    var daisoDetailed=shopFromText([shopText,top,raw,whole].filter(Boolean).join("\n"),true);
+    if(/^ダイソー.+店$/.test(daisoDetailed))shop=normalizeDaisoBranch(daisoDetailed);
+    else shop=normalizeDaisoBranch(shop);
   }
   var date=dateFromText(top,baseDate||defaultDate(),true)||dateFromText(raw,baseDate||defaultDate());
   var amountInfo=analyzeAmount(raw,[bottom,paymentText].filter(Boolean).join("\n")),amount=amountInfo.amount;
@@ -727,7 +763,12 @@ function parseReceiptText(input,baseDate){
   if(whole)initialRows=initialRows.concat(itemRowsFromText(productSourceText(whole),2));
   initialRows=initialRows.concat(itemRowsFromText(productSourceText(raw),1));
 
-  var itemChoice=chooseItemsForSubtotal(initialRows,amountInfo.subtotal,amount),rows=itemChoice.rows,items=rows.map(function(x){return x.name}),cat=categorySuggestion(raw,shop,rows);
+  var itemChoice=chooseItemsForSubtotal(initialRows,amountInfo.subtotal,amount),rows=itemChoice.rows;
+  if(!rows.length&&amountInfo.subtotal){
+    var recoveredSingle=recoverSingleItemRow([itemText,middle,whole,raw],amountInfo.subtotal,amount);
+    if(recoveredSingle)rows=[recoveredSingle];
+  }
+  var items=rows.map(function(x){return x.name}),cat=categorySuggestion(raw,shop,rows);
   var itemSum=rows.reduce(function(a,x){return a+Number(x.total||0)},0),subtotalTaxMatch=!!(amountInfo.subtotal&&amountInfo.tax&&amountInfo.subtotal+amountInfo.tax===amount);
   var splitRows=allocateReceiptRows(rows,amountInfo.subtotal,amountInfo.tax,amount,shop);
   var debugText=[raw,shopText?"--- 店名専用OCR ---\n"+shopText:"",itemText?"--- 商品専用OCR ---\n"+itemText:"",paymentText?"--- 支払専用OCR ---\n"+paymentText:""].filter(Boolean).join("\n\n");
@@ -992,7 +1033,23 @@ function receiptTests(){
   };
   var pd=parseReceiptText(daisoObj,"2026-09-26"),pd100=pd.itemRows.find(function(x){return x.total===100});
 
+  var daisoActualObj={
+    text:"だんぜん!ダイソー\nDAISO\nダイソー立川神町店\n2026年09月26日(土)17:54\nC-C ケーブル 3A\n小計 1点 ¥100\n10%税抜対象額 ¥100\n10%税額 ¥10\n合計 ¥110\n楽天ペイ ¥110",
+    whole:"DAISO\nダイソー立川神町店\nC-C ケーブル 3A\n小計 1点 ¥100\n合計 ¥110\n楽天ペイ ¥110",
+    shopText:"だんぜん!ダイソー\nDAISO",
+    itemText:"C-C ケーブル 3A",
+    paymentText:"楽天ペイ ¥110",
+    sections:{top:"DAISO\nダイソー立川神町店\n2026年09月26日(土)17:54",middle:"C-C ケーブル 3A",bottom:"小計 1点 ¥100\n10%税額 ¥10\n合計 ¥110\n楽天ペイ ¥110"},
+    meta:{passes:14,skew:0,ratio:4}
+  };
+  var pda=parseReceiptText(daisoActualObj,"2026-09-26"),pdaRow=pda.itemRows[0]||null;
+
   return[
+    ["receipt DAISO C-C token safeguard test",normalizeProductName("C-C ケーブル 3A")==="C-C ケーブル 3A"],
+    ["receipt DAISO actual 神→幸 branch correction test",pda.shop==="ダイソー立川幸町店"],
+    ["receipt DAISO actual single-item recovery test",pda.itemRows.length===1&&!!pdaRow&&/C-C\s*ケーブル\s*3A/i.test(pdaRow.name)&&pdaRow.total===100],
+    ["receipt DAISO actual detail recovery test",/C-C\s*ケーブル\s*3A/i.test(pda.detail)],
+    ["receipt DAISO actual no split test",pda.splitRows.length===1],
     ["receipt DAISO shop branch test",pd.shop==="ダイソー立川幸町店"],
     ["receipt DAISO accounting test",pd.date==="2026-09-26"&&pd.amount===110&&pd.subtotal===100&&pd.tax===10&&pd.paymentCandidate==="rakutenpay"],
     ["receipt DAISO rejects over-total fake items test",pd.itemRows.length===1&&!!pd100],

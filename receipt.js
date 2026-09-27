@@ -181,6 +181,34 @@ function makeOCRPixelRegion(canvas,x1,y1,x2,y2,scale){
   out.width=Math.max(1,Math.round(sw*k));out.height=Math.max(1,Math.round(sh*k));
   var ctx=out.getContext("2d",{willReadFrequently:true});ctx.fillStyle="#fff";ctx.fillRect(0,0,out.width,out.height);ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality="high";ctx.drawImage(canvas,sx,sy,sw,sh,0,0,out.width,out.height);return out;
 }
+function focusedTextVariant(canvas,x1,y1,x2,y2,scale,kind){
+  var out=makeOCRPixelRegion(canvas,x1,y1,x2,y2,scale),ctx=out.getContext("2d",{willReadFrequently:true});
+  try{
+    var im=ctx.getImageData(0,0,out.width,out.height),d=im.data,hist=new Uint32Array(256),sum=0,count=out.width*out.height;
+    for(var i=0;i<d.length;i+=4){
+      var lum=Math.round(.299*d[i]+.587*d[i+1]+.114*d[i+2]);hist[lum]++;sum+=lum;
+      d[i]=d[i+1]=d[i+2]=lum;d[i+3]=255;
+    }
+    if(kind==="contrast"){
+      var mean=count?sum/count:180;
+      for(var j=0;j<d.length;j+=4){var v=clamp((d[j]-mean)*1.85+mean+8,0,255);d[j]=d[j+1]=d[j+2]=v}
+    }else if(kind==="binary"){
+      var total=count,sumAll=0;for(var h=0;h<256;h++)sumAll+=h*hist[h];
+      var sumB=0,wB=0,maxVar=0,thr=178;
+      for(var t=0;t<256;t++){wB+=hist[t];if(!wB)continue;var wF=total-wB;if(!wF)break;sumB+=t*hist[t];var mB=sumB/wB,mF=(sumAll-sumB)/wF,vv=wB*wF*(mB-mF)*(mB-mF);if(vv>maxVar){maxVar=vv;thr=t}}
+      thr=clamp(thr+3,125,215);
+      for(var q=0;q<d.length;q+=4){var bv=d[q]<thr?0:255;d[q]=d[q+1]=d[q+2]=bv}
+    }else if(kind==="sharp"){
+      var src=new Uint8ClampedArray(d),w=out.width,hh=out.height;
+      for(var y=1;y<hh-1;y++)for(var x=1;x<w-1;x++){
+        var p=(y*w+x)*4,c0=src[p],up=src[p-w*4],dn=src[p+w*4],lf=src[p-4],rt=src[p+4];
+        var sv=clamp(c0*5-up-dn-lf-rt,0,255);d[p]=d[p+1]=d[p+2]=sv;
+      }
+    }
+    ctx.putImageData(im,0,0);
+  }catch(_e){}
+  return out;
+}
 function ocrBlockLines(blocks){
   var out=[];
   (blocks||[]).forEach(function(block){
@@ -225,23 +253,26 @@ function anchoredProductLineFromBlocks(blocks,fullText,w,h){
   });
   candidates.sort(function(a,b){return b.score-a.score||a.line.bbox.y0-b.line.bbox.y0});
   if(!candidates.length)return null;
-  var best=candidates[0],line=best.line,padY=Math.max(8,Math.round(best.height*.85)),padX=Math.max(12,Math.round(w*.025));
-  var fullBox=bboxPad(line.bbox,w,h,padX,padY);if(!fullBox)return null;
+  var best=candidates[0],line=best.line,padY=Math.max(6,Math.round(best.height*.62)),tightPadY=Math.max(3,Math.round(best.height*.28)),padX=Math.max(12,Math.round(w*.025));
+  var fullBox=bboxPad(line.bbox,w,h,padX,padY),tightBox=bboxPad(line.bbox,w,h,padX,tightPadY);if(!fullBox||!tightBox)return null;
   var pw=priceWordStart(line.words,best.value),nameBox=null;
-  if(pw!=null&&pw>fullBox.x0+30){
-    nameBox={x0:fullBox.x0,y0:fullBox.y0,x1:clamp(pw+Math.round(w*.012),fullBox.x0+30,w),y1:fullBox.y1};
+  if(pw!=null&&pw>tightBox.x0+30){
+    nameBox={x0:tightBox.x0,y0:tightBox.y0,x1:clamp(pw+Math.round(w*.010),tightBox.x0+30,w),y1:tightBox.y1};
   }
-  return{value:best.value,discount:best.discount,text:line.text,fullBox:fullBox,nameBox:nameBox};
+  return{value:best.value,discount:best.discount,text:line.text,fullBox:fullBox,tightBox:tightBox,nameBox:nameBox};
 }
 function anchoredProductSlices(bundle,wholeResult,fullText){
   var blocks=wholeResult&&wholeResult.data&&wholeResult.data.blocks||[],canvas=bundle.gray,anchor=anchoredProductLineFromBlocks(blocks,fullText,canvas.width,canvas.height);
   if(!anchor)return{anchor:null,slices:[]};
   var out=[],b=anchor.fullBox;
   if(anchor.nameBox){
-    var n=anchor.nameBox;
-    out.push({canvas:makeOCRPixelRegion(canvas,n.x0,n.y0,n.x1,n.y1,4.6),mode:"7",label:"商品価格座標・名前再OCR",anchorValue:anchor.value,appendPrice:true});
+    var n=anchor.nameBox,base=bundle.base||canvas;
+    out.push({canvas:makeOCRPixelRegion(base,n.x0,n.y0,n.x1,n.y1,5.0),mode:"7",label:"商品価格座標・名前カラー",anchorValue:anchor.value,appendPrice:true});
+    out.push({canvas:focusedTextVariant(canvas,n.x0,n.y0,n.x1,n.y1,5.2,"contrast"),mode:"7",label:"商品価格座標・名前強調",anchorValue:anchor.value,appendPrice:true});
+    out.push({canvas:focusedTextVariant(base,n.x0,n.y0,n.x1,n.y1,5.2,"binary"),mode:"7",label:"商品価格座標・名前二値",anchorValue:anchor.value,appendPrice:true});
+    out.push({canvas:focusedTextVariant(canvas,n.x0,n.y0,n.x1,n.y1,5.0,"sharp"),mode:"13",label:"商品価格座標・名前シャープRaw",anchorValue:anchor.value,appendPrice:true});
   }
-  out.push({canvas:makeOCRPixelRegion(canvas,b.x0,b.y0,b.x1,b.y1,4.1),mode:"7",label:"商品価格座標・全行再OCR",anchorValue:anchor.value,appendPrice:false});
+  out.push({canvas:makeOCRPixelRegion(canvas,b.x0,b.y0,b.x1,b.y1,4.2),mode:"7",label:"商品価格座標・全行",anchorValue:anchor.value,appendPrice:false});
   return{anchor:anchor,slices:out};
 }
 function normalizeAnchoredOCRText(text,anchorValue,appendPrice){
@@ -1314,6 +1345,13 @@ function receiptTests(){
     meta:{passes:16,skew:0,ratio:4}
   };
   var pbk=parseReceiptText(bkRegressionObj,"2026-09-27"),pbkRow=pbk.itemRows[0]||null;
+  var bkCoordBlocks=[{paragraphs:[{lines:[{text:"E 【りのたかセト】 1 ¥1,090",bbox:{x0:80,y0:620,x1:900,y1:660},words:[
+    {text:"E",bbox:{x0:80,y0:620,x1:110,y1:660}},
+    {text:"【りのたかセト】",bbox:{x0:120,y0:620,x1:560,y1:660}},
+    {text:"1",bbox:{x0:620,y0:620,x1:650,y1:660}},
+    {text:"¥1,090",bbox:{x0:720,y0:620,x1:900,y1:660}}
+  ]}]}]}];
+  var bkCoord=anchoredProductLineFromBlocks(bkCoordBlocks,"クーポン割引 ¥-250\n合計金額 ¥840",1000,1800);
 
   var daiso522Name=normalizeProductName("CCケーブル 3A、 1 ¥1004%");
   var daiso522Obj={
@@ -1328,6 +1366,7 @@ function receiptTests(){
   var p522=parseReceiptText(daiso522Obj,"2026-09-26"),p522Row=p522.itemRows[0]||null;
 
   return[
+    ["receipt Burger King price-coordinate anchor test",!!bkCoord&&bkCoord.value===1090&&bkCoord.discount===250&&!!bkCoord.nameBox&&bkCoord.nameBox.x1<900],
     ["receipt Burger King branch fusion test",pbk.shop==="バーガーキング立川北口店"],
     ["receipt Burger King total/payment test",pbk.amount===840&&pbk.paymentCandidate==="wallet"],
     ["receipt Burger King structural item recovery test",!!pbkRow&&pbkRow.total===840&&pbkRow.originalTotal===1090&&pbkRow.discount===250],

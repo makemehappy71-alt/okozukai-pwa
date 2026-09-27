@@ -1499,16 +1499,18 @@ function receiptTests(){
   ]}]}]}];
   var bkCoord=anchoredProductLineFromBlocks(bkCoordBlocks,"クーポン割引 ¥-250\n合計金額 ¥840",1000,1800);
   var badFocusConsensus=focusedProductConsensus([
-    "E 【7のたかセト】 欄夫を ¥1,090",
-    "E 【りのたかセト】 ¥1,090",
-    "E 【9のアーたかセト】 ¥1,090",
-    "E 【7のたかセト】 ¥1,090"
-  ],1090);
+    {family:"focused",text:"E 【7のたかセト】 欄夫を ¥1,090"},
+    {family:"focused",text:"E 【りのたかセト】 ¥1,090"},
+    {family:"focused",text:"E 【9のアーたかセト】 ¥1,090"},
+    {family:"focused",text:"E 【7のたかセト】 ¥1,090"}
+  ],1090,{shop:"バーガーキング立川北口店"});
   var goodFocusConsensus=focusedProductConsensus([
-    "E 【ワッパーチーズセット】 ¥1,090",
-    "【ワッパーチーズセット】 ¥1,090",
-    "ワッパーチーズセット ¥1,090"
-  ],1090);
+    {family:"whole",text:"E 【ワッパーチーズセット】 ¥1,090"},
+    {family:"item",text:"【ワッパーチーズセット】 ¥1,090"},
+    {family:"focused",text:"ワッパーチーズセット ¥1,090"}
+  ],1090,{shop:"バーガーキング立川北口店"});
+  var maskedDebug=maskReceiptDebugText("メンバーシップ会員番号 0000154697\n店舗 042-512-9717\nアンケートコード 7010-3903-0077-2123");
+  var ambiguousDiscount=discountedRowByStructure([],"商品A ¥1,090\nクーポン割引 ¥-250\n商品B ¥1,070\nクーポン割引 ¥-230\n合計 ¥840",840);
 
   var daiso522Name=normalizeProductName("CCケーブル 3A、 1 ¥1004%");
   var daiso522Obj={
@@ -1524,9 +1526,11 @@ function receiptTests(){
 
   return[
     ["receipt Burger King bad focused OCR not auto-confirmed test",badFocusConsensus.attempted===true&&badFocusConsensus.accepted===false],
-    ["receipt Burger King medium candidate preserved test",badFocusConsensus.confidenceLevel==="medium"&&!!badFocusConsensus.candidateName&&badFocusConsensus.rejectionReason==="accepted_as_candidate"],
+    ["receipt Burger King same-family OCR stays medium test",badFocusConsensus.confidenceLevel==="medium"&&!!badFocusConsensus.candidateName&&badFocusConsensus.familySupport===1&&badFocusConsensus.rejectionReason==="same_source_family_only"],
     ["receipt Burger King focused cleanup test",cleanFocusedProductName("E 【7のたかセト】 欄夫を ¥1,090",1090)==="7のたかセット"],
-    ["receipt Burger King good focused OCR consensus acceptance test",goodFocusConsensus.accepted===true&&goodFocusConsensus.name==="ワッパーチーズセット"&&goodFocusConsensus.support>=2],
+    ["receipt Burger King good independent-source consensus acceptance test",goodFocusConsensus.accepted===true&&goodFocusConsensus.name==="ワッパーチーズセット"&&goodFocusConsensus.familySupport>=2],
+    ["receipt debug privacy mask test",maskedDebug.indexOf("0000154697")<0&&maskedDebug.indexOf("042-512-9717")<0&&maskedDebug.indexOf("7010-3903-0077-2123")<0],
+    ["receipt ambiguous synthetic discount recovery rejected test",ambiguousDiscount===null],
     ["receipt Burger King price-coordinate anchor test",!!bkCoord&&bkCoord.value===1090&&bkCoord.discount===250&&!!bkCoord.nameBox&&bkCoord.nameBox.x1<900],
     ["receipt Burger King branch fusion test",pbk.shop==="バーガーキング立川北口店"],
     ["receipt Burger King total/payment test",pbk.amount===840&&pbk.paymentCandidate==="wallet"],

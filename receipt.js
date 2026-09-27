@@ -1039,10 +1039,17 @@ function autoConfirmVerifiedSampleRows(shop,rows,context){
     if(!price||!raw)return x;
     var inf=merchantProductInferenceFromDictionary(dict,[{text:raw}],raw,price);
     if(!inf||!inf.name||inf.source!=="verified_sample"||!inf.priceMatch||Number(inf.samePriceMatches||0)!==1)return x;
-    // Built-in corrections are promoted only when OCR matches a registered alias
-    // (or is extremely close to one) AND the complete receipt accounting is consistent.
+    // Normal rows still need a registered alias (or an extremely close OCR match).
+    // A row recovered as the exact accounting gap may also be promoted when:
+    // - the whole receipt accounting is already trusted,
+    // - receipt item count matches,
+    // - this store has exactly one verified-sample item at this price, and
+    // - OCR has enough weak resemblance for dictionary inference to have surfaced it.
+    // This lets an accounting-recovered item such as the OK ¥325 row become confirmed
+    // without weakening confirmation rules for ordinary OCR rows.
     var aliasStrong=!!inf.registeredAliasMatch||Number(inf.textSimilarity||0)>=.82;
-    if(!aliasStrong)return x;
+    var structuralRecovery=!!x.recoveredMissing&&inf.priceMatch&&Number(inf.samePriceMatches||0)===1&&Number(inf.textSimilarity||0)>=.10;
+    if(!aliasStrong&&!structuralRecovery)return x;
     x.name=inf.name;
     x.lowConfidence=false;
     x.candidateOnly=false;
@@ -1050,6 +1057,7 @@ function autoConfirmVerifiedSampleRows(shop,rows,context){
     x.candidateSource="verified_sample";
     x.dictionarySuggested=true;
     x.verifiedSampleCorrection=true;
+    x.verifiedSampleStructuralRecovery=!!(structuralRecovery&&!aliasStrong);
     x.nameConfidence="high";
     x.quality=Math.max(94,Number(x.quality||0));
     return x;
@@ -2294,6 +2302,16 @@ function receiptTests(){
     {name:"クノルウ上オイライチ",rawName:"F クノルウ上オイライチ",total:108,qty:1,unitPrice:108,lowConfidence:true,candidateOnly:true}
   ])[0];
   var okBuiltIn325=merchantProductInference("オーケー立川若葉町店",[{text:'FTE*ヒ"ラフ'}],'FTE*ヒ"ラフ ¥325',325);
+  var okRecovered325Auto=autoConfirmVerifiedSampleRows("オーケー立川若葉町店",[
+    {name:"エビピラフ",rawName:"でしミワノ",unitPrice:325,qty:1,total:325,quality:40,recoveredMissing:true,lowConfidence:true,candidateOnly:true,candidateSource:"verified_sample"}
+  ],{
+    accountingStructureValid:true,amountConfidence:"high",merchandiseTarget:818,itemSum:818,expectedItemCount:7,actualItemCount:7
+  })[0];
+  var okOrdinary325StillGuarded=autoConfirmVerifiedSampleRows("オーケー立川若葉町店",[
+    {name:"エビピラフ",rawName:"でしミワノ",unitPrice:325,qty:1,total:325,quality:40,recoveredMissing:false,lowConfidence:true,candidateOnly:true,candidateSource:"verified_sample"}
+  ],{
+    accountingStructureValid:true,amountConfidence:"high",merchandiseTarget:818,itemSum:818,expectedItemCount:7,actualItemCount:7
+  })[0];
 
   var reviewModelSample=receiptReviewModels([
     {name:"誤読A",rawName:"OCR-A",total:101,qty:1,lowConfidence:true},
@@ -2405,6 +2423,8 @@ function receiptTests(){
     ["receipt OK built-in 108 row correction remains confirm-required test",!!okBuiltIn108Applied&&okBuiltIn108Applied.name==="家族の潤いライチ"&&okBuiltIn108Applied.lowConfidence===true],
     ["receipt OK built-in 325 suggestion test",!!okBuiltIn325&&okBuiltIn325.name==="エビピラフ"&&okBuiltIn325.source==="verified_sample"],
     ["receipt OK trusted verified-sample auto-confirm test",pOk.itemRows.length===4&&pOk.autoConfirmedItemCount===4&&pOk.lowConfidenceItemCount===0&&pOk.itemRows.every(function(x){return x.autoConfirmed===true&&x.candidateSource==="verified_sample"})],
+    ["receipt OK accounting-gap unique verified sample auto-confirm test",!!okRecovered325Auto&&okRecovered325Auto.autoConfirmed===true&&okRecovered325Auto.lowConfidence===false&&okRecovered325Auto.name==="エビピラフ"&&okRecovered325Auto.verifiedSampleStructuralRecovery===true],
+    ["receipt OK ordinary weak 325 OCR stays confirm-required test",!!okOrdinary325StillGuarded&&okOrdinary325StillGuarded.autoConfirmed!==true&&okOrdinary325StillGuarded.lowConfidence===true],
     ["receipt OK final total test",pOk.amount===859&&pOk.amountConfidence==="high"],
     ["receipt OK subtotal tax test",pOk.subtotal===796&&pOk.tax===63&&pOk.subtotalTaxMatch===true],
     ["receipt OK shop branch test",pOk.shop==="オーケー立川若葉町店"],
@@ -2511,7 +2531,7 @@ function receiptTests(){
 function attachTests(){
   var b=document.getElementById("selfTest");if(!b||b.dataset.receiptWrapped)return;
   var base=b.onclick;b.dataset.receiptWrapped="1";
-  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),pass=out.every(function(x){return x[1]}),box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">v3.52 レシート機能テストもすべて合格しました。</div>':'<div class="errorbox">レシート機能テストに失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
+  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),pass=out.every(function(x){return x[1]}),box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">v3.53 レシート機能テストもすべて合格しました。</div>':'<div class="errorbox">レシート機能テストに失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
 }
 var body=document.getElementById("modalBody");
 if(body){new MutationObserver(function(){enhance()}).observe(body,{childList:true,subtree:true})}

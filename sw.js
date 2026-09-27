@@ -1,10 +1,10 @@
-const CACHE = "okozukai-v3.2.8.5.36-prod-1";
+const CACHE = "okozukai-v3.2.8.5.36-prod-2";
 const ASSETS = [
   "./",
   "./index.html",
-  "./styles.css?v=328536",
-  "./app.js?v=328536",
-  "./receipt.js?v=328536",
+  "./styles.css?v=3285362",
+  "./app.js?v=3285362",
+  "./receipt.js?v=3285362",
   "./manifest.webmanifest",
   "./icon.svg",
   "./icon-192.png",
@@ -12,7 +12,11 @@ const ASSETS = [
 ];
 
 self.addEventListener("install", event => {
-  event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS)));
+  event.waitUntil(
+    caches.open(CACHE)
+      .then(cache => cache.addAll(ASSETS))
+      .then(() => self.skipWaiting())
+  );
 });
 
 self.addEventListener("message", event => {

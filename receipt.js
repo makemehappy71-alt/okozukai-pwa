@@ -175,6 +175,52 @@ function makeOCRRegion(canvas,x1,y1,x2,y2,scale){
   out.width=Math.max(1,Math.round(sw*k));out.height=Math.max(1,Math.round(sh*k));
   var ctx=out.getContext("2d",{willReadFrequently:true});ctx.fillStyle="#fff";ctx.fillRect(0,0,out.width,out.height);ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality="high";ctx.drawImage(canvas,sx,sy,sw,sh,0,0,out.width,out.height);return out;
 }
+function makeOCRPixelRegion(canvas,x1,y1,x2,y2,scale){
+  var sx=Math.max(0,Math.floor(x1)),sy=Math.max(0,Math.floor(y1)),ex=Math.min(canvas.width,Math.ceil(x2)),ey=Math.min(canvas.height,Math.ceil(y2));
+  var sw=Math.max(1,ex-sx),sh=Math.max(1,ey-sy),k=Math.max(1,Number(scale||1)),out=document.createElement("canvas");
+  out.width=Math.max(1,Math.round(sw*k));out.height=Math.max(1,Math.round(sh*k));
+  var ctx=out.getContext("2d",{willReadFrequently:true});ctx.fillStyle="#fff";ctx.fillRect(0,0,out.width,out.height);ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality="high";ctx.drawImage(canvas,sx,sy,sw,sh,0,0,out.width,out.height);return out;
+}
+function detectReceiptTextLineSlices(canvas,startRatio,endRatio,maxLines){
+  var out=[],ctx=canvas.getContext("2d",{willReadFrequently:true}),w=canvas.width,h=canvas.height;
+  var y0=Math.max(0,Math.floor(h*Number(startRatio||.18))),y1=Math.min(h,Math.ceil(h*Number(endRatio||.58)));
+  if(y1-y0<20||w<50)return out;
+  try{
+    var data=ctx.getImageData(0,y0,w,y1-y0).data,row=[],xStep=Math.max(1,Math.floor(w/700));
+    for(var yy=0;yy<y1-y0;yy++){
+      var dark=0,count=0;
+      for(var xx=0;xx<w;xx+=xStep){var p=(yy*w+xx)*4,lum=.299*data[p]+.587*data[p+1]+.114*data[p+2];if(lum<188)dark++;count++}
+      row[yy]=count?dark/count:0;
+    }
+    var smooth=row.map(function(_v,i){var s=0,n=0;for(var k=-2;k<=2;k++){var j=i+k;if(j>=0&&j<row.length){s+=row[j];n++}}return n?s/n:0});
+    var active=smooth.map(function(v){return v>.007}),bands=[],st=-1;
+    for(var i=0;i<=active.length;i++){
+      if(i<active.length&&active[i]){if(st<0)st=i}
+      else if(st>=0){var en=i-1;if(en-st+1>=5)bands.push({a:st,b:en});st=-1}
+    }
+    var merged=[];
+    bands.forEach(function(b){
+      var last=merged[merged.length-1];
+      if(last&&b.a-last.b<=5)last.b=b.b;else merged.push({a:b.a,b:b.b});
+    });
+    merged=merged.filter(function(b){var hh=b.b-b.a+1;return hh>=7&&hh<=Math.max(90,h*.045)});
+    merged=merged.map(function(b){
+      var pad=Math.max(5,Math.round((b.b-b.a+1)*.45)),a=Math.max(0,b.a-pad),bb=Math.min(y1-y0-1,b.b+pad),score=0;
+      for(var q=b.a;q<=b.b;q++)score+=smooth[q]||0;
+      return{a:a,b:bb,score:score,center:(b.a+b.b)/2};
+    });
+    // Prefer rows in the merchandise zone, then keep visual order for diagnostics.
+    merged.sort(function(a,b){
+      var ac=Math.abs((a.center/(y1-y0))-.38),bc=Math.abs((b.center/(y1-y0))-.38);
+      return ac-bc||b.score-a.score;
+    });
+    merged=merged.slice(0,Math.max(1,Number(maxLines||6))).sort(function(a,b){return a.a-b.a});
+    merged.forEach(function(b,idx){
+      out.push({canvas:makeOCRPixelRegion(canvas,0,y0+b.a,w,y0+b.b+1,3.2),mode:"7",label:"商品行再OCR"+(idx+1)});
+    });
+  }catch(_e){}
+  return out;
+}
 async function prepareImage(file){
   if(!file)throw new Error("画像が選択されていません");
   if(String(file.type||"").indexOf("image/")!==0)throw new Error("画像ファイルを選んでください");
@@ -950,7 +996,7 @@ function renderResult(p,errorText){
   if(p.amountConfidence==="high")metaHtml+='<div class="receipt-ocr-meta">金額判定：高信頼'+(p.subtotalTaxMatch?" / 小計＋税一致":"")+(p.itemSubtotalMatch?" / 商品合計＝小計":"")+'</div>';
   var confidenceWarn=p.amountConfidence==="low"?'<div class="warning">金額候補の信頼度が低いため、合計金額を確認してください。</div>':"";
   if(p.productReadFailed)confidenceWarn+='<div class="warning">商品名を確定できませんでした。価格・値引き構造は保持しています。商品名だけ確認・修正してください。</div>';
-  var rowHtml=rows.length?'<div class="receipt-item-summary"><div class="small"><strong>商品解析</strong></div>'+rows.map(function(x){var tail="";if(x.discounted&&x.originalTotal&&x.discount)tail=yen(x.originalTotal)+" − 値引 "+yen(x.discount)+" ＝ "+yen(x.total);else{if(x.qty>1)tail+="×"+x.qty;if(x.total)tail+=(tail?" = ":"= ")+yen(x.total)}return'<div><span>'+e(x.name)+'</span><strong>'+e(tail.trim())+'</strong></div>'}).join("")+'</div>':"";
+  var rowHtml=rows.length?'<div class="receipt-item-summary"><div class="small"><strong>商品解析</strong></div>'+rows.map(function(x){var tail="";if(x.discounted&&x.originalTotal&&x.discount)tail=yen(x.originalTotal)+" − 値引 "+yen(x.discount)+" ＝ "+yen(x.total);else{if(x.qty>1)tail+="×"+x.qty;if(x.total)tail+=(tail?" = ":"= ")+yen(x.total)}return'<div style="display:flex;flex-direction:column;align-items:flex-start;gap:6px"><span style="width:100%;overflow-wrap:anywhere">'+e(x.name)+'</span><strong style="width:100%;line-height:1.5">'+e(tail.trim())+'</strong></div>'}).join("")+'</div>':"";
   var splitHtml=splitRows.length>=2?'<div class="receipt-item-summary" id="receiptSplitBox"><label style="display:flex;gap:8px;align-items:center;margin-bottom:10px"><input id="receiptSplitEnabled" type="checkbox" checked style="width:auto;min-height:auto"><strong>商品ごとにカテゴリを振り分ける</strong></label><div class="small" style="margin-bottom:10px">税込合計が '+e(yen(p.amount||0))+' になるよう税額を自動按分します。</div>'+splitRows.map(function(x,i){return'<div style="display:flex;flex-direction:column;gap:8px;padding:12px 0;border-top:'+(i?'1px solid var(--line,rgba(255,255,255,.10))':'0')+'"><strong style="font-size:1.02em;line-height:1.45">'+e(x.name)+'</strong><div class="small" style="line-height:1.55">商品 '+e(yen(x.net))+' ＋ 税 '+e(yen(x.extra))+' ＝ 税込 <strong>'+e(yen(x.gross))+'</strong></div><select class="receipt-split-category" data-index="'+i+'" style="width:100%">'+categoryOptions(x.categoryId,x.subcategoryId)+'</select></div>'}).join("")+'</div>':"";
   panel.innerHTML='<div class="receipt-result-card">'+preview+
     '<div class="receipt-result-title"><strong>レシート読み取り結果</strong><span class="small">確認・修正してから支出入力へ反映してください。</span>'+metaHtml+'</div>'+
@@ -1054,13 +1100,16 @@ function buildOCRBundle(){
     {canvas:makeOCRScaledSlice(gray,.34,.66,2),mode:"11",label:"商品下段広域"},
     {canvas:makeOCRSlice(gray,.08,.68),mode:"11",label:"商品全域フォールバック"}
   ];
+  // Detect individual text rows in the merchandise zone and OCR them as single lines.
+  // This is layout-driven rather than another fixed broad crop.
+  var itemLineSlices=detectReceiptTextLineSlices(gray,.18,.58,6);
   var paymentSlices=[
     {canvas:makeOCRSlice(gray,.50,.84),mode:"6",label:"支払方法1"},
     {canvas:makeOCRSlice(binary,.50,.84),mode:"6",label:"支払方法2"},
     {canvas:makeOCRSlice(gray,.64,1),mode:"11",label:"支払方法3"},
     {canvas:makeOCRSlice(binary,.64,1),mode:"11",label:"支払方法4"}
   ];
-  return{gray:gray,binary:binary,slices:slices,shopSlices:shopSlices,itemSlices:itemSlices,paymentSlices:paymentSlices,skew:skew,ratio:ratio};
+  return{gray:gray,binary:binary,slices:slices,shopSlices:shopSlices,itemSlices:itemSlices,itemLineSlices:itemLineSlices,paymentSlices:paymentSlices,skew:skew,ratio:ratio};
 }
 async function readConfirmedReceipt(){
   if(busy||!pendingReceipt)return;
@@ -1105,6 +1154,12 @@ async function runOCR(bundle){
       var ip=itemParts[ii];ocrPassLabel=ip.label||("商品"+(ii+1));
       try{await worker.setParameters({preserve_interword_spaces:"1",tessedit_pageseg_mode:ip.mode||"6",tessedit_char_whitelist:""})}catch(_e){}
       try{var iret=await worker.recognize(ip.canvas),itxt=String(iret&&iret.data&&iret.data.text||"");itemPasses++;diagnostics.push({label:ip.label||("商品"+(ii+1)),text:normalize(itxt)});itemText=mergeOCRTexts(itemText,itxt)}catch(_e){}
+    }
+    var lineParts=bundle.itemLineSlices||[];
+    for(var li=0;li<lineParts.length;li++){
+      var lp=lineParts[li];ocrPassLabel=lp.label||("商品行再OCR"+(li+1));
+      try{await worker.setParameters({preserve_interword_spaces:"1",tessedit_pageseg_mode:lp.mode||"7",tessedit_char_whitelist:""})}catch(_e){}
+      try{var lret=await worker.recognize(lp.canvas),ltxt=String(lret&&lret.data&&lret.data.text||"");itemPasses++;diagnostics.push({label:lp.label||("商品行再OCR"+(li+1)),text:normalize(ltxt)});itemText=mergeOCRTexts(itemText,ltxt)}catch(_e){}
     }
     var paymentText="",paymentPasses=0,paymentParts=bundle.paymentSlices||[];
     for(var pi=0;pi<paymentParts.length;pi++){

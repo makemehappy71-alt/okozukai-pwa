@@ -385,9 +385,11 @@ function focusedProductCandidatePlausible(name){
   return true;
 }
 function focusedProductNameNatural(name,context){
-  var s=normalizeProductName(name),shop=String(context&&context.shop||"");
+  var raw=String(name||""),s=normalizeProductName(raw),shop=String(context&&context.shop||"");
   if(!s)return false;
-  if(/["'“”‘’<>={}^~]/.test(s))return false;
+  if(/["'“”‘’<>={}^~®©™]/.test(raw)||/[®©™]/.test(s))return false;
+  if(/[UuＵｕOoＯ〇]{2,}(?=\s*(?:ml|mI|l|L)\b)/.test(raw))return false;
+  if(/\b[0-9]{2,4}nml\b/i.test(raw))return false;
   if(/[ぁ-んァ-ヶ一-龠][0-9０-９][ぁ-んァ-ヶ一-龠]/.test(s))return false;
   if(/^[0-9０-９]+[ぁ-んァ-ヶ一-龠]/.test(s)&&!/^(?:7UP|100%|24h)/i.test(s))return false;
   if(/バーガーキング|burger\s*king/i.test(shop)){
@@ -568,9 +570,21 @@ function productSourceText(text){
 function paymentFromSources(bottom,raw,whole){
   return paymentFromText(bottom)||paymentFromText(raw)||paymentFromText(whole);
 }
+function normalizeOCRCapacityTokens(value){
+  var s=String(value||"");
+  // OCR often reads zeros as U/O and inserts an extra "n" before ml.
+  // Only repair tokens that already have a numeric-capacity shape.
+  s=s.replace(/\b([1-9])([UuOoＯ〇]{1,4})\s*(?:n\s*)?m[lI1]\b/g,function(_m,d,zeros){
+    return d+Array(zeros.length+1).join("0")+"ml";
+  });
+  s=s.replace(/\b([0-9]{2,4})\s*n\s*m[lI1]\b/gi,"$1ml");
+  s=s.replace(/\b([0-9]{2,4})\s*m[I1]\b/g,"$1ml");
+  return s;
+}
 function normalizeProductName(name){
   var raw=String(name||""),s=stripReceiptHeaderNoise(raw);
   s=s.normalize?s.normalize("NFKC"):s;
+  s=normalizeOCRCapacityTokens(s);
   s=s.replace(/[\r\n]+/g," ").replace(/[◎○●※◆◇■□★☆⑧⑩⑨⑦⑥⑤④③②①]+/g," ");
   s=s.replace(/[＠@*#]+/g," ").replace(/[_＿]+/g," ").replace(/[＝=]+$/g," ");
   s=s.replace(/^\s*[^ぁ-んァ-ヶー一-龠A-Za-z0-9]+/,"");
@@ -602,6 +616,7 @@ function normalizeProductName(name){
     return /^(?:茶|ーツ|料|乳|糖|味)$/.test(b)?a+b:a+" "+b;
   });
   s=s.replace(/[.,、。，・@*_＝=]+$/g,"").replace(/^[.,、。，・@*_＝=]+/g,"").replace(/\s+/g," ").trim();
+  s=normalizeOCRCapacityTokens(s);
   return canonicalizeBrandTokens(s);
 }
 
@@ -909,13 +924,14 @@ function receiptItemCountFromText(text){
   var n=m?Number(m[1]||0):0;return n>0&&n<1000?n:0;
 }
 function productNameRequiresConfirmation(name,shop){
-  var s=normalizeProductName(name);
+  var raw=String(name||""),s=normalizeProductName(raw);
   if(!s||s==="商品名要確認")return true;
-  if(/["'“”‘’<>={}^~]/.test(s))return true;
-  if(/[UuＵｕ]{2,}(?=\s*(?:ml|mI|l|L)?\b)/.test(s))return true;
+  if(/["'“”‘’<>={}^~®©™]/.test(raw)||/[®©™]/.test(s))return true;
+  if(/[UuＵｕOoＯ〇]{2,}(?=\s*(?:ml|mI|l|L)?\b)/.test(raw))return true;
+  if(/\b[0-9]{2,4}nml\b/i.test(raw))return true;
   if(/(.)\1{3,}/.test(s))return true;
   if(isGarbageProductName(s)||productMeaningfulScore(s)<18)return true;
-  if(!focusedProductNameNatural(s,{shop:shop}))return true;
+  if(!focusedProductNameNatural(raw,{shop:shop}))return true;
   return false;
 }
 function applyFocusedNamesToRows(shop,rows,meta){
@@ -932,7 +948,16 @@ function applyFocusedNamesToRows(shop,rows,meta){
       return x;
     }
     if(best&&best.consensus&&best.consensus.accepted){
-      x.name=best.consensus.name;x.rawName=x.name;x.lowConfidence=false;x.candidateOnly=false;x.candidateSource="focused";x.nameConfidence="high";
+      var consensusName=best.consensus.name,cleanEnough=!productNameRequiresConfirmation(consensusName,shop);
+      var strongIndependent=Number(best.consensus.familySupport||0)>=3&&Number(best.consensus.support||0)>=3&&Number(best.consensus.score||0)>=90;
+      if(!multi||(cleanEnough&&strongIndependent)){
+        x.name=consensusName;x.rawName=x.name;x.lowConfidence=false;x.candidateOnly=false;x.candidateSource="focused";x.nameConfidence="high";
+        return x;
+      }
+      var oldName=String(x.name||""),oldScore=productMeaningfulScore(oldName),newScore=productMeaningfulScore(consensusName),simAccepted=productSimilarity(oldName,consensusName);
+      if((!oldName||oldName==="商品名要確認")||(cleanEnough&&newScore>=oldScore+6&&simAccepted>=.60))x.name=consensusName;
+      x.lowConfidence=true;x.candidateOnly=true;x.candidateSource="focused";x.nameConfidence=cleanEnough?"medium":"low";
+      x.nameAlternatives=[consensusName].concat(best.consensus.candidates||[]).filter(function(v,i,a){return v&&a.indexOf(v)===i}).slice(0,3);
       return x;
     }
     if(best&&best.consensus&&best.consensus.candidateName){
@@ -2107,6 +2132,22 @@ function receiptTests(){
   };
   var pOk=parseReceiptText(okObj,"2026-09-27"),ok284=pOk.itemRows.find(function(x){return Number(x.total||0)===284}),ok325=pOk.itemRows.find(function(x){return Number(x.total||0)===325}),okItemTotals=pOk.itemRows.map(function(x){return Number(x.total||0)}).sort(function(a,b){return a-b}).join(","),okSplitDiscount=pOk.splitRows.reduce(function(a,x){return a+Number(x.discount||0)},0),okSplitTax=pOk.splitRows.reduce(function(a,x){return a+Number(x.extra||0)},0),okSplitGross=pOk.splitRows.reduce(function(a,x){return a+Number(x.gross||0)},0);
 
+  var capacityRepairChecks=
+    normalizeProductName("F MEIE® -チティー1UUUml").indexOf("1000ml")>=0&&
+    normalizeProductName("ドデがッン500nml").indexOf("500ml")>=0;
+  var multiWeakConsensusRows=applyFocusedNamesToRows("オーケー立川若葉町店",[
+    {name:"がバクノウルオイライチ",rawName:"がバクノウルオイライチ",total:108,qty:1,unitPrice:108}
+  ],{multiProductFocus:[
+    {value:108,consensus:{accepted:true,name:"がバクノウルオイライチ",candidateName:"",support:2,familySupport:2,score:88,candidates:["がバクノウルオイライチ"]},dictionaryInference:null}
+  ]});
+  var multiStrongConsensusRows=applyFocusedNamesToRows("オーケー立川若葉町店",[
+    {name:"エビピラフ",rawName:"エビピラフ",total:325,qty:1,unitPrice:325},
+    {name:"テスト飲料",rawName:"テスト飲料",total:101,qty:1,unitPrice:101}
+  ],{multiProductFocus:[
+    {value:325,consensus:{accepted:true,name:"エビピラフ",candidateName:"",support:3,familySupport:3,score:96,candidates:["エビピラフ"]},dictionaryInference:null},
+    {value:101,consensus:{accepted:false,name:"",candidateName:"テスト飲料",support:1,familySupport:1,score:60,candidates:["テスト飲料"]},dictionaryInference:null}
+  ]});
+
   var noisyNameChecks=[
     'FトETE"-チティー1UUUml',
     'Fドビデがッッ5UUml',
@@ -2206,6 +2247,9 @@ function receiptTests(){
     ["receipt OK merchandise target remains 818 after conflicting pre-total test",pOk.merchandiseTarget===818&&pOk.itemSum===818],
     ["receipt multi-item OCR names remain confirm-required without independent consensus test",pOk.itemRows.filter(function(x){return !x.autoConfirmed}).every(function(x){return x.lowConfidence===true})],
     ["receipt noisy product names require confirmation test",noisyNameChecks&&naturalNameCheck],
+    ["receipt OCR capacity normalization test",capacityRepairChecks],
+    ["receipt multi-item two-family consensus stays confirm-required test",multiWeakConsensusRows.length===1&&multiWeakConsensusRows[0].lowConfidence===true],
+    ["receipt multi-item strong clean consensus may auto-confirm test",multiStrongConsensusRows.length===2&&multiStrongConsensusRows[0].lowConfidence===false&&multiStrongConsensusRows[0].name==="エビピラフ"],
     ["receipt learned OCR alias inference test",!!aliasInference&&aliasInference.name==="テスト商品500ml"&&aliasInference.autoConfirmEligible===true],
     ["receipt OK receipt item count test",okCountSample===7],
     ["receipt OK split discount allocation test",pOk.splitRows.length===4&&okSplitDiscount===22],
@@ -2290,7 +2334,7 @@ function receiptTests(){
 function attachTests(){
   var b=document.getElementById("selfTest");if(!b||b.dataset.receiptWrapped)return;
   var base=b.onclick;b.dataset.receiptWrapped="1";
-  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),pass=out.every(function(x){return x[1]}),box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">v3.47 レシート機能テストもすべて合格しました。</div>':'<div class="errorbox">レシート機能テストに失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
+  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),pass=out.every(function(x){return x[1]}),box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">v3.48 レシート機能テストもすべて合格しました。</div>':'<div class="errorbox">レシート機能テストに失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
 }
 var body=document.getElementById("modalBody");
 if(body){new MutationObserver(function(){enhance()}).observe(body,{childList:true,subtree:true})}

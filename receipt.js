@@ -656,8 +656,18 @@ function bestShopFromSources(sources){
       candidates.push({name:v,score:score});
     });
   });
+  // Cross-pass fusion: one OCR pass may read the brand while another reads the branch correctly.
+  var joined=normalize((sources||[]).filter(Boolean).join("\n"));
+  var hasBK=/(?:バーガーキング|バーガーキンク|ガーキンク|burger\s*king)/i.test(joined);
+  if(hasBK){
+    var branchMatches=joined.match(/(?:立川|新宿|池袋|渋谷|秋葉原|横浜|大宮|町田|八王子)[ぁ-んァ-ヶ一-龠A-Za-z0-9]{0,14}(?:店|趾|址|庖|占|后|苫)/g)||[];
+    if(branchMatches.length){
+      branchMatches=branchMatches.map(function(x){return x.replace(/[趾址庖占后苫]$/,"店")}).sort(function(a,b){return b.length-a.length});
+      candidates.push({name:"バーガーキング"+branchMatches[0],score:130});
+    }
+  }
   candidates.sort(function(a,b){return b.score-a.score||b.name.length-a.name.length});
-  return candidates.length?candidates[0].name:"";
+  return candidates.length?normalizeKnownShopName(candidates[0].name):"";
 }
 function shopFromText(text,knownOnly){
   var lines=normalize(text).split("\n").map(function(x){return x.trim()}).filter(Boolean).slice(0,18),joined=lines.join(" ");
@@ -805,6 +815,15 @@ function receiptDiscountAmount(text){
   });
   return sum;
 }
+function recoverDiscountedStructure(rows,text,amount){
+  var discount=receiptDiscountAmount(text),target=Number(amount||0),original=target+discount;
+  if(!discount||!target||!original)return null;
+  var merged=mergeProductRows(rows).filter(function(x){return Number(x.total||0)===original});
+  if(!merged.length)return null;
+  merged.sort(function(a,b){return Number(b.quality||0)-Number(a.quality||0)});
+  var best=merged[0],name=normalizeProductName(best.name),weak=isGarbageProductName(name)||productMeaningfulScore(name)<22;
+  return{name:weak?"商品名要確認":name,rawName:name,unitPrice:original,qty:1,total:target,originalTotal:original,discount:discount,discounted:true,lowConfidence:weak,quality:Number(best.quality||0)};
+}
 function discountedSingleItem(rows,text,amount){
   var discount=receiptDiscountAmount(text),target=Number(amount||0);
   if(!discount||!target)return null;
@@ -856,7 +875,7 @@ function parseReceiptText(input,baseDate){
   initialRows=initialRows.concat(itemRowsFromText(productSourceText(raw),1));
 
   var receiptAllText=[itemText,middle,whole,raw,paymentText,bottom].filter(Boolean).join("\n");
-  var discounted=discountedSingleItem(initialRows,receiptAllText,amount);
+  var discounted=discountedSingleItem(initialRows,receiptAllText,amount)||recoverDiscountedStructure(initialRows,receiptAllText,amount);
   initialRows=initialRows.filter(function(x){return !/(?:^|\s)(?:お?釣(?:り)?|お?つり|釣銭)(?:\s|$)/i.test(String(x.name||""));});
   // Structural change detection: if tender - total equals a parsed row, it is change even when OCR mangles its label.
   initialRows=removeDerivedChangeRows(initialRows,receiptAllText,amount);
@@ -871,16 +890,17 @@ function parseReceiptText(input,baseDate){
   // Never expose a product set whose sum exceeds the confirmed receipt total.
   if(amount>0&&rows.reduce(function(a,x){return a+Number(x.total||0)},0)>amount)rows=[];
   // If OCR produced only a weak gibberish item, do not pretend it is a reliable product name.
-  if(rows.length===1&&productMeaningfulScore(rows[0].name)<15)rows=[];
+  if(rows.length===1&&productMeaningfulScore(rows[0].name)<15&&!rows[0].lowConfidence)rows=[];
   var items=rows.map(function(x){return x.name}),cat=categorySuggestion(raw,shop,rows);
-  var productReadFailed=!items.length&&!!amount;
+  var productLowConfidence=rows.some(function(x){return !!x.lowConfidence});
+  var productReadFailed=(!items.length||productLowConfidence)&&!!amount;
   var detailFallback=shop||"レシート購入";
   if(productReadFailed&&/(?:バーガーキング|burger\s*king|マクドナルド|モスバーガー|ケンタッキー|kfc)/i.test(String(shop||"")))detailFallback=shop+"・外食";
   var itemSum=rows.reduce(function(a,x){return a+Number(x.total||0)},0),subtotalTaxMatch=!!(amountInfo.subtotal&&amountInfo.tax&&amountInfo.subtotal+amountInfo.tax===amount);
   var splitRows=allocateReceiptRows(rows,amountInfo.subtotal,amountInfo.tax,amount,shop);
   var diag=obj&&obj.diagnostics||[];var diagnosticText=diag.map(function(d,i){return"--- PASS "+(i+1)+" / "+d.label+" ---\n"+(d.text||"(空)")}).join("\n\n");
   var debugText=[diagnosticText,raw?"--- 統合OCR ---\n"+raw:"",shopText?"--- 店名専用OCR統合 ---\n"+shopText:"",itemText?"--- 商品専用OCR統合 ---\n"+itemText:"",paymentText?"--- 支払専用OCR統合 ---\n"+paymentText:""].filter(Boolean).join("\n\n");
-  return{rawText:raw,debugText:debugText,date:date,shop:shop,amount:amount,amountConfidence:amountInfo.confidence,amountScore:amountInfo.score,subtotal:amountInfo.subtotal,tax:amountInfo.tax,subtotalTaxMatch:subtotalTaxMatch,paymentCandidate:payment,categoryCandidate:cat,items:items,itemRows:rows,splitRows:splitRows,itemSum:itemSum,itemSubtotalMatch:!!(amountInfo.subtotal&&itemSum===amountInfo.subtotal),detail:items.length?items.slice(0,2).join("・")+(items.length>2?"ほか":""):detailFallback,productReadFailed:productReadFailed,discount:receiptDiscountAmount(receiptAllText),tendered:receiptTenderedAmount(receiptAllText,amount),ocrMeta:obj&&obj.meta||null};
+  return{rawText:raw,debugText:debugText,date:date,shop:shop,amount:amount,amountConfidence:amountInfo.confidence,amountScore:amountInfo.score,subtotal:amountInfo.subtotal,tax:amountInfo.tax,subtotalTaxMatch:subtotalTaxMatch,paymentCandidate:payment,categoryCandidate:cat,items:items,itemRows:rows,splitRows:splitRows,itemSum:itemSum,itemSubtotalMatch:!!(amountInfo.subtotal&&itemSum===amountInfo.subtotal),detail:items.length&&!productLowConfidence?items.slice(0,2).join("・")+(items.length>2?"ほか":""):detailFallback,productReadFailed:productReadFailed,productLowConfidence:productLowConfidence,discount:receiptDiscountAmount(receiptAllText),tendered:receiptTenderedAmount(receiptAllText,amount),ocrMeta:obj&&obj.meta||null};
 }
 function renderResult(p,errorText){
   var panel=document.getElementById("receiptOCRPanel");if(!panel)return;
@@ -889,7 +909,7 @@ function renderResult(p,errorText){
   var metaHtml=meta?'<div class="receipt-ocr-meta">分割OCR '+e(meta.passes||"")+"回"+(Math.abs(Number(meta.skew||0))>=.3?" / 傾き補正 "+e(Number(meta.skew).toFixed(1))+"°":"")+'</div>':"";
   if(p.amountConfidence==="high")metaHtml+='<div class="receipt-ocr-meta">金額判定：高信頼'+(p.subtotalTaxMatch?" / 小計＋税一致":"")+(p.itemSubtotalMatch?" / 商品合計＝小計":"")+'</div>';
   var confidenceWarn=p.amountConfidence==="low"?'<div class="warning">金額候補の信頼度が低いため、合計金額を確認してください。</div>':"";
-  if(p.productReadFailed)confidenceWarn+='<div class="warning">商品名を確定できませんでした。レシート画像またはOCR原文を確認し、必要なら商品候補を手入力してください。</div>';
+  if(p.productReadFailed)confidenceWarn+='<div class="warning">商品名を確定できませんでした。価格・値引き構造は保持しています。商品名だけ確認・修正してください。</div>';
   var rowHtml=rows.length?'<div class="receipt-item-summary"><div class="small"><strong>商品解析</strong></div>'+rows.map(function(x){var tail="";if(x.qty>1)tail+="×"+x.qty;if(x.total)tail+=(tail?" = ":"= ")+yen(x.total);return'<div><span>'+e(x.name)+'</span><strong>'+e(tail.trim())+'</strong></div>'}).join("")+'</div>':"";
   var splitHtml=splitRows.length>=2?'<div class="receipt-item-summary" id="receiptSplitBox"><label style="display:flex;gap:8px;align-items:center;margin-bottom:10px"><input id="receiptSplitEnabled" type="checkbox" checked style="width:auto;min-height:auto"><strong>商品ごとにカテゴリを振り分ける</strong></label><div class="small" style="margin-bottom:10px">税込合計が '+e(yen(p.amount||0))+' になるよう税額を自動按分します。</div>'+splitRows.map(function(x,i){return'<div style="display:flex;flex-direction:column;gap:8px;padding:12px 0;border-top:'+(i?'1px solid var(--line,rgba(255,255,255,.10))':'0')+'"><strong style="font-size:1.02em;line-height:1.45">'+e(x.name)+'</strong><div class="small" style="line-height:1.55">商品 '+e(yen(x.net))+' ＋ 税 '+e(yen(x.extra))+' ＝ 税込 <strong>'+e(yen(x.gross))+'</strong></div><select class="receipt-split-category" data-index="'+i+'" style="width:100%">'+categoryOptions(x.categoryId,x.subcategoryId)+'</select></div>'}).join("")+'</div>':"";
   panel.innerHTML='<div class="receipt-result-card">'+preview+

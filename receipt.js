@@ -1606,7 +1606,7 @@ function renderResult(p,errorText){
   }
   if(p.productCandidateAutoConfirmed){
     confidenceWarn+='<div class="success">✓ 学習済み商品として自動確認しました：'+e((p.items&&p.items[0])||"")+'</div>';
-  }else if(p.productReadFailed&&!p.gapRecovered){
+  }else if(p.productReadFailed&&!p.gapRecovered&&!p.productLowConfidence){
     if(p.productCandidateStatus==="candidate"&&p.productCandidateSource==="learned")confidenceWarn+='<div class="warning">学習済み候補です。商品名だけ確認してください。</div>';
     else if(p.productCandidateStatus==="candidate"&&p.productCandidateSource==="verified_sample")confidenceWarn+='<div class="warning">辞書候補です。商品名だけ確認してください。</div>';
     else if(p.productCandidateStatus==="candidate")confidenceWarn+='<div class="warning">OCR候補です。商品名だけ確認してください。</div>';

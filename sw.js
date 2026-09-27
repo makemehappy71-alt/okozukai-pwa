@@ -1,10 +1,10 @@
-const CACHE = "okozukai-v3.2.8.5.27-prod-1";
+const CACHE = "okozukai-v3.2.8.5.28-prod-1";
 const ASSETS = [
   "./",
   "./index.html",
-  "./styles.css?v=328527",
-  "./app.js?v=328527",
-  "./receipt.js?v=328527",
+  "./styles.css?v=328528",
+  "./app.js?v=328528",
+  "./receipt.js?v=328528",
   "./manifest.webmanifest",
   "./icon.svg",
   "./icon-192.png",

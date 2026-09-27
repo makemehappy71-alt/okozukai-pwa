@@ -774,10 +774,15 @@ function productNameQuality(name){
   if(isGarbageProductName(s))score-=40;
   return score;
 }
+function isQuantityDescriptorName(name){
+  var s=String(name||"").normalize?String(name||"").normalize("NFKC"):String(name||"");
+  s=s.replace(/\s+/g,"");
+  return /(?:コ|個).{0,6}(?:[xX×]|メX|Xメ).{0,8}(?:単|単価)/i.test(s);
+}
 function mergeProductRows(rows){
   rows=(rows||[]).map(function(row){
     return{name:normalizeProductName(row.name),rawName:row.rawName||row.name,unitPrice:Number(row.unitPrice||0),qty:Number(row.qty||1),total:Number(row.total||0),quality:Number(row.quality||productNameQuality(row.rawName||row.name)),sourceIndex:Number(row.sourceIndex||0),sourcePriority:Number(row.sourcePriority||1)};
-  }).filter(function(x){return x.name});
+  }).filter(function(x){return x.name&&!isQuantityDescriptorName(x.name)});
 
   var groups=[];
   rows.forEach(function(row){
@@ -828,24 +833,39 @@ function mergeProductRows(rows){
   }).filter(function(x){return !isChangeCueText(String(x.name||""));});
 }
 function chooseItemsForSubtotal(rows,subtotal,receiptTotal,receiptDiscount){
-  rows=mergeProductRows(rows).filter(function(x){return x.total>0&&!isChangeCueText(String(x.name||""))});
+  rows=mergeProductRows(rows).filter(function(x){return x.total>0&&!isChangeCueText(String(x.name||""))&&!isQuantityDescriptorName(String(x.name||""))});
   subtotal=Number(subtotal||0);receiptTotal=Number(receiptTotal||0);receiptDiscount=Number(receiptDiscount||0);
   var maxItem=receiptTotal>0?receiptTotal:(subtotal>0?subtotal:0);
   if(maxItem>0)rows=rows.filter(function(x){return Number(x.total||0)<=maxItem});
   var fullSum=rows.reduce(function(a,x){return a+Number(x.total||0)},0);
-  if(subtotal&&receiptDiscount>0&&fullSum===subtotal+receiptDiscount)return{rows:rows,matched:true,preDiscount:true,sum:fullSum,discount:receiptDiscount};
-  if(!subtotal||rows.length<2||rows.length>14)return{rows:rows,matched:false,sum:fullSum};
-  var n=rows.length,best=null,max=1<<n;
-  for(var mask=1;mask<max;mask++){
-    var sum=0,quality=0,count=0;
-    for(var i=0;i<n;i++)if(mask&(1<<i)){sum+=rows[i].total;quality+=Number(rows[i].quality||0);count++}
-    if(sum!==subtotal)continue;
-    var score=quality+count*8;
-    if(!best||score>best.score)best={mask:mask,score:score,count:count};
+  var preDiscountTarget=subtotal&&receiptDiscount>0?subtotal+receiptDiscount:0;
+  var primaryTarget=preDiscountTarget||subtotal;
+  if(primaryTarget&&fullSum===primaryTarget)return{rows:rows,matched:true,preDiscount:!!preDiscountTarget,sum:fullSum,discount:receiptDiscount};
+
+  if(!primaryTarget||rows.length<2||rows.length>18)return{rows:rows,matched:false,sum:fullSum};
+  var n=rows.length,max=1<<n;
+  function bestSubsetForTarget(target){
+    var best=null;
+    for(var mask=1;mask<max;mask++){
+      var sum=0,quality=0,count=0,qtyBonus=0;
+      for(var i=0;i<n;i++)if(mask&(1<<i)){
+        sum+=rows[i].total;quality+=Number(rows[i].quality||0);count++;
+        if(Number(rows[i].qty||1)>1)qtyBonus+=12;
+      }
+      if(sum!==target)continue;
+      // Prefer a complete-looking basket with stronger names and recognized quantity rows.
+      var score=quality+count*9+qtyBonus;
+      if(!best||score>best.score)best={mask:mask,score:score,count:count};
+    }
+    return best;
   }
-  if(!best)return{rows:rows,matched:false,sum:rows.reduce(function(a,x){return a+x.total},0)};
+  var best=bestSubsetForTarget(primaryTarget),matchedTarget=primaryTarget;
+  if(!best&&preDiscountTarget&&subtotal){
+    best=bestSubsetForTarget(subtotal);matchedTarget=subtotal;
+  }
+  if(!best)return{rows:rows,matched:false,sum:fullSum};
   var picked=[];for(var j=0;j<n;j++)if(best.mask&(1<<j))picked.push(rows[j]);
-  return{rows:picked,matched:true,sum:subtotal};
+  return{rows:picked,matched:true,preDiscount:matchedTarget===preDiscountTarget&&!!preDiscountTarget,sum:matchedTarget,discount:matchedTarget===preDiscountTarget?receiptDiscount:0};
 }
 function labeledMoney(line){
   var n=numberFromLine(line);return n>0?n:0;
@@ -1369,14 +1389,14 @@ function parseReceiptText(input,baseDate){
   var candidateSource=focusConsensus&&focusConsensus.accepted?"ocr":dictionaryAutoConfirmed?"learned":dictionaryInference&&dictionaryInference.name?(dictionaryInference.source||"verified_sample"):focusConsensus&&focusConsensus.candidateName?"ocr":"";
   var candidateList=dictionaryInference&&dictionaryInference.name?[dictionaryInference.name].concat(dictionaryInference.alternatives||[]):focusConsensus&&focusConsensus.candidates||[];
   candidateList=candidateList.filter(function(x,i,a){return x&&a.indexOf(x)===i}).slice(0,3);
-  return{rawText:raw,debugText:debugText,date:date,shop:shop,amount:amount,amountConfidence:amountInfo.confidence,amountScore:amountInfo.score,subtotal:amountInfo.subtotal,tax:amountInfo.tax,subtotalTaxMatch:subtotalTaxMatch,paymentCandidate:payment,categoryCandidate:cat,items:items,itemRows:rows,splitRows:splitRows,itemSum:itemSum,itemSubtotalMatch:!!(amountInfo.subtotal&&itemSum===amountInfo.subtotal),detail:detailProductAllowed?items.slice(0,2).join("・")+(items.length>2?"ほか":""):detailFallback,productReadFailed:productReadFailed,productLowConfidence:productLowConfidence,productCandidateStatus:candidateStatus,productCandidateSource:candidateSource,productCandidateAutoConfirmed:dictionaryAutoConfirmed,productCandidates:candidateList,productCandidateReason:dictionaryAutoConfirmed?"learned_auto_confirmed":dictionaryInference&&dictionaryInference.name?"merchant_dictionary":focusConsensus&&focusConsensus.rejectionReason||"",discount:receiptDiscountAmount(receiptAllText),tendered:receiptTenderedAmount(receiptAllText,amount),ocrMeta:obj&&obj.meta||null};
+  return{rawText:raw,debugText:debugText,date:date,shop:shop,amount:amount,amountConfidence:amountInfo.confidence,amountScore:amountInfo.score,subtotal:amountInfo.subtotal,tax:amountInfo.tax,subtotalTaxMatch:subtotalTaxMatch,paymentCandidate:payment,categoryCandidate:cat,items:items,itemRows:rows,splitRows:splitRows,itemSum:itemSum,itemSubtotalMatch:!!(amountInfo.subtotal&&itemSum===amountInfo.subtotal),itemPreDiscountMatch:!!(amountInfo.subtotal&&receiptWideDiscount>0&&itemSum===amountInfo.subtotal+receiptWideDiscount),detail:detailProductAllowed?items.slice(0,2).join("・")+(items.length>2?"ほか":""):detailFallback,productReadFailed:productReadFailed,productLowConfidence:productLowConfidence,productCandidateStatus:candidateStatus,productCandidateSource:candidateSource,productCandidateAutoConfirmed:dictionaryAutoConfirmed,productCandidates:candidateList,productCandidateReason:dictionaryAutoConfirmed?"learned_auto_confirmed":dictionaryInference&&dictionaryInference.name?"merchant_dictionary":focusConsensus&&focusConsensus.rejectionReason||"",discount:receiptDiscountAmount(receiptAllText),tendered:receiptTenderedAmount(receiptAllText,amount),ocrMeta:obj&&obj.meta||null};
 }
 function renderResult(p,errorText){
   var panel=document.getElementById("receiptOCRPanel");if(!panel)return;
   var cat=p.categoryCandidate,pay=p.paymentCandidate||"",items=(p.items||[]).join("\n"),rows=p.itemRows||[],splitRows=p.splitRows||[],meta=p.ocrMeta||null;
   var preview=previewUrl?'<img class="receipt-preview" src="'+e(previewUrl)+'" alt="撮影したレシートのプレビュー">':"";
   var metaHtml=meta?'<div class="receipt-ocr-meta">分割OCR '+e(meta.passes||"")+"回"+(Math.abs(Number(meta.skew||0))>=.3?" / 傾き補正 "+e(Number(meta.skew).toFixed(1))+"°":"")+(meta.productAnchor?" / 商品価格座標 "+e(yen(meta.productAnchor.value)):"")+'</div>':"";
-  if(p.amountConfidence==="high")metaHtml+='<div class="receipt-ocr-meta">金額判定：高信頼'+(p.subtotalTaxMatch?" / 小計＋税一致":"")+(p.itemSubtotalMatch?" / 商品合計＝小計":"")+'</div>';
+  if(p.amountConfidence==="high")metaHtml+='<div class="receipt-ocr-meta">金額判定：高信頼'+(p.subtotalTaxMatch?" / 小計＋税一致":"")+(p.itemSubtotalMatch?" / 商品合計＝小計":p.itemPreDiscountMatch?" / 商品合計−割引＝小計":"")+'</div>';
   var confidenceWarn=p.amountConfidence==="low"?'<div class="warning">金額候補の信頼度が低いため、合計金額を確認してください。</div>':"";
   if(p.productCandidateAutoConfirmed){
     confidenceWarn+='<div class="success">✓ 学習済み商品として自動確認しました：'+e((p.items&&p.items[0])||"")+'</div>';
@@ -1825,7 +1845,7 @@ function receiptTests(){
     },
     meta:{passes:15,skew:0,ratio:4}
   };
-  var pOk=parseReceiptText(okObj,"2026-09-27"),ok284=pOk.itemRows.find(function(x){return Number(x.total||0)===284}),okSplitDiscount=pOk.splitRows.reduce(function(a,x){return a+Number(x.discount||0)},0),okSplitTax=pOk.splitRows.reduce(function(a,x){return a+Number(x.extra||0)},0),okSplitGross=pOk.splitRows.reduce(function(a,x){return a+Number(x.gross||0)},0);
+  var pOk=parseReceiptText(okObj,"2026-09-27"),ok284=pOk.itemRows.find(function(x){return Number(x.total||0)===284}),ok325=pOk.itemRows.find(function(x){return Number(x.total||0)===325}),okItemTotals=pOk.itemRows.map(function(x){return Number(x.total||0)}).sort(function(a,b){return a-b}).join(","),okSplitDiscount=pOk.splitRows.reduce(function(a,x){return a+Number(x.discount||0)},0),okSplitTax=pOk.splitRows.reduce(function(a,x){return a+Number(x.extra||0)},0),okSplitGross=pOk.splitRows.reduce(function(a,x){return a+Number(x.gross||0)},0);
 
   var daiso522Name=normalizeProductName("CCケーブル 3A、 1 ¥1004%");
   var daiso522Obj={
@@ -1864,8 +1884,10 @@ function receiptTests(){
     ["receipt OK cash payment test",pOk.paymentCandidate==="wallet"],
     ["receipt OK receipt-wide discount test",pOk.discount===22&&pOk.itemSum===818],
     ["receipt OK quantity row attaches to previous product test",!!ok284&&ok284.qty===4&&ok284.unitPrice===71&&ok284.total===284],
-    ["receipt OK excludes hours and change from products test",!pOk.items.some(function(x){return /営業時間|お的り|お釣|釣銭|コ.*単.?71/i.test(x)})],
-    ["receipt OK four product rows test",pOk.itemRows.length===4],
+    ["receipt OK excludes hours change and quantity descriptor test",!pOk.items.some(function(x){return /営業時間|お的り|お釣|釣銭/i.test(x)||isQuantityDescriptorName(x)})],
+    ["receipt OK four exact merchandise totals test",pOk.itemRows.length===4&&okItemTotals==="101,108,284,325"&&!!ok325],
+    ["receipt OK merchandise pre-discount sum test",pOk.itemSum===818&&pOk.itemPreDiscountMatch===true],
+    ["receipt OK mangled quantity descriptor rejection test",isQuantityDescriptorName("コメXメ単/1")===true],
     ["receipt OK split discount allocation test",pOk.splitRows.length===4&&okSplitDiscount===22],
     ["receipt OK split tax allocation test",okSplitTax===63&&okSplitGross===859],
     ["receipt OK supermarket category test",pOk.categoryCandidate&&pOk.categoryCandidate.groupName==="食費"&&pOk.categoryCandidate.subName==="スーパー・食材"],
@@ -1948,7 +1970,7 @@ function receiptTests(){
 function attachTests(){
   var b=document.getElementById("selfTest");if(!b||b.dataset.receiptWrapped)return;
   var base=b.onclick;b.dataset.receiptWrapped="1";
-  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),pass=out.every(function(x){return x[1]}),box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">v3.42 レシート機能テストもすべて合格しました。</div>':'<div class="errorbox">レシート機能テストに失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
+  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),pass=out.every(function(x){return x[1]}),box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">v3.43 レシート機能テストもすべて合格しました。</div>':'<div class="errorbox">レシート機能テストに失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
 }
 var body=document.getElementById("modalBody");
 if(body){new MutationObserver(function(){enhance()}).observe(body,{childList:true,subtree:true})}

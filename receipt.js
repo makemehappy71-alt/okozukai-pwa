@@ -1543,7 +1543,7 @@ async function runOCR(bundle){
       else sectionMap.middle=mergeOCRTexts(sectionMap.middle,txt);
     }
     var shopText="",shopPasses=0,shopParts=bundle.shopSlices||[];
-    var earlyShop=bestShopFromSources([sectionMap.top,full]),knownBrandEarly=/(?:バーガーキング|DAISO|ダイソー|SEIYU|西友|CREATE|クリエイト|マクドナルド|モスバーガー|ケンタッキー)/i.test(String(earlyShop||""));
+    var earlyShop=bestShopFromSources([sectionMap.top,full]),knownBrandEarly=/(?:バーガーキング|DAISO|ダイソー|SEIYU|西友|オーケー|CREATE|クリエイト|マクドナルド|モスバーガー|ケンタッキー)/i.test(String(earlyShop||""));
     if(knownBrandEarly)shopText=earlyShop;
     else for(var si=0;si<shopParts.length;si++){
       var sp=shopParts[si];ocrPassLabel=sp.label||("店名"+(si+1));
@@ -1780,6 +1780,53 @@ function receiptTests(){
     "クーポン割引 ¥-250\n合計 ¥840",1090
   );
 
+  var okText=[
+    "オーケー 立川若葉町店",
+    "営業時間8 : 30~21:30",
+    "2026年09月27日(日)13:51",
+    "F NEIE® -F74-1000m| ¥101",
+    "Fドデがッ500nml",
+    "4コX単71 ¥284",
+    "Fがバクウイライ ¥108",
+    "FTE*ヒ\"ラフ ¥325",
+    "割引前合計 ¥818",
+    "F 食料品3/103割引 -22",
+    "小計 ¥796",
+    "8%対象 ¥796 税63",
+    "合計/ 7点 ¥859",
+    "お預り ¥1,059",
+    "お的り ¥200",
+    "F は8%対象(軽減税率・外税) です。"
+  ].join("\n");
+  var okObj={
+    text:okText,
+    whole:okText,
+    shopText:"Irieydw",
+    itemText:[
+      "営業時間8 : 30~21:30",
+      "F NEIE® -F74-1000m| ¥101",
+      "Fドデがッ500nml",
+      "4コX単71 ¥284",
+      "Fがバクウイライ ¥108",
+      "FTE*ヒ\"ラフ ¥325",
+      "割引前合計 ¥818",
+      "F 食料品3/103割引 -22",
+      "小計 ¥796",
+      "8%対象 ¥796 税63",
+      "合計/ 7点 ¥859",
+      "お預り ¥1,059",
+      "お的り ¥200"
+    ].join("\n"),
+    paymentText:"お預り ¥1,059\nお的り ¥200",
+    sections:{
+      top:"オーケー\n立川若華町店\n営業時間8 : 30~21:30\n2026年09月27日(日)13:51",
+      middle:"F NEIE® -F74-1000m| ¥101\nFドデがッ500nml\n4コX単71 ¥284\nFがバクウイライ ¥108\nFTE*ヒ\"ラフ ¥325",
+      bottom:"割引前合計 ¥818\nF 食料品3/103割引 -22\n小計 ¥796\n8%対象 ¥796 税63\n合計/ 7点 ¥859\nお預り ¥1,059\nお的り ¥200\nF は8%対象(軽減税率・外税) です。"
+    },
+    meta:{passes:15,skew:0,ratio:4}
+  };
+  var pOk=parseReceiptText(okObj,"2026-09-27"),ok284=pOk.itemRows.find(function(x){return Number(x.total||0)===284}),okSplitDiscount=pOk.splitRows.reduce(function(a,x){return a+Number(x.discount||0)},0),okSplitTax=pOk.splitRows.reduce(function(a,x){return a+Number(x.extra||0)},0),okSplitGross=pOk.splitRows.reduce(function(a,x){return a+Number(x.gross||0)},0);
+
   var daiso522Name=normalizeProductName("CCケーブル 3A、 1 ¥1004%");
   var daiso522Obj={
     text:"DAISO\nダイソー立川幸町店\n2026年09月26日(土)17:54\nCCケーブル 3A、 1 ¥1004%\n小計 1点 ¥100\n10%税額 ¥10\n合計 ¥110\n楽天ペイ ¥110",
@@ -1811,6 +1858,17 @@ function receiptTests(){
     ["receipt Burger King total/payment test",pbk.amount===840&&pbk.paymentCandidate==="wallet"],
     ["receipt Burger King structural item recovery test",!!pbkRow&&pbkRow.total===840&&pbkRow.originalTotal===1090&&pbkRow.discount===250],
     ["receipt Burger King weak-name safeguard test",!!pbkRow&&pbkRow.name==="商品名要確認"],
+    ["receipt OK final total test",pOk.amount===859&&pOk.amountConfidence==="high"],
+    ["receipt OK subtotal tax test",pOk.subtotal===796&&pOk.tax===63&&pOk.subtotalTaxMatch===true],
+    ["receipt OK shop branch test",pOk.shop==="オーケー立川若葉町店"],
+    ["receipt OK cash payment test",pOk.paymentCandidate==="wallet"],
+    ["receipt OK receipt-wide discount test",pOk.discount===22&&pOk.itemSum===818],
+    ["receipt OK quantity row attaches to previous product test",!!ok284&&ok284.qty===4&&ok284.unitPrice===71&&ok284.total===284],
+    ["receipt OK excludes hours and change from products test",!pOk.items.some(function(x){return /営業時間|お的り|お釣|釣銭|コ.*単.?71/i.test(x)})],
+    ["receipt OK four product rows test",pOk.itemRows.length===4],
+    ["receipt OK split discount allocation test",pOk.splitRows.length===4&&okSplitDiscount===22],
+    ["receipt OK split tax allocation test",okSplitTax===63&&okSplitGross===859],
+    ["receipt OK supermarket category test",pOk.categoryCandidate&&pOk.categoryCandidate.groupName==="食費"&&pOk.categoryCandidate.subName==="スーパー・食材"],
     ["receipt DAISO 5.22 exact product-name cleanup test",daiso522Name==="C-Cケーブル 3A"],
     ["receipt DAISO 5.22 exact device row test",p522.itemRows.length===1&&!!p522Row&&p522Row.name==="C-Cケーブル 3A"&&p522Row.total===100],
     ["receipt DAISO 5.22 exact device detail test",p522.detail==="C-Cケーブル 3A"],

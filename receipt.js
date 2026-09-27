@@ -878,7 +878,8 @@ function parseReceiptText(input,baseDate){
   if(productReadFailed&&/(?:バーガーキング|burger\s*king|マクドナルド|モスバーガー|ケンタッキー|kfc)/i.test(String(shop||"")))detailFallback=shop+"・外食";
   var itemSum=rows.reduce(function(a,x){return a+Number(x.total||0)},0),subtotalTaxMatch=!!(amountInfo.subtotal&&amountInfo.tax&&amountInfo.subtotal+amountInfo.tax===amount);
   var splitRows=allocateReceiptRows(rows,amountInfo.subtotal,amountInfo.tax,amount,shop);
-  var debugText=[raw,shopText?"--- 店名専用OCR ---\n"+shopText:"",itemText?"--- 商品専用OCR ---\n"+itemText:"",paymentText?"--- 支払専用OCR ---\n"+paymentText:""].filter(Boolean).join("\n\n");
+  var diag=obj&&obj.diagnostics||[];var diagnosticText=diag.map(function(d,i){return"--- PASS "+(i+1)+" / "+d.label+" ---\n"+(d.text||"(空)")}).join("\n\n");
+  var debugText=[diagnosticText,raw?"--- 統合OCR ---\n"+raw:"",shopText?"--- 店名専用OCR統合 ---\n"+shopText:"",itemText?"--- 商品専用OCR統合 ---\n"+itemText:"",paymentText?"--- 支払専用OCR統合 ---\n"+paymentText:""].filter(Boolean).join("\n\n");
   return{rawText:raw,debugText:debugText,date:date,shop:shop,amount:amount,amountConfidence:amountInfo.confidence,amountScore:amountInfo.score,subtotal:amountInfo.subtotal,tax:amountInfo.tax,subtotalTaxMatch:subtotalTaxMatch,paymentCandidate:payment,categoryCandidate:cat,items:items,itemRows:rows,splitRows:splitRows,itemSum:itemSum,itemSubtotalMatch:!!(amountInfo.subtotal&&itemSum===amountInfo.subtotal),detail:items.length?items.slice(0,2).join("・")+(items.length>2?"ほか":""):detailFallback,productReadFailed:productReadFailed,discount:receiptDiscountAmount(receiptAllText),tendered:receiptTenderedAmount(receiptAllText,amount),ocrMeta:obj&&obj.meta||null};
 }
 function renderResult(p,errorText){
@@ -1017,17 +1018,17 @@ async function readConfirmedReceipt(){
 async function runOCR(bundle){
   await loadOCR();setBusy(true,"OCRを初期化しています…");
   var worker=await globalThis.Tesseract.createWorker(["jpn","eng"],1,{logger:progress});
-  var full="",parts=[],sectionMap={top:"",middle:"",bottom:""};
+  var full="",parts=[],sectionMap={top:"",middle:"",bottom:""},diagnostics=[];
   try{
     try{await worker.setParameters({preserve_interword_spaces:"1",tessedit_pageseg_mode:"6"})}catch(_e){}
     ocrPassLabel="全体";
-    var whole=await worker.recognize(bundle.gray||bundle),full=String(whole&&whole.data&&whole.data.text||"");
+    var whole=await worker.recognize(bundle.gray||bundle),full=String(whole&&whole.data&&whole.data.text||"");diagnostics.push({label:"全体",text:normalize(full)});
     for(var i=0;i<(bundle.slices||[]).length;i++){
       var sl=bundle.slices[i],num=i+1,total=bundle.slices.length;
       ocrPassLabel="分割 "+num+"/"+total;
       try{await worker.setParameters({preserve_interword_spaces:"1",tessedit_pageseg_mode:sl.role==="middle"?"6":"11"})}catch(_e){}
       var ret=await worker.recognize(sl.canvas),txt=String(ret&&ret.data&&ret.data.text||"");
-      parts.push(txt);
+      parts.push(txt);diagnostics.push({label:sl.label||("分割 "+num),text:normalize(txt)});
       if(sl.role==="top")sectionMap.top=mergeOCRTexts(sectionMap.top,txt);
       else if(sl.role==="bottom")sectionMap.bottom=mergeOCRTexts(sectionMap.bottom,txt);
       else sectionMap.middle=mergeOCRTexts(sectionMap.middle,txt);
@@ -1036,24 +1037,24 @@ async function runOCR(bundle){
     for(var si=0;si<shopParts.length;si++){
       var sp=shopParts[si];ocrPassLabel=sp.label||("店名"+(si+1));
       try{await worker.setParameters({preserve_interword_spaces:"1",tessedit_pageseg_mode:sp.mode||"7",tessedit_char_whitelist:sp.whitelist||""})}catch(_e){}
-      try{var sret=await worker.recognize(sp.canvas),stxt=String(sret&&sret.data&&sret.data.text||"");shopPasses++;shopText=mergeOCRTexts(shopText,stxt)}catch(_e){}
+      try{var sret=await worker.recognize(sp.canvas),stxt=String(sret&&sret.data&&sret.data.text||"");shopPasses++;diagnostics.push({label:sp.label||("店名"+(si+1)),text:normalize(stxt)});shopText=mergeOCRTexts(shopText,stxt)}catch(_e){}
     }
     try{await worker.setParameters({tessedit_char_whitelist:""})}catch(_e){}
     var itemText="",itemPasses=0,itemParts=bundle.itemSlices||[];
     for(var ii=0;ii<itemParts.length;ii++){
       var ip=itemParts[ii];ocrPassLabel=ip.label||("商品"+(ii+1));
       try{await worker.setParameters({preserve_interword_spaces:"1",tessedit_pageseg_mode:ip.mode||"6",tessedit_char_whitelist:""})}catch(_e){}
-      try{var iret=await worker.recognize(ip.canvas),itxt=String(iret&&iret.data&&iret.data.text||"");itemPasses++;itemText=mergeOCRTexts(itemText,itxt)}catch(_e){}
+      try{var iret=await worker.recognize(ip.canvas),itxt=String(iret&&iret.data&&iret.data.text||"");itemPasses++;diagnostics.push({label:ip.label||("商品"+(ii+1)),text:normalize(itxt)});itemText=mergeOCRTexts(itemText,itxt)}catch(_e){}
     }
     var paymentText="",paymentPasses=0,paymentParts=bundle.paymentSlices||[];
     for(var pi=0;pi<paymentParts.length;pi++){
       var pp=paymentParts[pi];ocrPassLabel=pp.label||("支払方法"+(pi+1));
       try{await worker.setParameters({preserve_interword_spaces:"1",tessedit_pageseg_mode:pp.mode||"11"})}catch(_e){}
-      try{var pret=await worker.recognize(pp.canvas),ptxt=String(pret&&pret.data&&pret.data.text||"");paymentPasses++;paymentText=mergeOCRTexts(paymentText,ptxt);if(paymentFromText(paymentText))break}catch(_e){}
+      try{var pret=await worker.recognize(pp.canvas),ptxt=String(pret&&pret.data&&pret.data.text||"");paymentPasses++;diagnostics.push({label:pp.label||("支払方法"+(pi+1)),text:normalize(ptxt)});paymentText=mergeOCRTexts(paymentText,ptxt);if(paymentFromText(paymentText))break}catch(_e){}
     }
     var merged=full;parts.forEach(function(x){merged=mergeOCRTexts(merged,x)});
     ocrPassLabel="";
-    return{text:merged,whole:normalize(full),sections:{top:normalize(sectionMap.top),middle:normalize(sectionMap.middle),bottom:normalize(sectionMap.bottom)},shopText:normalize(shopText),itemText:normalize(itemText),paymentText:normalize(paymentText),meta:{passes:1+parts.length+shopPasses+itemPasses+paymentPasses,skew:Number(bundle.skew||0),ratio:Number(bundle.ratio||0)}};
+    return{text:merged,whole:normalize(full),sections:{top:normalize(sectionMap.top),middle:normalize(sectionMap.middle),bottom:normalize(sectionMap.bottom)},shopText:normalize(shopText),itemText:normalize(itemText),paymentText:normalize(paymentText),diagnostics:diagnostics,meta:{passes:1+parts.length+shopPasses+itemPasses+paymentPasses,skew:Number(bundle.skew||0),ratio:Number(bundle.ratio||0)}};
   }finally{ocrPassLabel="";try{await worker.terminate()}catch(_e){}}
 }
 async function handleFile(file){

@@ -775,6 +775,21 @@ function discountedSingleItem(rows,text,amount){
   row.originalTotal=row.total;row.discount=discount;row.total=target;row.unitPrice=target;row.qty=1;row.discounted=true;
   return row;
 }
+function receiptTenderedAmount(text,total){
+  total=Number(total||0);var vals=[];
+  normalize(text).split("\n").forEach(function(line){
+    line=ocrMoneyClean(line.trim());if(!line)return;
+    if(!/(?:現金|cash|お?預り|預り|預かり)/i.test(line))return;
+    var n=numberFromLine(line);if(n>=total&&n<=1000000)vals.push(n);
+  });
+  vals.sort(function(a,b){return a-b});return vals[0]||0;
+}
+function removeDerivedChangeRows(rows,text,total){
+  rows=(rows||[]).slice();total=Number(total||0);
+  var tender=receiptTenderedAmount(text,total),change=tender>total?tender-total:0;
+  if(!change)return rows;
+  return rows.filter(function(x){return Number(x.total||0)!==change});
+}
 function parseReceiptText(input,baseDate){
   var obj=input&&typeof input==="object"&&!Array.isArray(input)?input:null,raw=normalize(obj?obj.text:input),whole=normalize(obj&&obj.whole||""),shopText=normalize(obj&&obj.shopText||""),itemText=normalize(obj&&obj.itemText||""),paymentText=normalize(obj&&obj.paymentText||""),sections=obj&&obj.sections||{},top=normalize(sections.top||""),middle=normalize(sections.middle||""),bottom=normalize(sections.bottom||"");
   var shop=shopFromText(shopText,true)||shopFromText(top,true)||shopFromText(raw);
@@ -796,8 +811,11 @@ function parseReceiptText(input,baseDate){
   if(whole)initialRows=initialRows.concat(itemRowsFromText(productSourceText(whole),2));
   initialRows=initialRows.concat(itemRowsFromText(productSourceText(raw),1));
 
-  var discounted=discountedSingleItem(initialRows,[itemText,middle,whole,raw].filter(Boolean).join("\n"),amount);
+  var receiptAllText=[itemText,middle,whole,raw,paymentText,bottom].filter(Boolean).join("\n");
+  var discounted=discountedSingleItem(initialRows,receiptAllText,amount);
   initialRows=initialRows.filter(function(x){return !/(?:^|\s)(?:お?釣(?:り)?|お?つり|釣銭)(?:\s|$)/i.test(String(x.name||""));});
+  // Structural change detection: if tender - total equals a parsed row, it is change even when OCR mangles its label.
+  initialRows=removeDerivedChangeRows(initialRows,receiptAllText,amount);
   var itemChoice=discounted?{rows:[discounted],matched:true,sum:amount}:chooseItemsForSubtotal(initialRows,amountInfo.subtotal,amount),rows=itemChoice.rows;
   if(!rows.length&&amountInfo.subtotal){
     var recoveredSingle=recoverSingleItemRow([itemText,middle,whole,raw],amountInfo.subtotal,amount);
@@ -805,6 +823,9 @@ function parseReceiptText(input,baseDate){
   }
   // Final guard: payment/change lines must never survive into visible product candidates.
   rows=rows.filter(function(x){return !/(?:^|\s)(?:お?釣(?:り)?|お?つり|釣銭)(?:\s|$)/i.test(String(x.name||""));});
+  rows=removeDerivedChangeRows(rows,receiptAllText,amount);
+  // Never expose a product set whose sum exceeds the confirmed receipt total.
+  if(amount>0&&rows.reduce(function(a,x){return a+Number(x.total||0)},0)>amount)rows=[];
   // If OCR produced only a weak gibberish item, do not pretend it is a reliable product name.
   if(rows.length===1&&productMeaningfulScore(rows[0].name)<15)rows=[];
   var items=rows.map(function(x){return x.name}),cat=categorySuggestion(raw,shop,rows);

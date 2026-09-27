@@ -806,32 +806,48 @@ function recoverSingleItemRow(texts,subtotal,amount){
   if(!best||best.score<18)return null;
   return{name:best.name,rawName:best.name,unitPrice:subtotal,qty:1,total:subtotal,quality:best.score+30,sourceIndex:best.index,sourcePriority:5,recovered:true};
 }
-function receiptDiscountAmount(text){
-  var lines=normalize(text).split("\n"),sum=0;
-  lines.forEach(function(line){
+function receiptDiscountValues(text){
+  var counts={},values=[];
+  normalize(text).split("\n").forEach(function(line){
     if(!/値引|割引|クーポン/i.test(line))return;
     var n=numberFromLine(line);
-    if(n>0&&n<=100000)sum+=n;
+    if(n>0&&n<=100000){counts[n]=(counts[n]||0)+1;if(values.indexOf(n)<0)values.push(n)}
   });
-  return sum;
+  values.sort(function(a,b){return (counts[b]||0)-(counts[a]||0)||a-b});
+  return{values:values,counts:counts};
 }
-function recoverDiscountedStructure(rows,text,amount){
-  var discount=receiptDiscountAmount(text),target=Number(amount||0),original=target+discount;
-  if(!discount||!target||!original)return null;
-  var merged=mergeProductRows(rows).filter(function(x){return Number(x.total||0)===original});
+function receiptDiscountAmount(text,expected){
+  var info=receiptDiscountValues(text),want=Number(expected||0);
+  if(want&&info.values.indexOf(want)>=0)return want;
+  return info.values.length?info.values[0]:0;
+}
+function discountedRowByStructure(rows,text,amount){
+  var target=Number(amount||0),info=receiptDiscountValues(text);
+  if(!target||!info.values.length)return null;
+  var merged=mergeProductRows(rows).filter(function(x){
+    var original=Number(x.total||0),needed=original-target;
+    return original>target&&needed>0&&info.values.indexOf(needed)>=0;
+  });
   if(!merged.length)return null;
-  merged.sort(function(a,b){return Number(b.quality||0)-Number(a.quality||0)});
-  var best=merged[0],name=normalizeProductName(best.name),weak=isGarbageProductName(name)||productMeaningfulScore(name)<22;
+  merged.sort(function(a,b){
+    var da=(info.counts[Number(a.total||0)-target]||0),db=(info.counts[Number(b.total||0)-target]||0);
+    return db-da||Number(b.quality||0)-Number(a.quality||0);
+  });
+  var best=merged[0],original=Number(best.total||0),discount=original-target,name=normalizeProductName(best.name);
+  var weak=isGarbageProductName(name)||productMeaningfulScore(name)<24;
   return{name:weak?"商品名要確認":name,rawName:name,unitPrice:original,qty:1,total:target,originalTotal:original,discount:discount,discounted:true,lowConfidence:weak,quality:Number(best.quality||0)};
 }
+function recoverDiscountedStructure(rows,text,amount){
+  var row=discountedRowByStructure(rows,text,amount);
+  if(!row)return null;
+  // Recovery mode is intentionally conservative: preserve the accounting structure
+  // while refusing to present a weak OCR string as a confirmed product name.
+  if(productMeaningfulScore(row.rawName||row.name)<30){row.name="商品名要確認";row.lowConfidence=true}
+  return row;
+}
 function discountedSingleItem(rows,text,amount){
-  var discount=receiptDiscountAmount(text),target=Number(amount||0);
-  if(!discount||!target)return null;
-  var merged=mergeProductRows(rows).filter(function(x){return Number(x.total||0)===target+discount&&!isGarbageProductName(x.name)});
-  if(!merged.length)return null;
-  merged.sort(function(a,b){return Number(b.quality||0)-Number(a.quality||0)});
-  var row=Object.assign({},merged[0]);
-  row.originalTotal=row.total;row.discount=discount;row.total=target;row.unitPrice=target;row.qty=1;row.discounted=true;
+  var row=discountedRowByStructure(rows,text,amount);
+  if(!row||row.lowConfidence)return null;
   return row;
 }
 function receiptTenderedAmount(text,total){
@@ -910,7 +926,7 @@ function renderResult(p,errorText){
   if(p.amountConfidence==="high")metaHtml+='<div class="receipt-ocr-meta">金額判定：高信頼'+(p.subtotalTaxMatch?" / 小計＋税一致":"")+(p.itemSubtotalMatch?" / 商品合計＝小計":"")+'</div>';
   var confidenceWarn=p.amountConfidence==="low"?'<div class="warning">金額候補の信頼度が低いため、合計金額を確認してください。</div>':"";
   if(p.productReadFailed)confidenceWarn+='<div class="warning">商品名を確定できませんでした。価格・値引き構造は保持しています。商品名だけ確認・修正してください。</div>';
-  var rowHtml=rows.length?'<div class="receipt-item-summary"><div class="small"><strong>商品解析</strong></div>'+rows.map(function(x){var tail="";if(x.qty>1)tail+="×"+x.qty;if(x.total)tail+=(tail?" = ":"= ")+yen(x.total);return'<div><span>'+e(x.name)+'</span><strong>'+e(tail.trim())+'</strong></div>'}).join("")+'</div>':"";
+  var rowHtml=rows.length?'<div class="receipt-item-summary"><div class="small"><strong>商品解析</strong></div>'+rows.map(function(x){var tail="";if(x.discounted&&x.originalTotal&&x.discount)tail=yen(x.originalTotal)+" − 値引 "+yen(x.discount)+" ＝ "+yen(x.total);else{if(x.qty>1)tail+="×"+x.qty;if(x.total)tail+=(tail?" = ":"= ")+yen(x.total)}return'<div><span>'+e(x.name)+'</span><strong>'+e(tail.trim())+'</strong></div>'}).join("")+'</div>':"";
   var splitHtml=splitRows.length>=2?'<div class="receipt-item-summary" id="receiptSplitBox"><label style="display:flex;gap:8px;align-items:center;margin-bottom:10px"><input id="receiptSplitEnabled" type="checkbox" checked style="width:auto;min-height:auto"><strong>商品ごとにカテゴリを振り分ける</strong></label><div class="small" style="margin-bottom:10px">税込合計が '+e(yen(p.amount||0))+' になるよう税額を自動按分します。</div>'+splitRows.map(function(x,i){return'<div style="display:flex;flex-direction:column;gap:8px;padding:12px 0;border-top:'+(i?'1px solid var(--line,rgba(255,255,255,.10))':'0')+'"><strong style="font-size:1.02em;line-height:1.45">'+e(x.name)+'</strong><div class="small" style="line-height:1.55">商品 '+e(yen(x.net))+' ＋ 税 '+e(yen(x.extra))+' ＝ 税込 <strong>'+e(yen(x.gross))+'</strong></div><select class="receipt-split-category" data-index="'+i+'" style="width:100%">'+categoryOptions(x.categoryId,x.subcategoryId)+'</select></div>'}).join("")+'</div>':"";
   panel.innerHTML='<div class="receipt-result-card">'+preview+
     '<div class="receipt-result-title"><strong>レシート読み取り結果</strong><span class="small">確認・修正してから支出入力へ反映してください。</span>'+metaHtml+'</div>'+

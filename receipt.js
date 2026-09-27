@@ -919,7 +919,7 @@ function productNameRequiresConfirmation(name,shop){
   return false;
 }
 function applyFocusedNamesToRows(shop,rows,meta){
-  var focuses=meta&&Array.isArray(meta.multiProductFocus)?meta.multiProductFocus:[];
+  var focuses=meta&&Array.isArray(meta.multiProductFocus)?meta.multiProductFocus:[],multi=(rows||[]).length>1;
   return(rows||[]).map(function(row){
     var x=Object.assign({},row),matches=focuses.filter(function(f){return Number(f&&f.value||0)===Number(x.total||0)});
     var best=matches.slice().sort(function(a,b){
@@ -936,12 +936,16 @@ function applyFocusedNamesToRows(shop,rows,meta){
       return x;
     }
     if(best&&best.consensus&&best.consensus.candidateName){
-      var cand=best.consensus.candidateName;
-      if(productMeaningfulScore(cand)>=productMeaningfulScore(x.name)-2)x.name=cand;
+      var cand=best.consensus.candidateName,current=String(x.name||""),candScore=productMeaningfulScore(cand),currentScore=productMeaningfulScore(current),sim=productSimilarity(cand,current);
+      // A single/medium OCR candidate is only an alternative. Do not replace the
+      // existing row with a different, equally noisy reading.
+      if((!current||current==="商品名要確認")||(candScore>=currentScore+5&&sim>=.55))x.name=cand;
       x.lowConfidence=true;x.candidateOnly=true;x.candidateSource="focused";x.nameConfidence="medium";x.nameAlternatives=(best.consensus.candidates||[]).slice(0,3);
       return x;
     }
-    if(productNameRequiresConfirmation(x.name,shop)){
+    if(multi){
+      x.lowConfidence=true;x.candidateOnly=true;x.candidateSource=x.candidateSource||"ocr";x.nameConfidence=productNameRequiresConfirmation(x.name,shop)?"low":"medium";
+    }else if(productNameRequiresConfirmation(x.name,shop)){
       x.lowConfidence=true;x.candidateOnly=true;x.candidateSource=x.candidateSource||"ocr";x.nameConfidence="low";
     }else x.nameConfidence=x.nameConfidence||"medium";
     return x;
@@ -1410,6 +1414,17 @@ function receiptPreDiscountTotal(text){
   values.sort(function(a,b){return (counts[b]||0)-(counts[a]||0)||b-a});
   return values[0]||0;
 }
+function validatedPreDiscountTotal(explicitPre,subtotal,discount){
+  explicitPre=Number(explicitPre||0);subtotal=Number(subtotal||0);discount=Number(discount||0);
+  var structural=subtotal>0&&discount>0?subtotal+discount:0;
+  if(structural>0){
+    // A conflicting OCR value such as 318 must not override 796 + 22 = 818.
+    if(explicitPre===structural)return{value:explicitPre,source:"explicit_validated",explicit:explicitPre,structural:structural,conflict:false};
+    return{value:structural,source:"subtotal_plus_discount",explicit:explicitPre,structural:structural,conflict:explicitPre>0&&explicitPre!==structural};
+  }
+  if(explicitPre>0)return{value:explicitPre,source:"explicit_only",explicit:explicitPre,structural:0,conflict:false};
+  return{value:subtotal||0,source:subtotal?"subtotal":"none",explicit:0,structural:0,conflict:false};
+}
 function receiptDiscountValues(text){
   var counts={},values=[];
   normalize(text).split("\n").forEach(function(line){
@@ -1538,15 +1553,19 @@ function parseReceiptText(input,baseDate){
   initialRows=initialRows.filter(function(x){return !isChangeCueText(String(x.name||""));});
   // Structural change detection: if tender - total equals a parsed row, it is change even when OCR mangles its label.
   initialRows=removeDerivedChangeRows(initialRows,receiptAllText,amount);
-  var explicitPreDiscount=Number(amountInfo.preDiscountTotal||receiptPreDiscountTotal(receiptAllText)||0);
-  var structuralDiscount=explicitPreDiscount>0&&amountInfo.subtotal>0&&explicitPreDiscount>amountInfo.subtotal?explicitPreDiscount-amountInfo.subtotal:0;
-  var receiptWideDiscount=structuralDiscount||receiptDiscountAmount(receiptAllText);
-  var merchandiseAccountingTarget=explicitPreDiscount||((amountInfo.subtotal&&receiptWideDiscount>0)?amountInfo.subtotal+receiptWideDiscount:amountInfo.subtotal||0);
-  var accountingStructureValid=!!(explicitPreDiscount&&amountInfo.subtotal&&receiptWideDiscount&&explicitPreDiscount-receiptWideDiscount===amountInfo.subtotal&&(!amountInfo.tax||!amount||amountInfo.subtotal+amountInfo.tax===amount));
+  var explicitPreDiscountRaw=Number(amountInfo.preDiscountTotal||receiptPreDiscountTotal(receiptAllText)||0);
+  var directDiscount=receiptDiscountAmount(receiptAllText);
+  var structuralDiscount=explicitPreDiscountRaw>0&&amountInfo.subtotal>0&&explicitPreDiscountRaw>amountInfo.subtotal?explicitPreDiscountRaw-amountInfo.subtotal:0;
+  // Prefer an explicitly printed discount. A derived discount is only used when it is
+  // itself plausible and no direct discount was found.
+  var receiptWideDiscount=directDiscount||(structuralDiscount>0&&structuralDiscount<=(amountInfo.subtotal||amount||100000)?structuralDiscount:0);
+  var preDiscountDecision=validatedPreDiscountTotal(explicitPreDiscountRaw,amountInfo.subtotal,receiptWideDiscount);
+  var explicitPreDiscount=Number(preDiscountDecision.value||0),merchandiseAccountingTarget=explicitPreDiscount||amountInfo.subtotal||0;
+  var accountingStructureValid=!!(amountInfo.subtotal&&merchandiseAccountingTarget&&merchandiseAccountingTarget-(receiptWideDiscount||0)===amountInfo.subtotal&&(!amountInfo.tax||!amount||amountInfo.subtotal+amountInfo.tax===amount));
   var itemChoice=discounted?{rows:[discounted],matched:true,sum:amount}:chooseItemsForSubtotal(initialRows,amountInfo.subtotal,amount,receiptWideDiscount),rows=itemChoice.rows;
   var gapRecovery={recovered:false,target:0,gap:0};
   if(!discounted&&amountInfo.subtotal){
-    gapRecovery=recoverMissingMerchandiseRow([itemText,middle,whole,raw],rows,amountInfo.subtotal,receiptWideDiscount,amount);
+    gapRecovery=recoverMissingMerchandiseRow([itemText,middle,whole,raw],rows,amountInfo.subtotal,Math.max(0,merchandiseAccountingTarget-Number(amountInfo.subtotal||0)),amount);
     if(gapRecovery.recovered){
       // The selected rows already came from the normal subset solver. Appending the
       // exact accounting gap completes the merchandise total; do not merge again here,
@@ -1585,7 +1604,7 @@ function parseReceiptText(input,baseDate){
   var candidateSource=focusConsensus&&focusConsensus.accepted?"ocr":dictionaryAutoConfirmed?"learned":dictionaryInference&&dictionaryInference.name?(dictionaryInference.source||"verified_sample"):focusConsensus&&focusConsensus.candidateName?"ocr":"";
   var candidateList=dictionaryInference&&dictionaryInference.name?[dictionaryInference.name].concat(dictionaryInference.alternatives||[]):focusConsensus&&focusConsensus.candidates||[];
   candidateList=candidateList.filter(function(x,i,a){return x&&a.indexOf(x)===i}).slice(0,3);
-  return{rawText:raw,debugText:debugText,date:date,shop:shop,amount:amount,amountConfidence:amountInfo.confidence,amountScore:amountInfo.score,subtotal:amountInfo.subtotal,preDiscountTotal:explicitPreDiscount,discount:receiptWideDiscount,accountingStructureValid:accountingStructureValid,tax:amountInfo.tax,subtotalTaxMatch:subtotalTaxMatch,paymentCandidate:payment,categoryCandidate:cat,items:items,itemRows:rows,splitRows:splitRows,itemSum:itemSum,merchandiseTarget:merchandiseTarget,itemSetComplete:itemSetComplete,expectedItemCount:expectedItemCount,actualItemCount:actualItemCount,itemQuantityMatch:itemQuantityMatch,itemSubtotalMatch:!!(amountInfo.subtotal&&itemSum===amountInfo.subtotal),itemPreDiscountMatch:!!(amountInfo.subtotal&&receiptWideDiscount>0&&itemSum===amountInfo.subtotal+receiptWideDiscount),gapRecovered:!!gapRecovery.recovered,gapRecoveredAmount:Number(gapRecovery.gap||0),gapRecoveredName:gapRecovery.recoveredName||"",detail:detailProductAllowed?items.slice(0,2).join("・")+(items.length>2?"ほか":""):detailFallback,productReadFailed:productReadFailed,productLowConfidence:productLowConfidence,lowConfidenceItemCount:lowConfidenceItemCount,productCandidateStatus:candidateStatus,productCandidateSource:candidateSource,productCandidateAutoConfirmed:dictionaryAutoConfirmed,productCandidates:candidateList,productCandidateReason:dictionaryAutoConfirmed?"learned_auto_confirmed":dictionaryInference&&dictionaryInference.name?"merchant_dictionary":focusConsensus&&focusConsensus.rejectionReason||"",tendered:receiptTenderedAmount(receiptAllText,amount),ocrMeta:obj&&obj.meta||null};
+  return{rawText:raw,debugText:debugText,date:date,shop:shop,amount:amount,amountConfidence:amountInfo.confidence,amountScore:amountInfo.score,subtotal:amountInfo.subtotal,preDiscountTotal:explicitPreDiscount,preDiscountOCR:explicitPreDiscountRaw,preDiscountSource:preDiscountDecision.source,preDiscountConflict:!!preDiscountDecision.conflict,discount:receiptWideDiscount,accountingStructureValid:accountingStructureValid,tax:amountInfo.tax,subtotalTaxMatch:subtotalTaxMatch,paymentCandidate:payment,categoryCandidate:cat,items:items,itemRows:rows,splitRows:splitRows,itemSum:itemSum,merchandiseTarget:merchandiseTarget,itemSetComplete:itemSetComplete,expectedItemCount:expectedItemCount,actualItemCount:actualItemCount,itemQuantityMatch:itemQuantityMatch,itemSubtotalMatch:!!(amountInfo.subtotal&&itemSum===amountInfo.subtotal),itemPreDiscountMatch:!!(amountInfo.subtotal&&receiptWideDiscount>0&&itemSum===amountInfo.subtotal+receiptWideDiscount),gapRecovered:!!gapRecovery.recovered,gapRecoveredAmount:Number(gapRecovery.gap||0),gapRecoveredName:gapRecovery.recoveredName||"",detail:detailProductAllowed?items.slice(0,2).join("・")+(items.length>2?"ほか":""):detailFallback,productReadFailed:productReadFailed,productLowConfidence:productLowConfidence,lowConfidenceItemCount:lowConfidenceItemCount,productCandidateStatus:candidateStatus,productCandidateSource:candidateSource,productCandidateAutoConfirmed:dictionaryAutoConfirmed,productCandidates:candidateList,productCandidateReason:dictionaryAutoConfirmed?"learned_auto_confirmed":dictionaryInference&&dictionaryInference.name?"merchant_dictionary":focusConsensus&&focusConsensus.rejectionReason||"",tendered:receiptTenderedAmount(receiptAllText,amount),ocrMeta:obj&&obj.meta||null};
 }
 function renderResult(p,errorText){
   var panel=document.getElementById("receiptOCRPanel");if(!panel)return;
@@ -1593,7 +1612,7 @@ function renderResult(p,errorText){
   var preview=previewUrl?'<img class="receipt-preview" src="'+e(previewUrl)+'" alt="撮影したレシートのプレビュー">':"";
   var metaHtml=meta?'<div class="receipt-ocr-meta">分割OCR '+e(meta.passes||"")+"回"+(Math.abs(Number(meta.skew||0))>=.3?" / 傾き補正 "+e(Number(meta.skew).toFixed(1))+"°":"")+(meta.productAnchor?" / 商品価格座標 "+e(yen(meta.productAnchor.value)):"")+'</div>':"";
   if(p.amountConfidence==="high")metaHtml+='<div class="receipt-ocr-meta">金額判定：高信頼'+(p.subtotalTaxMatch?" / 小計＋税一致":"")+(p.itemSubtotalMatch?" / 商品合計＝小計":p.itemPreDiscountMatch?" / 商品合計−割引＝小計":"")+'</div>';
-  if(p.accountingStructureValid)metaHtml+='<div class="receipt-ocr-meta">会計構造：'+e(yen(p.preDiscountTotal))+" − 割引 "+e(yen(p.discount))+" ＝ "+e(yen(p.subtotal))+" / ＋税 "+e(yen(p.tax))+" ＝ "+e(yen(p.amount))+'</div>';
+  if(p.accountingStructureValid)metaHtml+='<div class="receipt-ocr-meta">会計構造：'+e(yen(p.preDiscountTotal))+" − 割引 "+e(yen(p.discount))+" ＝ "+e(yen(p.subtotal))+" / ＋税 "+e(yen(p.tax))+" ＝ "+e(yen(p.amount))+(p.preDiscountConflict?" / 割引前合計OCRを補正":"")+'</div>';
   if(p.itemSetComplete)metaHtml+='<div class="receipt-ocr-meta">商品明細：金額一致'+(p.expectedItemCount?(" / "+e(p.actualItemCount)+"点"+(p.itemQuantityMatch?"一致":"（レシート "+e(p.expectedItemCount)+"点）")):"")+'</div>';
   if(p.lowConfidenceItemCount)metaHtml+='<div class="receipt-ocr-meta">商品名：'+e(p.lowConfidenceItemCount)+"件を要確認 / 金額は保持"+'</div>';
   else if(p.merchandiseTarget)metaHtml+='<div class="receipt-ocr-meta">商品明細：'+e(yen(p.itemSum||0))+" / 目標 "+e(yen(p.merchandiseTarget||0))+'</div>';
@@ -2099,6 +2118,18 @@ function receiptTests(){
     {name:"テスト商品500ml",aliases:["Fドビデがッッ5UUml"],priceHints:[284],source:"learned"}
   ],[{text:"Fドビデがッッ5UUml ¥284"}],"Fドビデがッッ5UUml ¥284",284);
 
+  var okBadPreText=[
+    "割引前合計 ¥318",
+    "F 食料品3/103割引 -22",
+    "小計 ¥796",
+    "8%対象 ¥796 税63",
+    "合計/ 7点 ¥859"
+  ].join("\n");
+  var okBadPreAmount=analyzeAmount(okBadPreText,"");
+  var okBadPreRaw=receiptPreDiscountTotal(okBadPreText);
+  var okBadPreDiscount=receiptDiscountAmount(okBadPreText);
+  var okBadPreDecision=validatedPreDiscountTotal(okBadPreRaw,okBadPreAmount.subtotal,okBadPreDiscount);
+
   var okDiscountNoise=[
     "割引前合計 ¥818",
     "割引前合計 ¥818",
@@ -2171,6 +2202,9 @@ function receiptTests(){
     ["receipt OK missing merchandise gap recovery test",okGapRecovery.recovered===true&&okGapRecovery.gap===325&&okGapSum===818&&okGapRows.some(function(x){return Number(x.total||0)===325})&&okGapRecovery.lowConfidence===true],
     ["receipt OK discount-before-total exclusion test",discountAmountFromLine("割引前合計 ¥818")===0],
     ["receipt OK structural discount priority test",okDiscountNoisePre===818&&okDiscountNoiseAmount.subtotal===796&&okDiscountNoiseValue===22],
+    ["receipt OK bad pre-discount OCR repaired from subtotal plus discount test",okBadPreRaw===318&&okBadPreAmount.subtotal===796&&okBadPreDiscount===22&&okBadPreDecision.value===818&&okBadPreDecision.conflict===true],
+    ["receipt OK merchandise target remains 818 after conflicting pre-total test",pOk.merchandiseTarget===818&&pOk.itemSum===818],
+    ["receipt multi-item OCR names remain confirm-required without independent consensus test",pOk.itemRows.filter(function(x){return !x.autoConfirmed}).every(function(x){return x.lowConfidence===true})],
     ["receipt noisy product names require confirmation test",noisyNameChecks&&naturalNameCheck],
     ["receipt learned OCR alias inference test",!!aliasInference&&aliasInference.name==="テスト商品500ml"&&aliasInference.autoConfirmEligible===true],
     ["receipt OK receipt item count test",okCountSample===7],
@@ -2256,7 +2290,7 @@ function receiptTests(){
 function attachTests(){
   var b=document.getElementById("selfTest");if(!b||b.dataset.receiptWrapped)return;
   var base=b.onclick;b.dataset.receiptWrapped="1";
-  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),pass=out.every(function(x){return x[1]}),box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">v3.46 レシート機能テストもすべて合格しました。</div>':'<div class="errorbox">レシート機能テストに失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
+  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),pass=out.every(function(x){return x[1]}),box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">v3.47 レシート機能テストもすべて合格しました。</div>':'<div class="errorbox">レシート機能テストに失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
 }
 var body=document.getElementById("modalBody");
 if(body){new MutationObserver(function(){enhance()}).observe(body,{childList:true,subtree:true})}

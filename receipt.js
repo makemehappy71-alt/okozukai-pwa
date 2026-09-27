@@ -466,10 +466,10 @@ function mergeProductRows(rows){
     if(bestCandidate&&productMeaningfulScore(bestCandidate.name)>=productMeaningfulScore(name)-2)name=bestCandidate.name;
     var quality=productMeaningfulScore(name)+tokenSupportScore(name,g.candidates);
     return{name:name,unitPrice:g.unitPrice,qty:g.qty,total:g.total,quality:quality,candidateCount:g.candidates.length};
-  });
+  }).filter(function(x){return !/(?:^|\s)(?:お?釣(?:り)?|お?つり|釣銭)(?:\s|$)/i.test(String(x.name||""));});
 }
 function chooseItemsForSubtotal(rows,subtotal,receiptTotal){
-  rows=mergeProductRows(rows).filter(function(x){return x.total>0});
+  rows=mergeProductRows(rows).filter(function(x){return x.total>0&&!/(?:^|\s)(?:お?釣(?:り)?|お?つり|釣銭)(?:\s|$)/i.test(String(x.name||""))});
   subtotal=Number(subtotal||0);receiptTotal=Number(receiptTotal||0);
   var maxItem=receiptTotal>0?receiptTotal:(subtotal>0?subtotal:0);
   if(maxItem>0)rows=rows.filter(function(x){return Number(x.total||0)<=maxItem});
@@ -509,7 +509,7 @@ function analyzeAmount(text,extraText){
       tax=tax||n;
       return;
     }
-    if(/お?預り|お?釣|釣銭/i.test(line))return;
+    if(/お?預り|お?釣(?:り)?|お?つり|釣銭/i.test(line))return;
     if(/お支払(?:い)?額|お買上(?:げ)?額|領収金額|総合計|税込合計|合計金額/i.test(line)){add(n,"total",100,line);return}
     if(/(?:^|[\s:：])合\s*計(?:[\s:：]|¥|\\|Y|[0-9]|$)/i.test(line)){add(n,"total",100,line);return}
     if(/含計|台計|合汁|合言十/i.test(line)){add(n,"fuzzyTotal",70,line);return}
@@ -803,6 +803,10 @@ function parseReceiptText(input,baseDate){
     var recoveredSingle=recoverSingleItemRow([itemText,middle,whole,raw],amountInfo.subtotal,amount);
     if(recoveredSingle)rows=[recoveredSingle];
   }
+  // Final guard: payment/change lines must never survive into visible product candidates.
+  rows=rows.filter(function(x){return !/(?:^|\s)(?:お?釣(?:り)?|お?つり|釣銭)(?:\s|$)/i.test(String(x.name||""));});
+  // If OCR produced only a weak gibberish item, do not pretend it is a reliable product name.
+  if(rows.length===1&&productMeaningfulScore(rows[0].name)<15)rows=[];
   var items=rows.map(function(x){return x.name}),cat=categorySuggestion(raw,shop,rows);
   var itemSum=rows.reduce(function(a,x){return a+Number(x.total||0)},0),subtotalTaxMatch=!!(amountInfo.subtotal&&amountInfo.tax&&amountInfo.subtotal+amountInfo.tax===amount);
   var splitRows=allocateReceiptRows(rows,amountInfo.subtotal,amountInfo.tax,amount,shop);

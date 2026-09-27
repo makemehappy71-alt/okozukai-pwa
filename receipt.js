@@ -281,6 +281,49 @@ function normalizeAnchoredOCRText(text,anchorValue,appendPrice){
   if(appendPrice&&Number(anchorValue||0)>0&&numberFromLine(t)!==Number(anchorValue))t+=" ¥"+Number(anchorValue);
   return t;
 }
+function cleanFocusedProductName(text,anchorValue){
+  var raw=normalize(text).replace(/\n+/g," ").replace(/\s+/g," ").trim();
+  if(!raw)return"";
+  var bracket=raw.match(/[【\[「『]\s*([^】\]」』]{2,42})\s*[】\]」』]/);
+  var s=bracket?bracket[1]:raw;
+  if(Number(anchorValue||0)>0){
+    var value=String(Number(anchorValue)).replace(/\B(?=(\d{3})+(?!\d))/g,",");
+    s=s.replace(new RegExp("(?:¥|￥|\\\\|Y)?\\s*"+value.replace(",","[,]?")+"(?:\\s*円)?","gi")," ");
+    s=s.replace(new RegExp("(?:¥|￥|\\\\|Y)?\\s*"+String(Number(anchorValue))+"(?:\\s*円)?","gi")," ");
+  }
+  s=s.replace(/^\s*(?:E|F|I|L|1)\s+(?=[ぁ-んァ-ヶ一-龠A-Za-z0-9])/i,"");
+  s=s.replace(/^\s*[>＞\-—_・:：|]+\s*/,"");
+  s=s.replace(/\s+[0-9]{1,3}\s*$/,"");
+  s=normalizeProductName(s);
+  return s.replace(/^\s*(?:E|F|I|L)\s+/i,"").trim();
+}
+function focusedProductNamePlausible(name){
+  var s=normalizeProductName(name),hira=(s.match(/[ぁ-ん]/g)||[]).length,kata=(s.match(/[ァ-ヶー]/g)||[]).length,kanji=(s.match(/[一-龠]/g)||[]).length,latin=(s.match(/[A-Za-z]/g)||[]).length;
+  if(!s||s.length<4||s.length>36)return false;
+  if(/^(?:商品名要確認|商品|メニュー|セット)$/i.test(s))return false;
+  if(/^(?:[0-9０-９])(?=[ぁ-んァ-ヶ一-龠])/.test(s)&&!/^(?:7UP|100%|24h)/i.test(s))return false;
+  if(/(?:店舗|問い合わせ|領収|会員|合計|割引|クーポン|消費税|現金|お釣|アンケート)/i.test(s))return false;
+  if(hira>=4&&kata<=2&&kanji===0&&latin===0)return false;
+  if(kata+kanji+latin<3)return false;
+  if(productMeaningfulScore(s)<22||isGarbageProductName(s))return false;
+  return true;
+}
+function focusedProductConsensus(entries,anchorValue){
+  var names=(entries||[]).map(function(x){return cleanFocusedProductName(typeof x==="string"?x:x&&x.text,anchorValue)}).filter(Boolean);
+  var unique=[];names.forEach(function(n){if(unique.indexOf(n)<0)unique.push(n)});
+  if(unique.length<2)return{attempted:names.length>0,accepted:false,name:"",support:0,score:0,candidates:unique,value:Number(anchorValue||0)};
+  var scored=unique.map(function(name){
+    var support=1,sum=0,peers=0,maxSim=0;
+    unique.forEach(function(other){
+      if(other===name)return;
+      var sim=productSimilarity(name,other);sum+=sim;peers++;if(sim>maxSim)maxSim=sim;if(sim>=.58)support++;
+    });
+    var avg=peers?sum/peers:0,score=productMeaningfulScore(name)+support*18+avg*24;
+    return{name:name,support:support,avg:avg,maxSim:maxSim,score:score,plausible:focusedProductNamePlausible(name)};
+  }).sort(function(a,b){return b.support-a.support||b.score-a.score||b.avg-a.avg});
+  var best=scored[0],accepted=!!best&&best.plausible&&best.support>=2&&best.maxSim>=.58;
+  return{attempted:true,accepted:accepted,name:accepted?best.name:"",support:best?best.support:0,score:best?best.score:0,candidates:unique,value:Number(anchorValue||0)};
+}
 async function prepareImage(file){
   if(!file)throw new Error("画像が選択されていません");
   if(String(file.type||"").indexOf("image/")!==0)throw new Error("画像ファイルを選んでください");
@@ -1022,6 +1065,14 @@ function parseReceiptText(input,baseDate){
 
   var receiptAllText=[itemText,middle,whole,raw,paymentText,bottom].filter(Boolean).join("\n");
   var discounted=discountedSingleItem(initialRows,receiptAllText,amount)||recoverDiscountedStructure(initialRows,receiptAllText,amount);
+  var focusConsensus=obj&&obj.meta&&obj.meta.focusConsensus||null,productAnchor=obj&&obj.meta&&obj.meta.productAnchor||null;
+  if(discounted&&focusConsensus&&focusConsensus.attempted&&productAnchor&&Number(discounted.originalTotal||0)===Number(productAnchor.value||0)){
+    if(focusConsensus.accepted&&focusConsensus.name){
+      discounted.name=focusConsensus.name;discounted.rawName=focusConsensus.name;discounted.lowConfidence=false;discounted.quality=Math.max(90,Number(discounted.quality||0)+50);
+    }else{
+      discounted.name="商品名要確認";discounted.lowConfidence=true;
+    }
+  }
   initialRows=initialRows.filter(function(x){return !/(?:^|\s)(?:お?釣(?:り)?|お?つり|釣銭)(?:\s|$)/i.test(String(x.name||""));});
   // Structural change detection: if tender - total equals a parsed row, it is change even when OCR mangles its label.
   initialRows=removeDerivedChangeRows(initialRows,receiptAllText,amount);
@@ -1213,15 +1264,20 @@ async function runOCR(bundle){
       try{await worker.setParameters({preserve_interword_spaces:"1",tessedit_pageseg_mode:ip.mode||"6",tessedit_char_whitelist:""})}catch(_e){}
       try{var iret=await worker.recognize(ip.canvas),itxt=String(iret&&iret.data&&iret.data.text||"");itemPasses++;diagnostics.push({label:ip.label||("商品"+(ii+1)),text:normalize(itxt)});itemText=mergeOCRTexts(itemText,itxt)}catch(_e){}
     }
-    var focusParts=anchored&&anchored.slices||[];
+    var focusParts=anchored&&anchored.slices||[],focusEntries=[];
     for(var li=0;li<focusParts.length;li++){
       var lp=focusParts[li];ocrPassLabel=lp.label||("商品価格座標再OCR"+(li+1));
       try{await worker.setParameters({preserve_interword_spaces:"1",tessedit_pageseg_mode:lp.mode||"7",tessedit_char_whitelist:""})}catch(_e){}
       try{
         var lret=await worker.recognize(lp.canvas),ltxt=String(lret&&lret.data&&lret.data.text||""),normalizedFocus=normalizeAnchoredOCRText(ltxt,lp.anchorValue,lp.appendPrice);
         itemPasses++;diagnostics.push({label:lp.label||("商品価格座標再OCR"+(li+1)),text:normalizedFocus||normalize(ltxt)});
-        if(normalizedFocus)itemText=mergeOCRTexts(itemText,normalizedFocus);
+        if(normalizedFocus)focusEntries.push({label:lp.label||"",text:normalizedFocus});
       }catch(_e){}
+    }
+    var focusConsensus=focusedProductConsensus(focusEntries,anchorMeta&&anchorMeta.value||0);
+    if(focusConsensus.attempted){
+      diagnostics.push({label:"商品名合意判定",text:focusConsensus.accepted?("採用: "+focusConsensus.name+" / 支持 "+focusConsensus.support):("保留 / 候補: "+focusConsensus.candidates.join(" | "))});
+      if(focusConsensus.accepted)itemText=mergeOCRTexts(itemText,focusConsensus.name+" ¥"+focusConsensus.value);
     }
     var paymentText="",paymentPasses=0,paymentParts=bundle.paymentSlices||[];
     for(var pi=0;pi<paymentParts.length;pi++){
@@ -1231,7 +1287,7 @@ async function runOCR(bundle){
     }
     var merged=full;parts.forEach(function(x){merged=mergeOCRTexts(merged,x)});
     ocrPassLabel="";
-    return{text:merged,whole:normalize(full),sections:{top:normalize(sectionMap.top),middle:normalize(sectionMap.middle),bottom:normalize(sectionMap.bottom)},shopText:normalize(shopText),itemText:normalize(itemText),paymentText:normalize(paymentText),diagnostics:diagnostics,meta:{passes:1+parts.length+shopPasses+itemPasses+paymentPasses,skew:Number(bundle.skew||0),ratio:Number(bundle.ratio||0),productAnchor:anchorMeta?{value:anchorMeta.value,discount:anchorMeta.discount,text:anchorMeta.text}:null}};
+    return{text:merged,whole:normalize(full),sections:{top:normalize(sectionMap.top),middle:normalize(sectionMap.middle),bottom:normalize(sectionMap.bottom)},shopText:normalize(shopText),itemText:normalize(itemText),paymentText:normalize(paymentText),diagnostics:diagnostics,meta:{passes:1+parts.length+shopPasses+itemPasses+paymentPasses,skew:Number(bundle.skew||0),ratio:Number(bundle.ratio||0),productAnchor:anchorMeta?{value:anchorMeta.value,discount:anchorMeta.discount,text:anchorMeta.text}:null,focusConsensus:focusConsensus}};
   }finally{ocrPassLabel="";try{await worker.terminate()}catch(_e){}}
 }
 async function handleFile(file){
@@ -1352,6 +1408,17 @@ function receiptTests(){
     {text:"¥1,090",bbox:{x0:720,y0:620,x1:900,y1:660}}
   ]}]}]}];
   var bkCoord=anchoredProductLineFromBlocks(bkCoordBlocks,"クーポン割引 ¥-250\n合計金額 ¥840",1000,1800);
+  var badFocusConsensus=focusedProductConsensus([
+    "E 【7のたかセト】 欄夫を ¥1,090",
+    "E 【りのたかセト】 ¥1,090",
+    "E 【9のアーたかセト】 ¥1,090",
+    "E 【7のたかセト】 ¥1,090"
+  ],1090);
+  var goodFocusConsensus=focusedProductConsensus([
+    "E 【ワッパーチーズセット】 ¥1,090",
+    "【ワッパーチーズセット】 ¥1,090",
+    "ワッパーチーズセット ¥1,090"
+  ],1090);
 
   var daiso522Name=normalizeProductName("CCケーブル 3A、 1 ¥1004%");
   var daiso522Obj={
@@ -1366,6 +1433,8 @@ function receiptTests(){
   var p522=parseReceiptText(daiso522Obj,"2026-09-26"),p522Row=p522.itemRows[0]||null;
 
   return[
+    ["receipt Burger King bad focused OCR consensus rejection test",badFocusConsensus.attempted===true&&badFocusConsensus.accepted===false],
+    ["receipt Burger King good focused OCR consensus acceptance test",goodFocusConsensus.accepted===true&&goodFocusConsensus.name==="ワッパーチーズセット"&&goodFocusConsensus.support>=2],
     ["receipt Burger King price-coordinate anchor test",!!bkCoord&&bkCoord.value===1090&&bkCoord.discount===250&&!!bkCoord.nameBox&&bkCoord.nameBox.x1<900],
     ["receipt Burger King branch fusion test",pbk.shop==="バーガーキング立川北口店"],
     ["receipt Burger King total/payment test",pbk.amount===840&&pbk.paymentCandidate==="wallet"],

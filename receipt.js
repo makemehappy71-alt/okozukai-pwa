@@ -813,6 +813,7 @@ function merchantProductDictionary(shop){
     builtIn.push(
       {name:"ピーチティー1000ml",aliases:["ピーチティー1000ml","F MEIE® -チティー1UUUml","FトETE\"-チティー100Umi","FトETIE”-チイィ-1000nml","F NEIE® -F74-1000m|"],priceHints:[101],source:"verified_sample"},
       {name:"ドデカミン500ml",aliases:["ドデカミン500ml","Fドデがッ500nml","Fドデがッン500nml","Fドビデがッッ5UUml","Fドビデがソノ50Uml","ドデがッン500ml"],priceHints:[284],source:"verified_sample"},
+      {name:"家族の潤いライチ",aliases:["家族の潤いライチ","カゾクノウルオイライチ","がバクノウルオイライチ","F がバクノウルオイライチ","F “クノルウルオイライチ","F クノウルウ上オイライチ","F がクノルウオイライ","Fがバクルウイラ人","クノルウ上オイライチ"],priceHints:[108],source:"verified_sample"},
       {name:"エビピラフ",aliases:["エビピラフ","FTE*ヒ\"ラフ","F TE^ヒ\"ラフ","FIEヒラフ","とじとじこブフ","しとじミワノ"],priceHints:[325],source:"verified_sample"}
     );
   }
@@ -2245,6 +2246,10 @@ function receiptTests(){
   var pOk=parseReceiptText(okObj,"2026-09-27"),ok284=pOk.itemRows.find(function(x){return Number(x.total||0)===284}),ok325=pOk.itemRows.find(function(x){return Number(x.total||0)===325}),okItemTotals=pOk.itemRows.map(function(x){return Number(x.total||0)}).sort(function(a,b){return a-b}).join(","),okSplitDiscount=pOk.splitRows.reduce(function(a,x){return a+Number(x.discount||0)},0),okSplitTax=pOk.splitRows.reduce(function(a,x){return a+Number(x.extra||0)},0),okSplitGross=pOk.splitRows.reduce(function(a,x){return a+Number(x.gross||0)},0);
   var okFastPath=receiptStructuralFastPath(okText,okObj.sections.middle,okObj.sections.bottom);
   var okBuiltIn284=merchantProductInference("オーケー立川若葉町店",[{text:"Fドデがッ500nml"}],"Fドデがッ500nml ¥284",284);
+  var okBuiltIn108=merchantProductInference("オーケー立川若葉町店",[{text:"がバクノウルオイライチ"}],"F がバクノウルオイライチ ¥108",108);
+  var okBuiltIn108Applied=applyMerchantDictionaryCandidatesToRows("オーケー立川若葉町店",[
+    {name:"クノルウ上オイライチ",rawName:"F クノルウ上オイライチ",total:108,qty:1,unitPrice:108,lowConfidence:true,candidateOnly:true}
+  ])[0];
   var okBuiltIn325=merchantProductInference("オーケー立川若葉町店",[{text:'FTE*ヒ"ラフ'}],'FTE*ヒ"ラフ ¥325',325);
 
   var reviewModelSample=receiptReviewModels([
@@ -2353,6 +2358,8 @@ function receiptTests(){
     ["receipt OK merchant template key test",merchantShopKey("オーケー立川若葉町店")==="ok"],
     ["receipt OK structural fast-path test",okFastPath.ready===true&&okFastPath.sum===818&&okFastPath.actualItemCount===7],
     ["receipt OK built-in 284 suggestion test",!!okBuiltIn284&&okBuiltIn284.name==="ドデカミン500ml"&&okBuiltIn284.source==="verified_sample"],
+    ["receipt OK built-in 108 家族の潤いライチ suggestion test",!!okBuiltIn108&&okBuiltIn108.name==="家族の潤いライチ"&&okBuiltIn108.source==="verified_sample"&&okBuiltIn108.priceMatch===true],
+    ["receipt OK built-in 108 row correction remains confirm-required test",!!okBuiltIn108Applied&&okBuiltIn108Applied.name==="家族の潤いライチ"&&okBuiltIn108Applied.lowConfidence===true],
     ["receipt OK built-in 325 suggestion test",!!okBuiltIn325&&okBuiltIn325.name==="エビピラフ"&&okBuiltIn325.source==="verified_sample"],
     ["receipt OK final total test",pOk.amount===859&&pOk.amountConfidence==="high"],
     ["receipt OK subtotal tax test",pOk.subtotal===796&&pOk.tax===63&&pOk.subtotalTaxMatch===true],

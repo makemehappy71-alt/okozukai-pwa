@@ -1414,7 +1414,10 @@ function parseReceiptText(input,baseDate){
   if(!discounted&&amountInfo.subtotal){
     gapRecovery=recoverMissingMerchandiseRow([itemText,middle,whole,raw],rows,amountInfo.subtotal,receiptWideDiscount,amount);
     if(gapRecovery.recovered){
-      rows=chooseItemsForSubtotal(gapRecovery.rows,amountInfo.subtotal,amount,receiptWideDiscount).rows;
+      // The selected rows already came from the normal subset solver. Appending the
+      // exact accounting gap completes the merchandise total; do not merge again here,
+      // because that would discard the recovery confidence metadata.
+      rows=gapRecovery.rows;
     }
   }
   if(!rows.length&&amountInfo.subtotal){
@@ -1976,7 +1979,7 @@ function receiptTests(){
     ["receipt OK four exact merchandise totals test",pOk.itemRows.length===4&&okItemTotals==="101,108,284,325"&&!!ok325],
     ["receipt OK merchandise pre-discount sum test",pOk.itemSum===818&&pOk.itemPreDiscountMatch===true],
     ["receipt OK mangled quantity descriptor rejection test",isQuantityDescriptorName("コメXメ単/1")===true],
-    ["receipt OK missing merchandise gap recovery test",okGapRecovery.recovered===true&&okGapRecovery.gap===325&&okGapSum===818&&okGapRows.some(function(x){return Number(x.total||0)===325})],
+    ["receipt OK missing merchandise gap recovery test",okGapRecovery.recovered===true&&okGapRecovery.gap===325&&okGapSum===818&&okGapRows.some(function(x){return Number(x.total||0)===325})&&okGapRecovery.lowConfidence===true],
     ["receipt OK receipt item count test",okCountSample===7],
     ["receipt OK split discount allocation test",pOk.splitRows.length===4&&okSplitDiscount===22],
     ["receipt OK split tax allocation test",okSplitTax===63&&okSplitGross===859],

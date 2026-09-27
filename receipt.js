@@ -633,6 +633,32 @@ function normalizeDaisoBranch(name){
   if(/^ダイソー立川神町店$/.test(s))return"ダイソー立川幸町店";
   return s;
 }
+function normalizeKnownShopName(shop){
+  var s=String(shop||"").normalize?String(shop||"").normalize("NFKC"):String(shop||"");
+  s=s.replace(/\s+/g,"").trim();
+  if(/^バーガーキング/.test(s)){
+    s=s.replace(/[趾址庖占后苫]$/,"店");
+    var m=s.match(/^(バーガーキング)(.{2,24})$/);
+    if(m&&!/店$/.test(s)&&/(?:口|駅|前|町|通り|モール|センター)[^店]?$/.test(m[2]))s=s.replace(/.$/,"店");
+  }
+  return s;
+}
+function bestShopFromSources(sources){
+  var candidates=[];
+  (sources||[]).forEach(function(src,idx){
+    var txt=normalize(src);if(!txt)return;
+    [shopFromText(txt,true),shopFromText(txt,false)].forEach(function(v,kind){
+      v=normalizeKnownShopName(v);if(!v)return;
+      var score=(kind===0?50:10)+(idx===0?12:idx===1?9:idx===2?6:3);
+      if(/^(?:バーガーキング|ダイソー|西友|クリエイト|マツモトキヨシ|ウエルシア|スギ薬局)/.test(v))score+=35;
+      if(/店$/.test(v))score+=12;
+      if(/[趾址庖占后苫]$/.test(v))score-=25;
+      candidates.push({name:v,score:score});
+    });
+  });
+  candidates.sort(function(a,b){return b.score-a.score||b.name.length-a.name.length});
+  return candidates.length?candidates[0].name:"";
+}
 function shopFromText(text,knownOnly){
   var lines=normalize(text).split("\n").map(function(x){return x.trim()}).filter(Boolean).slice(0,18),joined=lines.join(" ");
   if(/CREATE|クリエイト|ドラッグストア\s*クリエイト/i.test(joined))return"クリエイト";
@@ -810,7 +836,7 @@ function removeDerivedChangeRows(rows,text,total){
 }
 function parseReceiptText(input,baseDate){
   var obj=input&&typeof input==="object"&&!Array.isArray(input)?input:null,raw=normalize(obj?obj.text:input),whole=normalize(obj&&obj.whole||""),shopText=normalize(obj&&obj.shopText||""),itemText=normalize(obj&&obj.itemText||""),paymentText=normalize(obj&&obj.paymentText||""),sections=obj&&obj.sections||{},top=normalize(sections.top||""),middle=normalize(sections.middle||""),bottom=normalize(sections.bottom||"");
-  var shop=shopFromText(shopText,true)||shopFromText(top,true)||shopFromText(raw);
+  var shop=bestShopFromSources([shopText,top,raw,whole]);
   if(/^ダイソー/.test(shop)){
     var daisoDetailed=shopFromText([shopText,top,raw,whole].filter(Boolean).join("\n"),true);
     if(/^ダイソー.+店$/.test(daisoDetailed))shop=normalizeDaisoBranch(daisoDetailed);
@@ -956,11 +982,16 @@ function buildOCRBundle(){
     {canvas:makeOCRRegion(binary,.20,.005,.76,.11,3),mode:"11",label:"店名ロゴ中央3",whitelist:"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"},
     {canvas:makeOCRRegion(gray,.14,0,.86,.17,2),mode:"11",label:"店名ロゴ広域",whitelist:"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"}
   ];
+  // Use overlapping bands instead of assuming every receipt has products at 17-31%.
+  // Different receipt layouts place items at very different vertical positions.
   var itemSlices=[
-    {canvas:makeOCRScaledSlice(base,.17,.31,2),mode:"6",label:"商品拡大1"},
-    {canvas:makeOCRScaledSlice(gray,.17,.31,2),mode:"6",label:"商品拡大2"},
-    {canvas:makeOCRScaledSlice(binary,.17,.31,2),mode:"6",label:"商品拡大3"},
-    {canvas:makeOCRSlice(gray,.13,.40),mode:"11",label:"商品広域"}
+    {canvas:makeOCRScaledSlice(base,.10,.34,2.4),mode:"6",label:"商品上段カラー"},
+    {canvas:makeOCRScaledSlice(gray,.10,.34,2.4),mode:"6",label:"商品上段グレー"},
+    {canvas:makeOCRScaledSlice(binary,.10,.34,2.2),mode:"6",label:"商品上段二値"},
+    {canvas:makeOCRScaledSlice(gray,.22,.52,2.3),mode:"6",label:"商品中段グレー"},
+    {canvas:makeOCRScaledSlice(binary,.22,.52,2.1),mode:"6",label:"商品中段二値"},
+    {canvas:makeOCRScaledSlice(gray,.34,.66,2),mode:"11",label:"商品下段広域"},
+    {canvas:makeOCRSlice(gray,.08,.68),mode:"11",label:"商品全域フォールバック"}
   ];
   var paymentSlices=[
     {canvas:makeOCRSlice(gray,.50,.84),mode:"6",label:"支払方法1"},

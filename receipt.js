@@ -253,7 +253,7 @@ function classifyReceiptLine(line){
   var s=normalize(line);
   if(!s)return"empty";
   if(/楽天\s*(?:pay|ペイ|べイ|へイ)|rakuten\s*pay|(?:^|\s)r\s*pay(?:\s|$)|paypay|d払い|au\s*pay|クレジット|visa|master\s*card|mastercard|\bjcb\b|amex|現金|cash/i.test(s))return"payment";
-  if(/総合計|合計|小計|税込|お支払|お?預り|お?釣|釣銭|消費税|内税|外税|税率|軽減税率|対象金額|ポイント|合計P|値引|割引|クーポン/i.test(s))return"accounting";
+  if(/総合計|合計|小計|税込|お支払|お?預り|お?釣(?:り)?|お?つり|釣銭|消費税|内税|外税|税率|軽減税率|対象金額|ポイント|合計P|値引|割引|クーポン/i.test(s))return"accounting";
   if(/^\s*[@＠]?\s*\d{1,6}\s+(?:[x×]\s*)?\d{1,3}\s+(?:¥\s*)?\d{1,7}\s*$/i.test(ocrMoneyClean(s)))return"quantity";
   if(isReceiptHeaderLine(s))return"header";
   return"product";
@@ -544,7 +544,7 @@ function analyzeAmount(text,extraText){
 }
 function itemRowsFromText(text,sourcePriority){
   var lines=normalize(text).split("\n").map(function(x){return x.trim()}).filter(Boolean),priority=Number(sourcePriority||1);
-  var bad=/(総合計|合計|小計|税込|お支払|お?預り|お?釣|釣銭|消費税|内税|外税|税率|8\s*%|10\s*%|軽減税率|対象金額|ポイント|合計P|値引|割引|クーポン|楽天\s*(?:pay|ペイ)|paypay|d払い|au\s*pay|クレジット|visa|master|jcb|amex|残高|receipt|領収|tel|電話|〒|登録番号|取引ID|受付番号|伝票番号|承認番号|決済手段|取引内容|ご利用金額|カード\s*no|カード番号|レジ|店番号|担当|日時|日付|バーコード|QR|LINEスタンプ|ハッピープライス|公式通販|オンラインショップ)/i,out=[];
+  var bad=/(総合計|合計|小計|税込|お支払|お?預り|お?釣(?:り)?|お?つり|釣銭|消費税|内税|外税|税率|8\s*%|10\s*%|軽減税率|対象金額|ポイント|合計P|値引|割引|クーポン|楽天\s*(?:pay|ペイ)|paypay|d払い|au\s*pay|クレジット|visa|master|jcb|amex|残高|receipt|領収|tel|電話|〒|登録番号|取引ID|受付番号|伝票番号|承認番号|決済手段|取引内容|ご利用金額|カード\s*no|カード番号|レジ|店番号|担当|日時|日付|バーコード|QR|LINEスタンプ|ハッピープライス|公式通販|オンラインショップ)/i,out=[];
   function cleanName(s){return normalizeProductName(s)}
   function validName(s,total,raw){
     if(!s||s.length<2||s.length>58||bad.test(s)||!/[ぁ-んァ-ヶ一-龠A-Za-z]/.test(s))return false;
@@ -679,9 +679,11 @@ function itemCategorySuggestion(name,shop){
   return one||findCategoryPair("食費","スーパー・食材")||null;
 }
 function allocateReceiptRows(rows,subtotal,tax,total,shop){
-  rows=(rows||[]).filter(function(x){return Number(x.total||0)>0}).map(function(x){return Object.assign({},x)});
+  rows=(rows||[]).filter(function(x){return Number(x.total||0)>0&&!/(?:^|\s)(?:お?釣(?:り)?|お?つり|釣銭)(?:\s|$)/i.test(String(x.name||""))}).map(function(x){return Object.assign({},x)});
   var itemSum=rows.reduce(function(a,x){return a+Number(x.total||0)},0),target=Number(total||0),extra=Math.max(0,target-itemSum);
   if(!rows.length)return[];
+  // Safety: never invent negative tax/discount allocation when parsed products exceed the receipt total.
+  if(target>0&&itemSum>target)return[];
   if(!target)target=itemSum;
   var alloc=rows.map(function(row,i){
     var rawExtra=extra&&itemSum?extra*Number(row.total||0)/itemSum:0,floor=Math.floor(rawExtra),cat=itemCategorySuggestion(row.name,shop);
@@ -795,6 +797,7 @@ function parseReceiptText(input,baseDate){
   initialRows=initialRows.concat(itemRowsFromText(productSourceText(raw),1));
 
   var discounted=discountedSingleItem(initialRows,[itemText,middle,whole,raw].filter(Boolean).join("\n"),amount);
+  initialRows=initialRows.filter(function(x){return !/(?:^|\s)(?:お?釣(?:り)?|お?つり|釣銭)(?:\s|$)/i.test(String(x.name||""));});
   var itemChoice=discounted?{rows:[discounted],matched:true,sum:amount}:chooseItemsForSubtotal(initialRows,amountInfo.subtotal,amount),rows=itemChoice.rows;
   if(!rows.length&&amountInfo.subtotal){
     var recoveredSingle=recoverSingleItemRow([itemText,middle,whole,raw],amountInfo.subtotal,amount);

@@ -1846,6 +1846,8 @@ function parseReceiptText(input,baseDate){
   else if(/(?:オーケー|西友|seiyu|スーパー|market)/i.test(String(shop||"")))detailFallback=shop+"・スーパー";
   else if(/シャトレーゼ|chateraise/i.test(String(shop||"")))detailFallback=shop+"・スイーツ";
   var detailProductAllowed=itemSetComplete&&items.length&&!productLowConfidence&&(!focusConsensus||!focusConsensus.attempted||focusConsensus.accepted&&focusConsensus.confidenceLevel==="high");
+  var detailValue=detailProductAllowed?items.slice(0,2).join("・")+(items.length>2?"ほか":""):detailFallback;
+  if(detailProductAllowed&&items.length>=3&&productConfidence.level==="high")detailValue=compactReceiptDetail(shop,cat,items.length);
   var subtotalTaxMatch=!!(amountInfo.subtotal&&amountInfo.tax&&(amountInfo.taxIncluded?amountInfo.subtotal===amount:amountInfo.subtotal+amountInfo.tax===amount));
   var splitRows=itemSetComplete?allocateReceiptRows(rows,amountInfo.subtotal,amountInfo.tax,amount,shop):[];
   var diag=obj&&obj.diagnostics||[];var diagnosticText=diag.map(function(d,i){return"--- PASS "+(i+1)+" / "+d.label+" ---\n"+(d.text||"(空)")}).join("\n\n");
@@ -1855,7 +1857,7 @@ function parseReceiptText(input,baseDate){
   var candidateSource=focusConsensus&&focusConsensus.accepted?"ocr":dictionaryAutoConfirmed?"learned":dictionaryInference&&dictionaryInference.name?(dictionaryInference.source||"verified_sample"):focusConsensus&&focusConsensus.candidateName?"ocr":"";
   var candidateList=dictionaryInference&&dictionaryInference.name?[dictionaryInference.name].concat(dictionaryInference.alternatives||[]):focusConsensus&&focusConsensus.candidates||[];
   candidateList=candidateList.filter(function(x,i,a){return x&&a.indexOf(x)===i}).slice(0,3);
-  return{rawText:raw,debugText:debugText,date:date,shop:shop,verifiedBasketRecovered:!!(verifiedBasket&&verifiedBasket.rows&&verifiedBasket.rows.length),amount:amount,amountConfidence:amountInfo.confidence,amountScore:amountInfo.score,subtotal:amountInfo.subtotal,preDiscountTotal:explicitPreDiscount,preDiscountOCR:explicitPreDiscountRaw,preDiscountSource:preDiscountDecision.source,preDiscountConflict:!!preDiscountDecision.conflict,discount:receiptWideDiscount,accountingStructureValid:accountingStructureValid,tax:amountInfo.tax,taxIncluded:!!amountInfo.taxIncluded,subtotalTaxMatch:subtotalTaxMatch,paymentCandidate:payment,categoryCandidate:cat,items:items,itemRows:rows,splitRows:splitRows,itemSum:itemSum,merchandiseTarget:merchandiseTarget,itemSetComplete:itemSetComplete,expectedItemCount:expectedItemCount,actualItemCount:actualItemCount,itemQuantityMatch:itemQuantityMatch,autoConfirmedItemCount:autoConfirmedItemCount,itemSubtotalMatch:!!(amountInfo.subtotal&&itemSum===amountInfo.subtotal),itemPreDiscountMatch:!!(amountInfo.subtotal&&receiptWideDiscount>0&&itemSum===amountInfo.subtotal+receiptWideDiscount),gapRecovered:!!gapRecovery.recovered,gapRecoveredAmount:Number(gapRecovery.gap||0),gapRecoveredName:gapRecovery.recoveredName||"",learnedGapRecovered:!!learnedGapRecovery.recovered,learnedGapRecoveredAmount:Number(learnedGapRecovery.gap||0),learnedGapRecoveredName:learnedGapRecovery.recoveredName||"",productConfidenceLevel:productConfidence.level,highConfidenceItemCount:productConfidence.high,mediumConfidenceItemCount:productConfidence.medium,requiresProductReview:productConfidence.requiresReview,productReviewRecommended:productConfidence.reviewRecommended,detail:detailProductAllowed?items.slice(0,2).join("・")+(items.length>2?"ほか":""):detailFallback,productReadFailed:productReadFailed,productLowConfidence:productLowConfidence,lowConfidenceItemCount:lowConfidenceItemCount,productCandidateStatus:candidateStatus,productCandidateSource:candidateSource,productCandidateAutoConfirmed:dictionaryAutoConfirmed,productCandidates:candidateList,productCandidateReason:dictionaryAutoConfirmed?"learned_auto_confirmed":dictionaryInference&&dictionaryInference.name?"merchant_dictionary":focusConsensus&&focusConsensus.rejectionReason||"",tendered:receiptTenderedAmount(receiptAllText,amount),ocrMeta:obj&&obj.meta||null};
+  return{rawText:raw,debugText:debugText,date:date,shop:shop,verifiedBasketRecovered:!!(verifiedBasket&&verifiedBasket.rows&&verifiedBasket.rows.length),amount:amount,amountConfidence:amountInfo.confidence,amountScore:amountInfo.score,subtotal:amountInfo.subtotal,preDiscountTotal:explicitPreDiscount,preDiscountOCR:explicitPreDiscountRaw,preDiscountSource:preDiscountDecision.source,preDiscountConflict:!!preDiscountDecision.conflict,discount:receiptWideDiscount,accountingStructureValid:accountingStructureValid,tax:amountInfo.tax,taxIncluded:!!amountInfo.taxIncluded,subtotalTaxMatch:subtotalTaxMatch,paymentCandidate:payment,categoryCandidate:cat,items:items,itemRows:rows,splitRows:splitRows,itemSum:itemSum,merchandiseTarget:merchandiseTarget,itemSetComplete:itemSetComplete,expectedItemCount:expectedItemCount,actualItemCount:actualItemCount,itemQuantityMatch:itemQuantityMatch,autoConfirmedItemCount:autoConfirmedItemCount,itemSubtotalMatch:!!(amountInfo.subtotal&&itemSum===amountInfo.subtotal),itemPreDiscountMatch:!!(amountInfo.subtotal&&receiptWideDiscount>0&&itemSum===amountInfo.subtotal+receiptWideDiscount),gapRecovered:!!gapRecovery.recovered,gapRecoveredAmount:Number(gapRecovery.gap||0),gapRecoveredName:gapRecovery.recoveredName||"",learnedGapRecovered:!!learnedGapRecovery.recovered,learnedGapRecoveredAmount:Number(learnedGapRecovery.gap||0),learnedGapRecoveredName:learnedGapRecovery.recoveredName||"",productConfidenceLevel:productConfidence.level,highConfidenceItemCount:productConfidence.high,mediumConfidenceItemCount:productConfidence.medium,requiresProductReview:productConfidence.requiresReview,productReviewRecommended:productConfidence.reviewRecommended,detail:detailValue,productReadFailed:productReadFailed,productLowConfidence:productLowConfidence,lowConfidenceItemCount:lowConfidenceItemCount,productCandidateStatus:candidateStatus,productCandidateSource:candidateSource,productCandidateAutoConfirmed:dictionaryAutoConfirmed,productCandidates:candidateList,productCandidateReason:dictionaryAutoConfirmed?"learned_auto_confirmed":dictionaryInference&&dictionaryInference.name?"merchant_dictionary":focusConsensus&&focusConsensus.rejectionReason||"",tendered:receiptTenderedAmount(receiptAllText,amount),ocrMeta:obj&&obj.meta||null};
 }
 function summarizeProductConfidence(rows){
   var list=rows||[],high=0,medium=0,low=0,autoConfirmed=0;
@@ -1874,7 +1876,7 @@ function receiptDiagnosticSummary(p){
   p=p||{};
   var rows=Array.isArray(p.itemRows)?p.itemRows:[],cat=p.categoryCandidate||{},meta=p.ocrMeta||{};
   var lines=[
-    "お小遣い家計簿 v3.62 レシート診断",
+    "お小遣い家計簿 v3.63 レシート診断",
     "日付: "+String(p.date||"未判定"),
     "店名: "+String(p.shop||"未判定"),
     "合計: "+String(Number(p.amount||0))+"円",
@@ -1924,6 +1926,27 @@ function receiptReviewModels(rows){
       unitPrice:Number(row.unitPrice||0)
     };
   }).filter(Boolean);
+}
+function receiptShortMerchantName(shop){
+  var key=merchantShopKey(shop),map={
+    chateraise:"シャトレーゼ",
+    burgerking:"バーガーキング",
+    mcdonalds:"マクドナルド",
+    mosburger:"モスバーガー",
+    kfc:"ケンタッキー",
+    daiso:"ダイソー",
+    ok:"オーケー",
+    seiyu:"西友"
+  };
+  if(map[key])return map[key];
+  var s=normalize(shop).replace(/\s+/g," ").trim();
+  return s.length<=14?s:"";
+}
+function compactReceiptDetail(shop,cat,itemCount){
+  itemCount=Math.max(0,Number(itemCount||0));
+  var merchant=receiptShortMerchantName(shop),category=String(cat&&cat.subName||cat&&cat.groupName||"").trim();
+  var head=[merchant,category].filter(Boolean).join("／");
+  return (head?head:"レシート購入")+(itemCount?(" "+itemCount+"商品"):"");
 }
 function commonSplitCategory(rows){
   var list=Array.isArray(rows)?rows:[];
@@ -1996,11 +2019,10 @@ function renderResult(p,errorText){
   }).join("");
   var splitHtml="";
   if(splitRows.length>=2){
-    var splitHead='<label style="display:flex;gap:8px;align-items:center;margin-bottom:10px"><input id="receiptSplitEnabled" type="checkbox" checked style="width:auto;min-height:auto"><strong>商品ごとにカテゴリを振り分ける</strong></label><div class="small" style="margin-bottom:10px">値引きと税を按分し、税込合計が '+e(yen(p.amount||0))+' になるよう調整します。</div>';
+    var splitHead='<label style="display:flex;gap:8px;align-items:center;margin-bottom:10px"><input id="receiptSplitEnabled" type="checkbox" checked style="width:auto;min-height:auto"><strong>商品ごとに分けて記録する</strong></label><div class="small" style="margin-bottom:10px">商品ごとの金額に値引きと税を按分し、税込合計が '+e(yen(p.amount||0))+' になるよう調整します。</div>';
     if(splitCategory.same&&splitCategory.label){
       splitHtml='<div class="receipt-item-summary receipt-split-summary" id="receiptSplitBox">'+splitHead+
-        '<div class="receipt-common-category"><strong>'+e(splitCategory.count)+'商品すべて：'+e(splitCategory.label)+'</strong><span class="small">必要な場合だけ商品別に変更できます。</span></div>'+
-        '<details class="receipt-compact-details receipt-split-details"><summary>商品別に変更</summary><div class="receipt-split-detail-body">'+splitRowsHtml+'</div></details></div>';
+        '<details class="receipt-compact-details receipt-split-details"><summary>商品別にカテゴリを変更</summary><div class="receipt-split-detail-body">'+splitRowsHtml+'</div></details></div>';
     }else{
       splitHtml='<div class="receipt-item-summary" id="receiptSplitBox">'+splitHead+splitRowsHtml+'</div>';
     }
@@ -2011,6 +2033,10 @@ function renderResult(p,errorText){
   var itemsEditorHtml=compactProducts
     ?'<details class="receipt-compact-details receipt-items-editor full"><summary>商品名 '+e(rows.length)+'件（高信頼・必要なら修正）</summary><label style="display:block;padding:12px">商品候補'+itemsTextarea+'</label></details>'
     :'<label class="full">商品候補'+itemsTextarea+'</label>';
+  var categorySelectHtml='<select id="receiptCategory"><option value="">未判定</option>'+categoryOptions(cat&&cat.categoryId||"",cat&&cat.subcategoryId||"")+'</select>';
+  var categoryFieldHtml=(splitRows.length>=2&&splitCategory.same&&splitCategory.label)
+    ?'<div class="receipt-category-field"><span>カテゴリ候補</span><div id="receiptCategorySummary" class="receipt-category-summary">'+e(splitCategory.count)+'商品すべて：'+e(splitCategory.label)+'</div>'+categorySelectHtml+'</div>'
+    :'<label>カテゴリ候補'+categorySelectHtml+'</label>';
   panel.innerHTML='<div class="receipt-result-card">'+preview+
     '<div class="receipt-result-title"><strong>レシート読み取り結果</strong><span class="small">確認・修正してから支出入力へ反映してください。</span>'+metaHtml+'</div>'+
     (errorText?'<div class="warning">'+e(errorText)+' 手入力で補完できます。</div>':"")+confidenceWarn+
@@ -2019,7 +2045,7 @@ function renderResult(p,errorText){
       '<label>合計金額<input id="receiptAmount" type="number" inputmode="numeric" min="1" value="'+(p.amount||"")+'" placeholder="読み取れない場合は入力"></label>'+
       '<label class="full">店名<input id="receiptShop" value="'+e(p.shop||"")+'" placeholder="読み取れない場合は入力"></label>'+
       '<label>支払方法候補<select id="receiptPayment"><option value="">'+(pay==="barcode_unknown"?"バーコード決済（不明）":"未判定")+'</option>'+acctOptions(function(a){return isExpensePaymentAccount(a)},pay)+'</select></label>'+
-      '<label>カテゴリ候補<select id="receiptCategory"><option value="">未判定</option>'+categoryOptions(cat&&cat.categoryId||"",cat&&cat.subcategoryId||"")+'</select></label>'+
+      categoryFieldHtml+
       '<label class="full">内容<input id="receiptDetail" value="'+e(p.detail||"")+'"></label>'+
       itemsEditorHtml+
     '</div>'+reviewHtml+rowHtml+splitHtml+
@@ -2029,18 +2055,34 @@ function renderResult(p,errorText){
   var ps=document.getElementById("receiptPayment");if(ps)ps.value=pay==="barcode_unknown"?"":pay;
   var panelData=document.getElementById("receiptOCRPanel");if(panelData){panelData.dataset.splitRows=JSON.stringify(splitRows);panelData.dataset.itemRows=JSON.stringify(rows);panelData.dataset.productCandidateStatus=p.productCandidateStatus||"";panelData.dataset.productCandidateSource=p.productCandidateSource||"";panelData.dataset.productCandidateAutoConfirmed=p.productCandidateAutoConfirmed?"1":"";panelData.dataset.productOriginalPrice=String(rows[0]&&Number(rows[0].originalTotal||rows[0].unitPrice||0)||0)}
   var itemArea=document.getElementById("receiptItems");if(itemArea)itemArea.dataset.initialValue=items;
-  var cs=document.getElementById("receiptCategory"),splitToggle=document.getElementById("receiptSplitEnabled"),fallbackCat=cat?cat.categoryId+"|||"+cat.subcategoryId:"";
+  var cs=document.getElementById("receiptCategory"),splitToggle=document.getElementById("receiptSplitEnabled"),categorySummary=document.getElementById("receiptCategorySummary"),fallbackCat=cat?cat.categoryId+"|||"+cat.subcategoryId:"";
+  function splitCategorySummaryFromDom(){
+    var sels=[].slice.call(document.querySelectorAll(".receipt-split-category"));
+    if(!sels.length)return"";
+    var values=sels.map(function(x){return x.value||""}),firstValue=values[0],same=!!firstValue&&values.every(function(v){return v===firstValue});
+    if(!same)return"商品ごとに別カテゴリ";
+    var firstSelect=sels[0],opt=firstSelect.options&&firstSelect.selectedIndex>=0?firstSelect.options[firstSelect.selectedIndex]:null,label=opt?String(opt.textContent||"").trim():"";
+    return sels.length+"商品すべて："+label;
+  }
   function syncOverallCategoryDisplay(){
     if(!cs)return;
-    var first=cs.options&&cs.options[0];
-    if(splitToggle&&splitToggle.checked&&splitRows.length>=2){
-      if(first)first.textContent=splitCategory.same&&splitCategory.label?(splitCategory.count+"商品すべて："+splitCategory.label):"商品別振り分け";
+    var first=cs.options&&cs.options[0],splitActive=!!(splitToggle&&splitToggle.checked&&splitRows.length>=2);
+    if(splitActive){
+      if(first)first.textContent="商品別振り分け";
       cs.value="";
+      if(categorySummary){
+        categorySummary.hidden=false;
+        categorySummary.textContent=splitCategorySummaryFromDom()||(splitCategory.count+"商品すべて："+splitCategory.label);
+        cs.style.display="none";
+      }
     }else{
       if(first)first.textContent="未判定";
+      if(categorySummary)categorySummary.hidden=true;
+      cs.style.display="";
       cs.value=fallbackCat;
     }
   }
+  [].slice.call(document.querySelectorAll(".receipt-split-category")).forEach(function(sel){sel.addEventListener("change",syncOverallCategoryDisplay)});
   if(splitToggle)splitToggle.onchange=syncOverallCategoryDisplay;
   syncOverallCategoryDisplay();
   [].slice.call(document.querySelectorAll(".receipt-product-review-name")).forEach(function(inp){
@@ -2781,7 +2823,11 @@ function receiptTests(){
     {categoryId:"food",subcategoryId:"sweet",categoryLabel:"食費 ＞ スイーツ"},
     {categoryId:"food",subcategoryId:"drink",categoryLabel:"食費 ＞ 飲み物"}
   ]);
+  var compactDetailChateraise=compactReceiptDetail("シャトレーゼ 立川高島屋SC店",{groupName:"食費",subName:"スイーツ"},5);
+  var compactDetailGeneric=compactReceiptDetail("小さな店",{groupName:"食費",subName:"飲み物"},3);
   return[
+    ["receipt concise Chateraise detail test",compactDetailChateraise==="シャトレーゼ／スイーツ 5商品"],
+    ["receipt concise generic detail test",compactDetailGeneric==="小さな店／飲み物 3商品"],
     ["receipt common split category summary test",splitSameCategoryTest.same===true&&splitSameCategoryTest.count===3&&splitSameCategoryTest.label==="食費 ＞ スイーツ"],
     ["receipt mixed split category stays expanded test",splitMixedCategoryTest.same===false],
     ["receipt compact verified result eligibility test",compactReceiptHigh===true],
@@ -2939,7 +2985,7 @@ function receiptTests(){
 function attachTests(){
   var b=document.getElementById("selfTest");if(!b||b.dataset.receiptWrapped)return;
   var base=b.onclick;b.dataset.receiptWrapped="1";
-  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),passed=out.filter(function(x){return x[1]}).length,pass=passed===out.length,box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">v3.62 レシート機能テスト '+passed+'/'+out.length+' 件すべて合格しました。</div>':'<div class="errorbox">v3.62 レシート機能テスト '+passed+'/'+out.length+' 件合格。失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
+  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),passed=out.filter(function(x){return x[1]}).length,pass=passed===out.length,box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">v3.63 レシート機能テスト '+passed+'/'+out.length+' 件すべて合格しました。</div>':'<div class="errorbox">v3.63 レシート機能テスト '+passed+'/'+out.length+' 件合格。失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
 }
 var body=document.getElementById("modalBody");
 if(body){new MutationObserver(function(){enhance()}).observe(body,{childList:true,subtree:true})}

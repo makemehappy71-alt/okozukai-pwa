@@ -232,3 +232,34 @@ body.modal-open:has(#txForm) .modal{
     padding-bottom:calc(34px + env(safe-area-inset-bottom));
   }
 }
+
+
+/* V3.61: compact verified receipt sections */
+.receipt-compact-details{
+  margin-top:10px;
+  padding:0;
+  border:1px solid var(--line);
+  border-radius:12px;
+  background:#0d0d10;
+  overflow:hidden;
+}
+.receipt-compact-details>summary{
+  cursor:pointer;
+  margin:0;
+  padding:13px 14px;
+  color:var(--text);
+  font-size:14px;
+  font-weight:800;
+  list-style-position:inside;
+}
+.receipt-compact-details[open]>summary{
+  border-bottom:1px solid var(--line);
+}
+.receipt-compact-details .receipt-item-summary{
+  margin:0;
+  border:0;
+  border-radius:0;
+}
+.receipt-items-editor textarea{
+  margin-top:8px;
+}

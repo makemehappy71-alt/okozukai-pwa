@@ -892,7 +892,10 @@ function productNameQuality(name){
 function isQuantityDescriptorName(name){
   var s=String(name||"").normalize?String(name||"").normalize("NFKC"):String(name||"");
   s=s.replace(/\s+/g,"");
-  return /(?:コ|個).{0,6}(?:[xX×]|メX|Xメ).{0,8}(?:単|単価)/i.test(s);
+  if(/(?:コ|個).{0,6}(?:[xX×]|メX|Xメ).{0,8}(?:単|単価)/i.test(s))return true;
+  if(/^\d{1,7}[^ぁ-んァ-ヶ一-龠A-Za-z0-9]{0,4}(?:点|品|個|コ)$/i.test(s))return true;
+  if(/^\d{1,7}[\]\)）】」』]?点$/i.test(s))return true;
+  return false;
 }
 function mergeProductRows(rows){
   rows=(rows||[]).map(function(row){
@@ -1368,6 +1371,16 @@ function bestShopFromSources(sources){
       candidates.push({name:"バーガーキング"+branchMatches[0],score:130});
     }
   }
+  var hasChateraise=/(?:シャトレーゼ|CHATERAISE|HATERAISI|HATERAISE|CHATERAIS)/i.test(joined);
+  if(hasChateraise){
+    var cj=joined.replace(/[　\s]+/g,"");
+    if(/立川.{0,8}高島屋/i.test(cj)){
+      candidates.push({name:"シャトレーゼ 立川高島屋SC店",score:190});
+    }else{
+      var cb=cj.match(/(?:ご利用店舗[:：]?)?([ぁ-んァ-ヶ一-龠A-Za-z0-9]{2,30}(?:SC)?店)/i);
+      if(cb&&cb[1]&&!/ご利用(?:店舗)?店/.test(cb[1]))candidates.push({name:"シャトレーゼ "+cb[1],score:120});
+    }
+  }
   candidates.sort(function(a,b){return b.score-a.score||b.name.length-a.name.length});
   return candidates.length?normalizeKnownShopName(candidates[0].name):"";
 }
@@ -1379,11 +1392,14 @@ function shopFromText(text,knownOnly){
     chateraiseDetected=ctoks.some(function(x){return editDistance(x.replace(/[^A-Z]/g,""),"CHATERAISE")<=3});
   }
   if(chateraiseDetected){
-    var branch="";
-    for(var ci=0;ci<lines.length;ci++){
+    var branch="",joinedCompact=joined.replace(/[　\s]+/g,"");
+    if(/立川.{0,8}高島屋/i.test(joinedCompact))branch="立川高島屋SC店";
+    if(!branch)for(var ci=0;ci<lines.length;ci++){
       var cl=(lines[ci].normalize?lines[ci].normalize("NFKC"):lines[ci]).replace(/\s+/g,"");
+      var loc=cl.match(/((?:立川|新宿|池袋|渋谷|横浜|大宮|町田|八王子)[ぁ-んァ-ヶ一-龠A-Za-z0-9]{0,24}(?:SC)?店)/i);
+      if(loc){branch=loc[1];break}
       var cm=cl.match(/(?:ご利用店舗[:：]?)?([ぁ-んァ-ヶ一-龠A-Za-z0-9]{2,30}(?:SC)?店)/i);
-      if(cm&&(/ご利用店舗/.test(cl)||/立川|高島屋|SC店/i.test(cm[1]))){branch=cm[1];break}
+      if(cm&&cm[1]&&!/ご利用(?:店舗)?店/.test(cm[1])&&(/立川|高島屋|SC店/i.test(cm[1]))){branch=cm[1];break}
     }
     return normalizeKnownShopName("シャトレーゼ"+(branch?" "+branch:""));
   }

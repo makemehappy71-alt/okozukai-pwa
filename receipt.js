@@ -1147,7 +1147,7 @@ function autoConfirmVerifiedSampleRows(shop,rows,context){
     // This lets an accounting-recovered item such as the OK ¥325 row become confirmed
     // without weakening confirmation rules for ordinary OCR rows.
     var aliasStrong=!!inf.registeredAliasMatch||Number(inf.textSimilarity||0)>=.82;
-    var structuralRecovery=!!x.recoveredMissing&&inf.priceMatch&&Number(inf.samePriceMatches||0)===1&&Number(inf.textSimilarity||0)>=.10;
+    var structuralRecovery=merchantShopKey(shop)!=="seveneleven"&&!!x.recoveredMissing&&inf.priceMatch&&Number(inf.samePriceMatches||0)===1&&Number(inf.textSimilarity||0)>=.10;
     if(!aliasStrong&&!structuralRecovery)return x;
     x.name=inf.name;
     x.lowConfidence=false;
@@ -2934,7 +2934,11 @@ function receiptTests(){
   var pSevenDevice=parseReceiptText(sevenDeviceObj,"2026-09-28");
   var sevenPurchaseOnly=receiptPurchaseSectionText(sevenDeviceText);
   var sevenAmountTest=analyzeAmount("小 計 (税抜 8%) ¥198\n消費税等 (8%) ¥15\n(内消費税等 8% ¥15)\n楽天ベイ支払 ¥213","");
+  var sevenAliasInference=merchantProductInference("セブン‐イレブン 小平上水新町1丁目店",[{text:"スターバックス 起介もが00ml"}],"スターバックス 起介もが00ml *198",198);
+  var sevenWrong198Inference=merchantProductInference("セブン‐イレブン 小平上水新町1丁目店",[{text:"別ブランド レモンティー500ml"}],"別ブランド レモンティー500ml *198",198);
   return[
+    ["receipt Seven verified alias inference v3.65 test",sevenAliasInference&&sevenAliasInference.name==="スターバックス ホワイトモカ500ml"&&sevenAliasInference.registeredAliasMatch===true],
+    ["receipt Seven same-price different product guard v3.65 test",!sevenWrong198Inference||sevenWrong198Inference.registeredAliasMatch!==true],
     ["receipt Seven tax-exclusive total v3.65 test",sevenAmountTest.amount===213&&sevenAmountTest.subtotal===198&&sevenAmountTest.tax===15&&sevenAmountTest.taxIncluded===false],
     ["receipt Seven coupon tail truncation v3.65 test",sevenPurchaseOnly.indexOf("引換商品")<0&&sevenPurchaseOnly.indexOf("37ト級")<0],
     ["receipt Seven actual-device shop v3.65 test",pSevenDevice.shop==="セブン‐イレブン 小平上水新町1丁目店"],

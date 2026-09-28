@@ -2718,7 +2718,9 @@ function receiptTests(){
   var chateraiseDeviceCount=receiptItemCountFromText(chateraiseDeviceText);
   var productRowCountGuard=receiptItemCountFromText("商品A\n¥129 1点 ¥129内\n商品B\n¥280 1点 ¥280内\n6品 小計 ¥409\n合計 ¥409");
   var chateraiseQty=pChateraiseDevice.itemRows.reduce(function(a,x){return a+Math.max(1,Number(x.qty||1))},0);
+  var dateAnchorHeaderGuard=isReceiptHeaderLine("ルッ 04 2026-09-27 ¥20");
   return[
+    ["receipt date-like product anchor guard test",dateAnchorHeaderGuard===true],
     ["receipt item count ignores product-row quantities test",productRowCountGuard===6],
     ["receipt item count fuzzy summary test",chateraiseDeviceCount===6],
     ["receipt Chateraise actual-device basket recovery v3.58 test",pChateraiseDevice.verifiedBasketRecovered===true&&pChateraiseDevice.itemRows.length===5&&chateraiseQty===6&&pChateraiseDevice.itemSum===1002],

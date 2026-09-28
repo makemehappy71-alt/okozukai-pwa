@@ -212,3 +212,23 @@ body.modal-open .modal .sticky-save .primary{
     padding:12px 0 0;
   }
 }
+
+
+/* V3.60: transaction/receipt modal owns its navigation.
+   Hide the global back/home history bar while #txForm is open so it cannot
+   cover receipt fields, product category selectors, retake, diagnostics, or save. */
+body.modal-open:has(#txForm) .page-history-nav{
+  display:none!important;
+}
+
+/* The 190-205px safety pad was only needed while the global bar overlaid
+   receipt content. Once that bar is hidden for transaction entry, reclaim
+   the vertical space and keep only a normal end-of-form breathing room. */
+body.modal-open:has(#txForm) .modal{
+  padding-bottom:calc(30px + env(safe-area-inset-bottom));
+}
+@media(max-width:560px){
+  body.modal-open:has(#txForm) .modal{
+    padding-bottom:calc(34px + env(safe-area-inset-bottom));
+  }
+}

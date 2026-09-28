@@ -188,3 +188,27 @@ body.modal-open .modal{padding-bottom:calc(190px + env(safe-area-inset-bottom))}
 @media(max-width:560px){
   body.modal-open .modal{padding-bottom:calc(205px + env(safe-area-inset-bottom))}
 }
+
+
+/* V3.59: keep the transaction save button in the natural form flow.
+   The fixed back/home navigator remains available, while the save button
+   no longer floats over receipt fields during modal scrolling. */
+body.modal-open .modal .sticky-save{
+  position:static;
+  bottom:auto;
+  z-index:auto;
+  margin:18px 0 0;
+  padding:14px 0 0;
+  border-top:1px solid var(--line);
+  background:transparent;
+}
+body.modal-open .modal .sticky-save .primary{
+  width:100%;
+  min-height:58px;
+}
+@media(max-width:560px){
+  body.modal-open .modal .sticky-save{
+    margin:16px 0 0;
+    padding:12px 0 0;
+  }
+}

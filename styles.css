@@ -263,3 +263,35 @@ body.modal-open:has(#txForm) .modal{
 .receipt-items-editor textarea{
   margin-top:8px;
 }
+
+
+/* V3.62: compact identical per-item category allocation */
+.receipt-common-category{
+  display:flex;
+  flex-direction:column;
+  gap:5px;
+  margin-top:10px;
+  padding:13px 14px;
+  border:1px solid var(--line);
+  border-radius:12px;
+  background:#101014;
+}
+.receipt-common-category strong{
+  line-height:1.5;
+  overflow-wrap:anywhere;
+}
+.receipt-split-details{
+  margin-top:10px;
+}
+.receipt-split-detail-body{
+  padding:0 14px 4px;
+}
+.receipt-result-grid select{
+  min-width:0;
+  max-width:100%;
+}
+@media(max-width:560px){
+  .receipt-result-grid select{
+    font-size:15px;
+  }
+}

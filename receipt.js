@@ -235,6 +235,7 @@ function productLineAnchorsFromBlocks(blocks,fullText,w,h){
   var lines=ocrBlockLines(blocks).slice().sort(function(a,b){return Number(a.bbox&&a.bbox.y0||0)-Number(b.bbox&&b.bbox.y0||0)}),info=analyzeAmount(fullText,"");
   var merchMax=Number(info.preDiscountTotal||receiptPreDiscountTotal(fullText)||info.subtotal||info.amount||0),out=[],seen={};
   function badLine(s){
+    if(isReceiptHeaderLine(s))return true;
     return /(?:営業時間|事業者番号|電話|TEL|レジ|No\.?|合計|小計|税込|消費税|内税|外税|税率|対象|お?預り|お\s*(?:釣|つ|的)\s*り?|釣銭|現金|値引|割引|クーポン|ポイント|会員|領収|アンケート|バーコード|QR)/i.test(s);
   }
   function add(nameLine,value,qty,unit,sourceText){
@@ -954,10 +955,27 @@ function mergeProductRows(rows){
   }).filter(function(x){return !isChangeCueText(String(x.name||""));});
 }
 function receiptItemCountFromText(text){
-  var t=ocrMoneyClean(normalize(text)),m=t.match(/合\s*計[^\n0-9]{0,14}([0-9]{1,3})\s*(?:点|品)/i);
-  if(!m)m=t.match(/(?:^|\n)[^\n]{0,20}?([0-9]{1,3})\s*(?:点|品)\s*(?:小\s*計|合\s*計|¥|￥|\\|Y|$)/i);
-  if(!m)m=t.match(/([0-9]{1,3})\s*(?:点|品)\s*(?:小\s*計|合\s*計)/i);
-  var n=m?Number(m[1]||0):0;return n>0&&n<1000?n:0;
+  var t=ocrMoneyClean(normalize(text)),lines=t.split("\n").map(function(x){return x.trim()}).filter(Boolean),candidates=[];
+  function add(n,score,line){
+    n=Number(n||0);if(!n||n>=1000)return;
+    candidates.push({count:n,score:Number(score||0),line:String(line||"")});
+  }
+  lines.forEach(function(line){
+    // Only trust receipt summary rows. Product rows such as "¥129 1点 ¥129内"
+    // must never become the receipt-wide item count.
+    if(!/(?:小\s*計|合\s*計)/i.test(line))return;
+    var m=line.match(/([0-9]{1,3})\s*[^0-9\n]{0,3}(?:点|品)\s*(?:小\s*計|合\s*計)/i);
+    if(m)add(m[1],130,line);
+    m=line.match(/(?:小\s*計|合\s*計)[^\n0-9]{0,16}([0-9]{1,3})\s*(?:点|品)/i);
+    if(m)add(m[1],125,line);
+    // Handles OCR such as "6ら品 小計" where one stray kana appears
+    // between the count and 品.
+    m=line.match(/(?:^|[^0-9])([0-9]{1,3})\s*[^0-9\n]{0,2}(?:点|品)[^\n]{0,12}(?:小\s*計|合\s*計)/i);
+    if(m)add(m[1],120,line);
+  });
+  if(!candidates.length)return 0;
+  candidates.sort(function(a,b){return b.score-a.score||b.count-a.count});
+  return candidates[0].count;
 }
 function productNameRequiresConfirmation(name,shop){
   var raw=String(name||""),s=normalizeProductName(raw);
@@ -1856,7 +1874,7 @@ function receiptDiagnosticSummary(p){
   p=p||{};
   var rows=Array.isArray(p.itemRows)?p.itemRows:[],cat=p.categoryCandidate||{},meta=p.ocrMeta||{};
   var lines=[
-    "お小遣い家計簿 v3.57 レシート診断",
+    "お小遣い家計簿 v3.58 レシート診断",
     "日付: "+String(p.date||"未判定"),
     "店名: "+String(p.shop||"未判定"),
     "合計: "+String(Number(p.amount||0))+"円",
@@ -2667,7 +2685,46 @@ function receiptTests(){
   var learnedGapAmbiguous=recoverSingleDictionaryGapFromEntries(learnedGapEntries.concat([{name:"テストサイダー別",aliases:["テストサイダー別"],priceHints:[198],source:"learned"}]),"テストサイダー\nテストサイダー別\n小計 ¥357",[{name:"別商品",unitPrice:159,qty:1,total:159}],357,2,{accountingStructureValid:true,amountConfidence:"high"});
   var learnedGapLowTrust=recoverSingleDictionaryGapFromEntries(learnedGapEntries,"テストサイダー\n小計 ¥357",[{name:"別商品",unitPrice:159,qty:1,total:159}],357,2,{accountingStructureValid:true,amountConfidence:"low"});
   var diagnosticP5=receiptDiagnosticSummary(p5);
+  var chateraiseDeviceText=[
+    "CHATERAISE",
+    "ご利用店舗: 立川高島屋SC店",
+    "ご利用日: Z026年09月27日",
+    "※クリームチーズパンケーキ",
+    "¥129 ]点 \\*1Z9内|",
+    "※国産バターと館のパンケーキ",
+    "#129 ]点 \\1Z9内|",
+    "※北海道産バターどらやき",
+    "¥162 ]点 \\152内|",
+    "※フィナンシェ",
+    "\\151 2点 \\302内|",
+    "※北海道産あんこもちパイ",
+    "¥280 1点 \\Z80内|",
+    "6ら品 小計 \\1, 002",
+    "内税対象額( 8%) ¥1, 002",
+    "(内消費税( 8%) \\ 74)",
+    "合計 ¥1, 002",
+    "バーコード決済 ¥1, 002"
+  ].join("\n");
+  var chateraiseDeviceObj={
+    text:chateraiseDeviceText,
+    whole:chateraiseDeviceText,
+    shopText:"シャトレーゼ 立川高島屋SC店",
+    itemText:chateraiseDeviceText,
+    paymentText:"バーコード決済 ¥1, 002",
+    sections:{top:"CHATERAISE\nご利用店舗: 立川高島屋SC店\nご利用日: 2026年09月27日",middle:chateraiseDeviceText,bottom:"6ら品 小計 \\1, 002\n(内消費税( 8%) \\ 74)\n合計 ¥1, 002\nバーコード決済 ¥1, 002"},
+    meta:{passes:22,skew:0,ratio:4}
+  };
+  var pChateraiseDevice=parseReceiptText(chateraiseDeviceObj,"2026-09-27");
+  var chateraiseDeviceCount=receiptItemCountFromText(chateraiseDeviceText);
+  var productRowCountGuard=receiptItemCountFromText("商品A\n¥129 1点 ¥129内\n商品B\n¥280 1点 ¥280内\n6品 小計 ¥409\n合計 ¥409");
+  var chateraiseQty=pChateraiseDevice.itemRows.reduce(function(a,x){return a+Math.max(1,Number(x.qty||1))},0);
+  var dateAnchorHeaderGuard=isReceiptHeaderLine("ルッ 04 2026-09-27 ¥20");
   return[
+    ["receipt date-like product anchor guard test",dateAnchorHeaderGuard===true],
+    ["receipt item count ignores product-row quantities test",productRowCountGuard===6],
+    ["receipt item count fuzzy summary test",chateraiseDeviceCount===6],
+    ["receipt Chateraise actual-device basket recovery v3.58 test",pChateraiseDevice.verifiedBasketRecovered===true&&pChateraiseDevice.itemRows.length===5&&chateraiseQty===6&&pChateraiseDevice.itemSum===1002],
+    ["receipt Chateraise actual-device names v3.58 test",pChateraiseDevice.items.indexOf("クリームチーズパンケーキ")>=0&&pChateraiseDevice.items.indexOf("国産バターと餡のパンケーキ")>=0&&pChateraiseDevice.items.indexOf("北海道産バターどらやき")>=0&&pChateraiseDevice.items.indexOf("フィナンシェ")>=0&&pChateraiseDevice.items.indexOf("北海道産あんこもちパイ")>=0],
     ["receipt diagnostic summary fields test",/v3\.57 レシート診断/.test(diagnosticP5)&&/合計: 897円/.test(diagnosticP5)&&/金額信頼度: high/.test(diagnosticP5)&&/商品信頼度:/.test(diagnosticP5)],
     ["receipt diagnostic excludes raw header noise test",!/0716|TEL|取引ID/.test(diagnosticP5)],
     ["receipt product confidence high summary test",confidenceHighTest.level==="high"&&confidenceHighTest.autoConfirmed===1],
@@ -2816,7 +2873,7 @@ function receiptTests(){
 function attachTests(){
   var b=document.getElementById("selfTest");if(!b||b.dataset.receiptWrapped)return;
   var base=b.onclick;b.dataset.receiptWrapped="1";
-  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),passed=out.filter(function(x){return x[1]}).length,pass=passed===out.length,box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">v3.57 レシート機能テスト '+passed+'/'+out.length+' 件すべて合格しました。</div>':'<div class="errorbox">v3.57 レシート機能テスト '+passed+'/'+out.length+' 件合格。失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
+  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),passed=out.filter(function(x){return x[1]}).length,pass=passed===out.length,box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">v3.58 レシート機能テスト '+passed+'/'+out.length+' 件すべて合格しました。</div>':'<div class="errorbox">v3.58 レシート機能テスト '+passed+'/'+out.length+' 件合格。失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
 }
 var body=document.getElementById("modalBody");
 if(body){new MutationObserver(function(){enhance()}).observe(body,{childList:true,subtree:true})}

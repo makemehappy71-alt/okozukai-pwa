@@ -181,3 +181,10 @@ body.modal-open .page-history-nav .nav-detail-prev:not([hidden]){display:block!i
 body.modal-open:has(#historyDetailCurrentId) .page-history-nav .nav-forward-mini{display:none!important}
 body.modal-open:has(#historyDetailCurrentId) .page-history-nav .nav-detail-prev:not([hidden]){display:block!important;left:8px;right:auto;top:-46px}
 body.modal-open:has(#historyDetailCurrentId) .page-history-nav .nav-detail-next:not([hidden]){display:block!important;right:8px;left:auto;top:-46px}
+
+
+/* V3.58: keep receipt actions scrollable above fixed back/home navigation */
+body.modal-open .modal{padding-bottom:calc(190px + env(safe-area-inset-bottom))}
+@media(max-width:560px){
+  body.modal-open .modal{padding-bottom:calc(205px + env(safe-area-inset-bottom))}
+}

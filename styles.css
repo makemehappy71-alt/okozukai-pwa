@@ -326,3 +326,63 @@ body.modal-open:has(#txForm) .modal{
 .receipt-category-summary[hidden]{
   display:none!important;
 }
+
+
+/* V3.64: daily-use receipt completion polish */
+.receipt-ready-summary{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  margin-top:10px;
+  padding:13px 14px;
+  border:1px solid #285c4a;
+  border-radius:12px;
+  background:#102820;
+  color:#b9f3dc;
+}
+.receipt-ready-summary strong{
+  font-size:15px;
+  line-height:1.45;
+}
+.receipt-ready-summary span{
+  flex:0 0 auto;
+  font-size:14px;
+  font-weight:800;
+  white-space:nowrap;
+}
+.receipt-technical-details{
+  margin-top:8px;
+  padding:0;
+  border:1px solid var(--line);
+  border-radius:11px;
+  background:#0d0d10;
+  overflow:hidden;
+}
+.receipt-technical-details>summary{
+  margin:0;
+  padding:10px 12px;
+  color:var(--muted);
+  font-size:12px;
+  font-weight:700;
+}
+.receipt-technical-details[open]>summary{
+  border-bottom:1px solid var(--line);
+}
+.receipt-technical-body{
+  padding:7px 12px 11px;
+}
+.receipt-technical-body .receipt-ocr-meta{
+  margin-top:5px;
+  line-height:1.5;
+}
+@media(max-width:560px){
+  .receipt-ready-summary{
+    align-items:flex-start;
+    flex-direction:column;
+    gap:4px;
+  }
+  .receipt-ready-summary span{
+    white-space:normal;
+  }
+}

@@ -1847,7 +1847,7 @@ function parseReceiptText(input,baseDate){
   else if(/シャトレーゼ|chateraise/i.test(String(shop||"")))detailFallback=shop+"・スイーツ";
   var detailProductAllowed=itemSetComplete&&items.length&&!productLowConfidence&&(!focusConsensus||!focusConsensus.attempted||focusConsensus.accepted&&focusConsensus.confidenceLevel==="high");
   var detailValue=detailProductAllowed?items.slice(0,2).join("・")+(items.length>2?"ほか":""):detailFallback;
-  if(detailProductAllowed&&items.length>=3&&productConfidence.level==="high")detailValue=compactReceiptDetail(shop,cat,items.length);
+  if(detailProductAllowed&&items.length>=3&&productConfidence.level==="high")detailValue=compactReceiptDetail(shop,cat,items.length,actualItemCount);
   var subtotalTaxMatch=!!(amountInfo.subtotal&&amountInfo.tax&&(amountInfo.taxIncluded?amountInfo.subtotal===amount:amountInfo.subtotal+amountInfo.tax===amount));
   var splitRows=itemSetComplete?allocateReceiptRows(rows,amountInfo.subtotal,amountInfo.tax,amount,shop):[];
   var diag=obj&&obj.diagnostics||[];var diagnosticText=diag.map(function(d,i){return"--- PASS "+(i+1)+" / "+d.label+" ---\n"+(d.text||"(空)")}).join("\n\n");
@@ -1876,7 +1876,7 @@ function receiptDiagnosticSummary(p){
   p=p||{};
   var rows=Array.isArray(p.itemRows)?p.itemRows:[],cat=p.categoryCandidate||{},meta=p.ocrMeta||{};
   var lines=[
-    "お小遣い家計簿 v3.63 レシート診断",
+    "お小遣い家計簿 v3.64 レシート診断",
     "日付: "+String(p.date||"未判定"),
     "店名: "+String(p.shop||"未判定"),
     "合計: "+String(Number(p.amount||0))+"円",
@@ -1885,7 +1885,7 @@ function receiptDiagnosticSummary(p){
     "会計構造: "+(p.accountingStructureValid?"一致":"未確認"),
     "商品信頼度: "+String(p.productConfidenceLevel||"未判定"),
     "商品合計: "+String(Number(p.itemSum||0))+"円 / 商品明細: "+(p.itemSetComplete?"一致":"未一致"),
-    "商品点数: "+String(Number(p.actualItemCount||0))+(Number(p.expectedItemCount||0)?(" / レシート "+String(Number(p.expectedItemCount))):""),
+    "商品構成: "+receiptCountText(rows.length,Number(p.actualItemCount||0))+(Number(p.expectedItemCount||0)?(" / レシート "+String(Number(p.expectedItemCount))+"点"):""),
     "支払方法: "+String(p.paymentCandidate||"未判定"),
     "カテゴリ: "+String(cat.groupName||"未判定")+(cat.subName?(" ＞ "+cat.subName):""),
     "学習差額復元: "+(p.learnedGapRecovered?("あり / "+String(p.learnedGapRecoveredName||"")+" / "+String(Number(p.learnedGapRecoveredAmount||0))+"円"):"なし"),
@@ -1942,11 +1942,17 @@ function receiptShortMerchantName(shop){
   var s=normalize(shop).replace(/\s+/g," ").trim();
   return s.length<=14?s:"";
 }
-function compactReceiptDetail(shop,cat,itemCount){
-  itemCount=Math.max(0,Number(itemCount||0));
-  var merchant=receiptShortMerchantName(shop),category=String(cat&&cat.subName||cat&&cat.groupName||"").trim();
+function receiptCountText(typeCount,quantityCount){
+  typeCount=Math.max(0,Number(typeCount||0));quantityCount=Math.max(0,Number(quantityCount||0));
+  if(typeCount&&quantityCount)return typeCount+"種類・"+quantityCount+"点";
+  if(typeCount)return typeCount+"種類";
+  if(quantityCount)return quantityCount+"点";
+  return"";
+}
+function compactReceiptDetail(shop,cat,typeCount,quantityCount){
+  var merchant=receiptShortMerchantName(shop),category=String(cat&&cat.subName||cat&&cat.groupName||"").trim(),countText=receiptCountText(typeCount,quantityCount);
   var head=[merchant,category].filter(Boolean).join("／");
-  return (head?head:"レシート購入")+(itemCount?(" "+itemCount+"商品"):"");
+  return (head?head:"レシート購入")+(countText?(" "+countText):"");
 }
 function commonSplitCategory(rows){
   var list=Array.isArray(rows)?rows:[];
@@ -1963,6 +1969,10 @@ function commonSplitCategory(rows){
   }
   return{same:!!same,count:list.length,label:same?label:"",categoryId:gid,subcategoryId:sid};
 }
+function receiptIsReady(p,reviewModels,errorText){
+  p=p||{};reviewModels=Array.isArray(reviewModels)?reviewModels:[];
+  return !errorText&&p.amountConfidence==="high"&&p.itemSetComplete===true&&p.productConfidenceLevel==="high"&&reviewModels.length===0&&Array.isArray(p.itemRows)&&p.itemRows.length>0;
+}
 function shouldCompactReceiptProducts(p,reviewModels){
   p=p||{};reviewModels=Array.isArray(reviewModels)?reviewModels:[];
   return p.productConfidenceLevel==="high"&&p.itemSetComplete===true&&reviewModels.length===0&&Array.isArray(p.itemRows)&&p.itemRows.length>0;
@@ -1970,16 +1980,20 @@ function shouldCompactReceiptProducts(p,reviewModels){
 function renderResult(p,errorText){
   var panel=document.getElementById("receiptOCRPanel");if(!panel)return;
   var cat=p.categoryCandidate,pay=p.paymentCandidate||"",items=(p.items||[]).join("\n"),rows=p.itemRows||[],splitRows=p.splitRows||[],meta=p.ocrMeta||null,reviewModels=receiptReviewModels(rows);
-  var compactProducts=shouldCompactReceiptProducts(p,reviewModels);
+  var compactProducts=shouldCompactReceiptProducts(p,reviewModels),countText=receiptCountText(rows.length,Number(p.actualItemCount||0)),receiptReady=receiptIsReady(p,reviewModels,errorText);
   var preview=previewUrl?'<img class="receipt-preview" src="'+e(previewUrl)+'" alt="撮影したレシートのプレビュー">':"";
   var metaHtml=meta?'<div class="receipt-ocr-meta">分割OCR '+e(meta.passes||"")+"回"+(meta.fastPath?" / 高速構造解析":"")+(Math.abs(Number(meta.skew||0))>=.3?" / 傾き補正 "+e(Number(meta.skew).toFixed(1))+"°":"")+(meta.productAnchor?" / 商品価格座標 "+e(yen(meta.productAnchor.value)):"")+'</div>':"";
   if(p.amountConfidence==="high")metaHtml+='<div class="receipt-ocr-meta">金額判定：高信頼'+(p.subtotalTaxMatch?(p.taxIncluded?" / 税込小計＝合計":" / 小計＋税一致"):"")+(p.itemSubtotalMatch?" / 商品合計＝小計":p.itemPreDiscountMatch?" / 商品合計−割引＝小計":"")+'</div>';
   if(p.accountingStructureValid)metaHtml+='<div class="receipt-ocr-meta">会計構造：'+e(yen(p.preDiscountTotal))+" − 割引 "+e(yen(p.discount))+" ＝ "+e(yen(p.subtotal))+(p.taxIncluded?(" / 内税 "+e(yen(p.tax))+" / 合計 "+e(yen(p.amount))):(" / ＋税 "+e(yen(p.tax))+" ＝ "+e(yen(p.amount))))+(p.preDiscountConflict?" / 割引前合計OCRを補正":"")+'</div>';
-  if(p.itemSetComplete)metaHtml+='<div class="receipt-ocr-meta">商品明細：金額一致'+(p.expectedItemCount?(" / "+e(p.actualItemCount)+"点"+(p.itemQuantityMatch?"一致":"（レシート "+e(p.expectedItemCount)+"点）")):"")+'</div>';
+  if(p.itemSetComplete)metaHtml+='<div class="receipt-ocr-meta">商品明細：金額一致'+(countText?(" / "+e(countText)):"")+(p.expectedItemCount?(p.itemQuantityMatch?" 一致":"（レシート "+e(p.expectedItemCount)+"点）"):"")+'</div>';
   if(p.productConfidenceLevel==="low")metaHtml+='<div class="receipt-ocr-meta">商品名判定：要確認 '+e(p.lowConfidenceItemCount||1)+"件 / 金額は保持"+'</div>';
   else if(p.productConfidenceLevel==="medium")metaHtml+='<div class="receipt-ocr-meta">商品名判定：候補 '+e(p.mediumConfidenceItemCount||1)+"件 / 確認推奨"+'</div>';
   else if(p.productConfidenceLevel==="high")metaHtml+='<div class="receipt-ocr-meta">商品名判定：高信頼'+(p.autoConfirmedItemCount?(" / 学習・辞書 "+e(p.autoConfirmedItemCount)+"件"):"")+'</div>';
   else if(p.merchandiseTarget)metaHtml+='<div class="receipt-ocr-meta">商品明細：'+e(yen(p.itemSum||0))+" / 目標 "+e(yen(p.merchandiseTarget||0))+'</div>';
+  if(p.verifiedBasketRecovered)metaHtml+='<div class="receipt-ocr-meta">復元：店舗・合計・点数・商品価格が確認済み構成と一致</div>';
+  if(p.learnedGapRecovered)metaHtml+='<div class="receipt-ocr-meta">学習補正：'+e(p.learnedGapRecoveredName||"")+" "+e(yen(p.learnedGapRecoveredAmount||0))+'</div>';
+  var readySummaryHtml=receiptReady?'<div class="receipt-ready-summary"><strong>✓ 読み取り成功</strong><span>'+e(yen(p.amount||0))+(countText?(" / "+e(countText)):"")+'</span></div>':"";
+  var metaDetailsHtml=metaHtml?'<details class="receipt-technical-details"><summary>解析詳細</summary><div class="receipt-technical-body">'+metaHtml+'</div></details>':"";
   var confidenceWarn=p.amountConfidence==="low"?'<div class="warning">金額候補の信頼度が低いため、合計金額を確認してください。</div>':"";
   if(!p.itemSetComplete&&p.merchandiseTarget){
     confidenceWarn+='<div class="warning">商品明細が会計と一致していません。商品合計 '+e(yen(p.itemSum||0))+' / 目標 '+e(yen(p.merchandiseTarget||0))+'。不足商品の確認が必要です。</div>';
@@ -1987,12 +2001,12 @@ function renderResult(p,errorText){
     confidenceWarn+='<div class="warning">金額・数量は会計と一致していますが、商品名 '+e(p.lowConfidenceItemCount||1)+'件はOCR信頼度が低いため確認してください。</div>';
     if(p.gapRecovered)confidenceWarn+='<div class="warning">不足していた '+e(yen(p.gapRecoveredAmount||0))+' の商品は会計構造から回収済みです。</div>';
   }
-  if(p.learnedGapRecovered){
+  if(p.learnedGapRecovered&&!receiptReady){
     confidenceWarn+='<div class="success">✓ 会計差額とレシート内の文字根拠から、確認済み学習商品「'+e(p.learnedGapRecoveredName||"")+'」を1件復元しました。</div>';
   }
-  if(p.verifiedBasketRecovered){
+  if(p.verifiedBasketRecovered&&!receiptReady){
     confidenceWarn+='<div class="success">✓ 店舗・合計・点数・商品価格の一致から、確認済みレシート構成を復元しました。</div>';
-  }else if(p.productCandidateAutoConfirmed){
+  }else if(p.productCandidateAutoConfirmed&&!receiptReady){
     confidenceWarn+='<div class="success">✓ 学習済み商品として自動確認しました：'+e((p.items&&p.items[0])||"")+'</div>';
   }else if(p.productReadFailed&&!p.gapRecovered&&!p.productLowConfidence){
     if(p.productCandidateStatus==="candidate"&&p.productCandidateSource==="learned")confidenceWarn+='<div class="warning">学習済み候補です。商品名だけ確認してください。</div>';
@@ -2010,7 +2024,7 @@ function renderResult(p,errorText){
   var rowHtml="";
   if(rows.length){
     var analysisCard='<div class="receipt-item-summary"><div class="small"><strong>商品解析</strong></div>'+analysisRowsHtml+'</div>';
-    rowHtml=compactProducts?'<details class="receipt-compact-details"><summary>商品解析 '+e(rows.length)+'件（確認済み）</summary>'+analysisCard+'</details>':analysisCard;
+    rowHtml=compactProducts?'<details class="receipt-compact-details"><summary>商品解析 '+e(rows.length)+'種類（確認済み）</summary>'+analysisCard+'</details>':analysisCard;
   }
   var splitCategory=commonSplitCategory(splitRows);
   var splitRowsHtml=splitRows.map(function(x,i){
@@ -2031,14 +2045,15 @@ function renderResult(p,errorText){
   var candidateHelp=(p.productCandidateStatus==="candidate"&&p.productCandidates&&p.productCandidates.length?'<span class="small" style="display:block;margin-top:6px;line-height:1.5">'+e(p.productCandidateSource==="learned"?"学習済み候補: ":p.productCandidateSource==="verified_sample"?"辞書候補: ":"OCR候補: ")+e(p.productCandidates[0])+'</span><label class="small" style="display:flex;gap:8px;align-items:center;margin-top:10px"><input id="receiptCandidateConfirm" type="checkbox" style="width:auto;min-height:auto"'+(p.productCandidateSource==="learned"?" checked":"")+'>この商品名を確認しました</label>':"");
   var itemsTextarea='<textarea id="receiptItems" rows="3" placeholder="商品名を1行ずつ">'+e(items)+'</textarea>'+candidateHelp;
   var itemsEditorHtml=compactProducts
-    ?'<details class="receipt-compact-details receipt-items-editor full"><summary>商品名 '+e(rows.length)+'件（高信頼・必要なら修正）</summary><label style="display:block;padding:12px">商品候補'+itemsTextarea+'</label></details>'
+    ?'<details class="receipt-compact-details receipt-items-editor full"><summary>商品名 '+e(rows.length)+'種類（高信頼・必要なら修正）</summary><label style="display:block;padding:12px">商品候補'+itemsTextarea+'</label></details>'
     :'<label class="full">商品候補'+itemsTextarea+'</label>';
   var categorySelectHtml='<select id="receiptCategory"><option value="">未判定</option>'+categoryOptions(cat&&cat.categoryId||"",cat&&cat.subcategoryId||"")+'</select>';
   var categoryFieldHtml=(splitRows.length>=2&&splitCategory.same&&splitCategory.label)
-    ?'<div class="receipt-category-field"><span>カテゴリ候補</span><div id="receiptCategorySummary" class="receipt-category-summary">'+e(splitCategory.count)+'商品すべて：'+e(splitCategory.label)+'</div>'+categorySelectHtml+'</div>'
+    ?'<div class="receipt-category-field"><span>カテゴリ候補</span><div id="receiptCategorySummary" class="receipt-category-summary">'+e(splitCategory.count)+'種類すべて：'+e(splitCategory.label)+'</div>'+categorySelectHtml+'</div>'
     :'<label>カテゴリ候補'+categorySelectHtml+'</label>';
   panel.innerHTML='<div class="receipt-result-card">'+preview+
-    '<div class="receipt-result-title"><strong>レシート読み取り結果</strong><span class="small">確認・修正してから支出入力へ反映してください。</span>'+metaHtml+'</div>'+
+    '<div class="receipt-result-title"><strong>レシート読み取り結果</strong><span class="small">'+(receiptReady?"内容を確認して支出入力へ反映できます。":"確認・修正してから支出入力へ反映してください。")+'</span></div>'+
+    readySummaryHtml+metaDetailsHtml+
     (errorText?'<div class="warning">'+e(errorText)+' 手入力で補完できます。</div>':"")+confidenceWarn+
     '<div class="form-grid receipt-result-grid">'+
       '<label>日付<input id="receiptDate" type="date" max="'+dstr(now())+'" value="'+e(p.date||defaultDate())+'"></label>'+
@@ -2062,7 +2077,7 @@ function renderResult(p,errorText){
     var values=sels.map(function(x){return x.value||""}),firstValue=values[0],same=!!firstValue&&values.every(function(v){return v===firstValue});
     if(!same)return"商品ごとに別カテゴリ";
     var firstSelect=sels[0],opt=firstSelect.options&&firstSelect.selectedIndex>=0?firstSelect.options[firstSelect.selectedIndex]:null,label=opt?String(opt.textContent||"").trim():"";
-    return sels.length+"商品すべて："+label;
+    return sels.length+"種類すべて："+label;
   }
   function syncOverallCategoryDisplay(){
     if(!cs)return;
@@ -2072,7 +2087,7 @@ function renderResult(p,errorText){
       cs.value="";
       if(categorySummary){
         categorySummary.hidden=false;
-        categorySummary.textContent=splitCategorySummaryFromDom()||(splitCategory.count+"商品すべて："+splitCategory.label);
+        categorySummary.textContent=splitCategorySummaryFromDom()||(splitCategory.count+"種類すべて："+splitCategory.label);
         cs.style.display="none";
       }
     }else{
@@ -2823,11 +2838,16 @@ function receiptTests(){
     {categoryId:"food",subcategoryId:"sweet",categoryLabel:"食費 ＞ スイーツ"},
     {categoryId:"food",subcategoryId:"drink",categoryLabel:"食費 ＞ 飲み物"}
   ]);
-  var compactDetailChateraise=compactReceiptDetail("シャトレーゼ 立川高島屋SC店",{groupName:"食費",subName:"スイーツ"},5);
-  var compactDetailGeneric=compactReceiptDetail("小さな店",{groupName:"食費",subName:"飲み物"},3);
+  var compactDetailChateraise=compactReceiptDetail("シャトレーゼ 立川高島屋SC店",{groupName:"食費",subName:"スイーツ"},5,6);
+  var compactDetailGeneric=compactReceiptDetail("小さな店",{groupName:"食費",subName:"飲み物"},3,3);
+  var countTextTest=receiptCountText(5,6);
+  var receiptReadyTest=receiptIsReady({amountConfidence:"high",itemSetComplete:true,productConfidenceLevel:"high",itemRows:[{name:"A"}]},[],"");
+  var receiptNotReadyTest=receiptIsReady({amountConfidence:"high",itemSetComplete:true,productConfidenceLevel:"low",itemRows:[{name:"A"}]},[{index:0}],"");
   return[
-    ["receipt concise Chateraise detail test",compactDetailChateraise==="シャトレーゼ／スイーツ 5商品"],
-    ["receipt concise generic detail test",compactDetailGeneric==="小さな店／飲み物 3商品"],
+    ["receipt concise Chateraise detail test",compactDetailChateraise==="シャトレーゼ／スイーツ 5種類・6点"],
+    ["receipt concise generic detail test",compactDetailGeneric==="小さな店／飲み物 3種類・3点"],
+    ["receipt type and quantity count wording test",countTextTest==="5種類・6点"],
+    ["receipt ready summary eligibility test",receiptReadyTest===true&&receiptNotReadyTest===false],
     ["receipt common split category summary test",splitSameCategoryTest.same===true&&splitSameCategoryTest.count===3&&splitSameCategoryTest.label==="食費 ＞ スイーツ"],
     ["receipt mixed split category stays expanded test",splitMixedCategoryTest.same===false],
     ["receipt compact verified result eligibility test",compactReceiptHigh===true],
@@ -2837,8 +2857,8 @@ function receiptTests(){
     ["receipt item count fuzzy summary test",chateraiseDeviceCount===6],
     ["receipt Chateraise actual-device basket recovery v3.58 test",pChateraiseDevice.verifiedBasketRecovered===true&&pChateraiseDevice.itemRows.length===5&&chateraiseQty===6&&pChateraiseDevice.itemSum===1002],
     ["receipt Chateraise actual-device names v3.58 test",pChateraiseDevice.items.indexOf("クリームチーズパンケーキ")>=0&&pChateraiseDevice.items.indexOf("国産バターと餡のパンケーキ")>=0&&pChateraiseDevice.items.indexOf("北海道産バターどらやき")>=0&&pChateraiseDevice.items.indexOf("フィナンシェ")>=0&&pChateraiseDevice.items.indexOf("北海道産あんこもちパイ")>=0],
-    ["receipt Chateraise concise detail integration v3.63 test",pChateraiseDevice.detail==="シャトレーゼ／スイーツ 5商品"],
-    ["receipt diagnostic summary fields test",/v3\.63 レシート診断/.test(diagnosticP5)&&/合計: 897円/.test(diagnosticP5)&&/金額信頼度: high/.test(diagnosticP5)&&/商品信頼度:/.test(diagnosticP5)],
+    ["receipt Chateraise concise detail integration v3.64 test",pChateraiseDevice.detail==="シャトレーゼ／スイーツ 5種類・6点"],
+    ["receipt diagnostic summary fields test",/v3\.64 レシート診断/.test(diagnosticP5)&&/合計: 897円/.test(diagnosticP5)&&/金額信頼度: high/.test(diagnosticP5)&&/商品信頼度:/.test(diagnosticP5)],
     ["receipt diagnostic excludes raw header noise test",!/0716|TEL|取引ID/.test(diagnosticP5)],
     ["receipt product confidence high summary test",confidenceHighTest.level==="high"&&confidenceHighTest.autoConfirmed===1],
     ["receipt product confidence medium summary test",confidenceMixedTest.level==="medium"&&confidenceMixedTest.medium===1],
@@ -2986,7 +3006,7 @@ function receiptTests(){
 function attachTests(){
   var b=document.getElementById("selfTest");if(!b||b.dataset.receiptWrapped)return;
   var base=b.onclick;b.dataset.receiptWrapped="1";
-  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),passed=out.filter(function(x){return x[1]}).length,pass=passed===out.length,box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">v3.63 レシート機能テスト '+passed+'/'+out.length+' 件すべて合格しました。</div>':'<div class="errorbox">v3.63 レシート機能テスト '+passed+'/'+out.length+' 件合格。失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
+  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),passed=out.filter(function(x){return x[1]}).length,pass=passed===out.length,box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">v3.64 レシート機能テスト '+passed+'/'+out.length+' 件すべて合格しました。</div>':'<div class="errorbox">v3.64 レシート機能テスト '+passed+'/'+out.length+' 件合格。失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
 }
 var body=document.getElementById("modalBody");
 if(body){new MutationObserver(function(){enhance()}).observe(body,{childList:true,subtree:true})}

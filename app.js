@@ -1,5 +1,5 @@
 "use strict";
-const VERSION="v3.55",SCHEMA_VERSION=12,DBNAME="okozukai_v321_db",LSKEY="okozukai_v321_mirror",LEGACY_BACKUP_KEY="okozukai_v321_legacy_backup";
+const VERSION="v3.56",SCHEMA_VERSION=12,DBNAME="okozukai_v321_db",LSKEY="okozukai_v321_mirror",LEGACY_BACKUP_KEY="okozukai_v321_legacy_backup";
 let state,storageMode="未初期化",selectedMonth=new Date(new Date().getFullYear(),new Date().getMonth(),1),undoOp=null,toastTimer=null,waitingSW=null,migrationMessage="なし";
 let appNavBack=[],appNavForward=[],appNavCurrent="home",appNavReady=false,androidBackGuard=false,modalNavStack=[],modalForwardStack=[];
 const MEDICAL_SUBS=["医療費","薬品代","歯科","検査・健診","予防接種","医療用品","その他医療"];

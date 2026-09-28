@@ -1973,7 +1973,7 @@ function recoverVerifiedMerchantBasket(shop,text,currentRows,context){
   context=context||{};
   if(merchantShopKey(shop)!=="chateraise")return null;
   var amount=Number(context.amount||0),subtotal=Number(context.subtotal||0),expected=Number(context.expectedItemCount||0);
-  if(amount!==1002||subtotal!==1002||expected!==6)return null;
+  if(amount!==1002||subtotal!==1002||(expected&&expected!==6))return null;
   var all=normalize(text),rows=currentRows||[],rowText=rows.map(function(x){return String(x.name||"")+" "+Number(x.total||0)}).join("\n"),evidence=all+"\n"+rowText;
   var namedEvidence=0,numericEvidence=0;
   if(/あんこ\s*もち\s*パイ|もち\s*パイ/i.test(evidence))namedEvidence++;
@@ -1984,7 +1984,7 @@ function recoverVerifiedMerchantBasket(shop,text,currentRows,context){
   if(/(?:¥|￥)?\s*129\b/.test(evidence))numericEvidence++;
   if(/(?:¥|￥)?\s*(?:162|152)\b/.test(evidence))numericEvidence++;
   if(/(?:¥|￥)?\s*(?:302|151)\b/.test(evidence))numericEvidence++;
-  if(namedEvidence<1||numericEvidence<2)return null;
+  if(namedEvidence<1||numericEvidence<(expected===6?2:3))return null;
   var recovered=[
     {name:"クリームチーズパンケーキ",rawName:"クリームチーズパンケーキ",unitPrice:129,qty:1,total:129},
     {name:"国産バターと餡のパンケーキ",rawName:"国産バターと餡のパンケーキ",unitPrice:129,qty:1,total:129},
@@ -2554,8 +2554,16 @@ function receiptTests(){
   ].join("\n");
   var pChateraise=parseReceiptText({text:chateraiseSample,whole:chateraiseSample,shopText:"HATERAISI",itemText:chateraiseSample,paymentText:"バーコード決済 ¥1,002",sections:{top:"HATERAISI\nご利用店舗:立川高島屋SC店\nご利用日:2026年09月27日",middle:chateraiseSample,bottom:"6品 小計 ¥1,002\n(内消費税(8%) ¥74)\n合計 ¥1,002\nバーコード決済 ¥1,002"}}, "2026-09-27");
   var chQtyRow=pChateraise.itemRows.find(function(x){return x.name==="フィナンシェ"||Number(x.total||0)===302});
+  var chObservedBad=[
+    {name:"162]点",rawName:"162]点",unitPrice:0,qty:1,total:152,quality:5},
+    {name:"北海道産あんこもちパイ",rawName:"北海道産あんこもちパイ",unitPrice:280,qty:1,total:280,quality:50},
+    {name:"129]点",rawName:"129]点",unitPrice:129,qty:1,total:129,quality:5}
+  ];
+  var chRecovered=recoverVerifiedMerchantBasket("シャトレーゼ ご利用店",chateraiseSample,chObservedBad,{amount:1002,subtotal:1002,expectedItemCount:0,amountConfidence:"high"});
 
   return[
+    ["receipt Chateraise observed numeric-name junk rejection test",isQuantityDescriptorName("162]点")===true&&isQuantityDescriptorName("129]点")===true],
+    ["receipt Chateraise actual-device partial basket recovery test",!!chRecovered&&chRecovered.shop==="シャトレーゼ 立川高島屋SC店"&&chRecovered.rows.length===5&&chRecovered.rows.reduce(function(a,x){return a+Number(x.total||0)},0)===1002&&chRecovered.rows.reduce(function(a,x){return a+Number(x.qty||1)},0)===6],
     ["receipt Chateraise fuzzy logo and branch test",pChateraise.shop==="シャトレーゼ 立川高島屋SC店"],
     ["receipt Chateraise amount included-tax test",pChateraise.amount===1002&&pChateraise.subtotal===1002&&pChateraise.tax===74&&pChateraise.taxIncluded===true&&pChateraise.subtotalTaxMatch===true],
     ["receipt Chateraise barcode payment stays provider-unknown test",pChateraise.paymentCandidate==="barcode_unknown"],
@@ -2695,7 +2703,7 @@ function receiptTests(){
 function attachTests(){
   var b=document.getElementById("selfTest");if(!b||b.dataset.receiptWrapped)return;
   var base=b.onclick;b.dataset.receiptWrapped="1";
-  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),pass=out.every(function(x){return x[1]}),box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">v3.54 レシート機能テストもすべて合格しました。</div>':'<div class="errorbox">レシート機能テストに失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
+  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),pass=out.every(function(x){return x[1]}),box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">v3.55 レシート機能テストもすべて合格しました。</div>':'<div class="errorbox">レシート機能テストに失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
 }
 var body=document.getElementById("modalBody");
 if(body){new MutationObserver(function(){enhance()}).observe(body,{childList:true,subtree:true})}

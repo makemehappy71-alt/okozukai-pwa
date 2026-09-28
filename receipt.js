@@ -1873,7 +1873,7 @@ function receiptDiagnosticSummary(p){
   ];
   if(rows.length){
     rows.forEach(function(x,i){
-      var level=x&&x.lowConfidence?"low":String(x&&x.nameConfidence||x&&x.candidateOnly?"medium":"high"),src=String(x&&x.candidateSource||"ocr");
+      var level=x&&x.lowConfidence?"low":String((x&&x.nameConfidence)||(x&&x.candidateOnly?"medium":"high")),src=String(x&&x.candidateSource||"ocr");
       lines.push((i+1)+". "+String(x&&x.name||"未判定")+" | 数量 "+String(Math.max(1,Number(x&&x.qty||1)))+" | "+String(Number(x&&x.total||0))+"円 | "+level+" | "+src);
     });
   }else lines.push("なし");

@@ -2744,13 +2744,13 @@ function receiptTests(){
   var compactReceiptLow=shouldCompactReceiptProducts({productConfidenceLevel:"low",itemSetComplete:true,itemRows:[{name:"要確認商品"}]},[{index:0}]);
   return[
     ["receipt compact verified result eligibility test",compactReceiptHigh===true],
-    ["receipt compact mode keeps review-needed results expanded test",compactReceiptLow===true],
+    ["receipt compact mode keeps review-needed results expanded test",compactReceiptLow===false],
     ["receipt date-like product anchor guard test",dateAnchorHeaderGuard===true],
     ["receipt item count ignores product-row quantities test",productRowCountGuard===6],
     ["receipt item count fuzzy summary test",chateraiseDeviceCount===6],
     ["receipt Chateraise actual-device basket recovery v3.58 test",pChateraiseDevice.verifiedBasketRecovered===true&&pChateraiseDevice.itemRows.length===5&&chateraiseQty===6&&pChateraiseDevice.itemSum===1002],
     ["receipt Chateraise actual-device names v3.58 test",pChateraiseDevice.items.indexOf("クリームチーズパンケーキ")>=0&&pChateraiseDevice.items.indexOf("国産バターと餡のパンケーキ")>=0&&pChateraiseDevice.items.indexOf("北海道産バターどらやき")>=0&&pChateraiseDevice.items.indexOf("フィナンシェ")>=0&&pChateraiseDevice.items.indexOf("北海道産あんこもちパイ")>=0],
-    ["receipt diagnostic summary fields test",/v3\.57 レシート診断/.test(diagnosticP5)&&/合計: 897円/.test(diagnosticP5)&&/金額信頼度: high/.test(diagnosticP5)&&/商品信頼度:/.test(diagnosticP5)],
+    ["receipt diagnostic summary fields test",/v3\.61 レシート診断/.test(diagnosticP5)&&/合計: 897円/.test(diagnosticP5)&&/金額信頼度: high/.test(diagnosticP5)&&/商品信頼度:/.test(diagnosticP5)],
     ["receipt diagnostic excludes raw header noise test",!/0716|TEL|取引ID/.test(diagnosticP5)],
     ["receipt product confidence high summary test",confidenceHighTest.level==="high"&&confidenceHighTest.autoConfirmed===1],
     ["receipt product confidence medium summary test",confidenceMixedTest.level==="medium"&&confidenceMixedTest.medium===1],

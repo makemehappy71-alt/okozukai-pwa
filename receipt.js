@@ -1925,10 +1925,14 @@ function receiptReviewModels(rows){
     };
   }).filter(Boolean);
 }
+function shouldCompactReceiptProducts(p,reviewModels){
+  p=p||{};reviewModels=Array.isArray(reviewModels)?reviewModels:[];
+  return p.productConfidenceLevel==="high"&&p.itemSetComplete===true&&reviewModels.length===0&&Array.isArray(p.itemRows)&&p.itemRows.length>0;
+}
 function renderResult(p,errorText){
   var panel=document.getElementById("receiptOCRPanel");if(!panel)return;
   var cat=p.categoryCandidate,pay=p.paymentCandidate||"",items=(p.items||[]).join("\n"),rows=p.itemRows||[],splitRows=p.splitRows||[],meta=p.ocrMeta||null,reviewModels=receiptReviewModels(rows);
-  var compactProducts=p.productConfidenceLevel==="high"&&p.itemSetComplete&&!reviewModels.length&&rows.length>0;
+  var compactProducts=shouldCompactReceiptProducts(p,reviewModels);
   var preview=previewUrl?'<img class="receipt-preview" src="'+e(previewUrl)+'" alt="撮影したレシートのプレビュー">':"";
   var metaHtml=meta?'<div class="receipt-ocr-meta">分割OCR '+e(meta.passes||"")+"回"+(meta.fastPath?" / 高速構造解析":"")+(Math.abs(Number(meta.skew||0))>=.3?" / 傾き補正 "+e(Number(meta.skew).toFixed(1))+"°":"")+(meta.productAnchor?" / 商品価格座標 "+e(yen(meta.productAnchor.value)):"")+'</div>':"";
   if(p.amountConfidence==="high")metaHtml+='<div class="receipt-ocr-meta">金額判定：高信頼'+(p.subtotalTaxMatch?(p.taxIncluded?" / 税込小計＝合計":" / 小計＋税一致"):"")+(p.itemSubtotalMatch?" / 商品合計＝小計":p.itemPreDiscountMatch?" / 商品合計−割引＝小計":"")+'</div>';
@@ -2736,8 +2740,8 @@ function receiptTests(){
   var productRowCountGuard=receiptItemCountFromText("商品A\n¥129 1点 ¥129内\n商品B\n¥280 1点 ¥280内\n6品 小計 ¥409\n合計 ¥409");
   var chateraiseQty=pChateraiseDevice.itemRows.reduce(function(a,x){return a+Math.max(1,Number(x.qty||1))},0);
   var dateAnchorHeaderGuard=isReceiptHeaderLine("ルッ 04 2026-09-27 ¥20");
-  var compactReceiptHigh=(pChateraiseDevice.productConfidenceLevel==="high"&&pChateraiseDevice.itemSetComplete&&receiptReviewModels(pChateraiseDevice.itemRows).length===0&&pChateraiseDevice.itemRows.length>0);
-  var compactReceiptLow=!(p4.productConfidenceLevel==="high"&&p4.itemSetComplete&&receiptReviewModels(p4.itemRows).length===0&&p4.itemRows.length>0);
+  var compactReceiptHigh=shouldCompactReceiptProducts({productConfidenceLevel:"high",itemSetComplete:true,itemRows:[{name:"確認済み商品"}]},[]);
+  var compactReceiptLow=shouldCompactReceiptProducts({productConfidenceLevel:"low",itemSetComplete:true,itemRows:[{name:"要確認商品"}]},[{index:0}]);
   return[
     ["receipt compact verified result eligibility test",compactReceiptHigh===true],
     ["receipt compact mode keeps review-needed results expanded test",compactReceiptLow===true],

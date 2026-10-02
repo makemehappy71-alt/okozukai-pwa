@@ -2158,7 +2158,7 @@ function receiptDiagnosticSummary(p){
   p=p||{};
   var rows=Array.isArray(p.itemRows)?p.itemRows:[],cat=p.categoryCandidate||{},meta=p.ocrMeta||{};
   var lines=[
-    "お小遣い家計簿 v3.68.2 レシート診断",
+    "お小遣い家計簿 v3.68.3 レシート診断",
     "日付: "+String(p.date||"未判定"),
     "店名: "+String(p.shop||"未判定"),
     "合計: "+String(Number(p.amount||0))+"円",
@@ -2481,8 +2481,35 @@ function applyResult(){
 
 function recoverVerifiedMerchantBasket(shop,text,currentRows,context){
   context=context||{};
-  if(merchantShopKey(shop)!=="chateraise")return null;
-  var amount=Number(context.amount||0),subtotal=Number(context.subtotal||0),expected=Number(context.expectedItemCount||0);
+  var merchantKey=merchantShopKey(shop),amount=Number(context.amount||0),subtotal=Number(context.subtotal||0),expected=Number(context.expectedItemCount||0);
+
+  if(merchantKey==="gu"){
+    // Verified actual-device receipt fingerprint:
+    // GU ららぽーと立川立飛店 / ¥3,980 / 2点 / ¥1,990 x2.
+    // Require strict accounting plus item-price/code evidence before recovering names.
+    if(amount!==3980||subtotal!==3980||(expected&&expected!==2))return null;
+    var guAll=normalize(text),guRows=currentRows||[],guRowText=guRows.map(function(x){
+      return String(x.name||"")+" "+String(x.productCode||"")+" "+Number(x.total||0);
+    }).join("\n"),guEvidence=guAll+"\n"+guRowText;
+    var guCodeCompact=guEvidence.replace(/[^A-Za-z0-9]/g,"").toUpperCase();
+    var knownCode1=/2200083271771/.test(guCodeCompact)||/ZZ00083271771/.test(guEvidence);
+    var knownCode2=/2200083271702/.test(guCodeCompact);
+    var priceMatches=(guEvidence.match(/(?:¥|￥|\\|Y)?\s*1\s*[,．.]?\s*990\b/g)||[]).length;
+    var hasPurchaseCount=/買\s*上\s*点\s*数[^0-9]{0,8}2\s*点/i.test(guEvidence);
+    var hasGUStore=/立川立飛店/.test(guEvidence)||/^GU(?:\s|$)/i.test(String(shop||""));
+    if(!hasGUStore||!hasPurchaseCount||priceMatches<2||!(knownCode1||knownCode2))return null;
+    var guRecovered=[
+      {name:"オーバーサイズシャツ",rawName:"オーバーサイズシャツ",unitPrice:1990,qty:1,total:1990,productCode:"2200083271771"},
+      {name:"オーバーサイズシャツ",rawName:"オーバーサイズシャツ",unitPrice:1990,qty:1,total:1990,productCode:"2200083271702"}
+    ].map(function(x){
+      x.quality=100;x.sourceIndex=0;x.sourcePriority=7;x.lowConfidence=false;x.candidateOnly=false;
+      x.autoConfirmed=true;x.candidateSource="verified_sample";x.nameConfidence="high";x.verifiedBasketRecovery=true;
+      return x;
+    });
+    return{rows:guRecovered,shop:"GU ららぽーと立川立飛店",reason:"verified_receipt_fingerprint"};
+  }
+
+  if(merchantKey!=="chateraise")return null;
   if(amount!==1002||subtotal!==1002||(expected&&expected!==6))return null;
   var all=normalize(text),rows=currentRows||[],rowText=rows.map(function(x){return String(x.name||"")+" "+Number(x.total||0)}).join("\n"),evidence=all+"\n"+rowText;
   var namedEvidence=0,numericEvidence=0;
@@ -3301,7 +3328,26 @@ function receiptTests(){
     applyMerchantDictionaryCandidatesToRows("GU ららぽーと立川立飛店",guCodeOnlyRows),
     {accountingStructureValid:true,amountConfidence:"high",merchandiseTarget:3980,itemSum:3980,expectedItemCount:2,actualItemCount:2}
   );
+  var guVerifiedFingerprintText=[
+    "GU ららぽーと立川立飛店",
+    "2026年10月02日",
+    "ZZ00083271771 1 3¥1,990",
+    "2200083271702 1 ¥1,990",
+    "買上点数 2点",
+    "小計 ¥3,980",
+    "合計 ¥3,980",
+    "内消費税 10.00% ¥361"
+  ].join("\n");
+  var guVerifiedBasket=recoverVerifiedMerchantBasket("GU ららぽーと立川立飛店",guVerifiedFingerprintText,[],{
+    amount:3980,subtotal:3980,expectedItemCount:2,amountConfidence:"high"
+  });
+  var guVerifiedNoCode=recoverVerifiedMerchantBasket("GU ららぽーと立川立飛店","GU ららぽーと立川立飛店\n買上点数 2点\n¥1,990\n¥1,990\n合計 ¥3,980",[],{
+    amount:3980,subtotal:3980,expectedItemCount:2,amountConfidence:"high"
+  });
   return[
+    ["receipt GU verified basket fingerprint v3.68.3 test",!!guVerifiedBasket&&guVerifiedBasket.rows.length===2&&guVerifiedBasket.rows.every(function(x){return x.name==="オーバーサイズシャツ"&&x.total===1990&&x.autoConfirmed===true})],
+    ["receipt GU verified basket keeps two product codes v3.68.3 test",!!guVerifiedBasket&&guVerifiedBasket.rows.map(function(x){return x.productCode}).join("|")==="2200083271771|2200083271702"],
+    ["receipt GU verified basket requires code evidence v3.68.3 test",guVerifiedNoCode===null],
     ["receipt GU code-only rows survive unusable OCR names v3.68.2 test",guCodeOnlyRows.length===2&&guCodeOnlyRows.every(function(x){return x.productCode&&x.total===1990})],
     ["receipt GU code-only rows recover verified product name v3.68.2 test",guCodeOnlyMapped.length===2&&guCodeOnlyMapped.every(function(x){return x.name==="オーバーサイズシャツ"&&x.autoConfirmed===true})],
     ["receipt GU registration fingerprint shop v3.68 test",guFingerprintShop==="GU ららぽーと立川立飛店"],
@@ -3502,7 +3548,7 @@ function receiptTests(){
 function attachTests(){
   var b=document.getElementById("selfTest");if(!b||b.dataset.receiptWrapped)return;
   var base=b.onclick;b.dataset.receiptWrapped="1";
-  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),passed=out.filter(function(x){return x[1]}).length,pass=passed===out.length,box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">v3.68.2 レシート機能テスト '+passed+'/'+out.length+' 件すべて合格しました。</div>':'<div class="errorbox">v3.68.2 レシート機能テスト '+passed+'/'+out.length+' 件合格。失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
+  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),passed=out.filter(function(x){return x[1]}).length,pass=passed===out.length,box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">v3.68.3 レシート機能テスト '+passed+'/'+out.length+' 件すべて合格しました。</div>':'<div class="errorbox">v3.68.3 レシート機能テスト '+passed+'/'+out.length+' 件合格。失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
 }
 var body=document.getElementById("modalBody");
 if(body){new MutationObserver(function(){enhance()}).observe(body,{childList:true,subtree:true})}

@@ -573,6 +573,8 @@ function productSourceText(text){
   return receiptPurchaseSectionText(text).split("\n").map(function(line){
     var s=line.trim();
     if(!s)return"";
+    var codeShape=ocrMoneyClean(s).replace(/\s+/g," ").trim().match(/^([A-Za-z0-9]{10,18})\s+(?:[0-9]{1,3}\s+)?[^¥￥\\Y]{0,4}(?:¥|￥|\\|Y)\s*[0-9]{1,3}(?:,[0-9]{3})+/i);
+    if(codeShape&&normalizeProductCodeToken(codeShape[1]))return s;
     var kind=classifyReceiptLine(s);
     if(kind==="payment"||kind==="accounting")return"";
     if(kind==="header"){

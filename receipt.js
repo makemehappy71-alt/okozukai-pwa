@@ -1470,7 +1470,32 @@ function itemRowsFromText(text,sourcePriority){
     if(qtySummary&&prev&&!bad.test(prev)&&!isReceiptHeaderLine(prev)&&validName(cleanName(prev),qtySummary.total,prev)){
       add(prev,qtySummary.unit,qtySummary.qty,qtySummary.total,i-1);continue;
     }
-    var linePrice=priceRowOf(line),nextPrice=priceRowOf(next),priceRow2=priceRowOf(next2),nextCode=productCodeQtyPrice(next),qtySame=productQtyPriceMatch(line),same=sameProductMatch(line),nextSame=sameProductMatch(next),nextDiscount=discountTotal(next);
+    var linePrice=priceRowOf(line),nextPrice=priceRowOf(next),priceRow2=priceRowOf(next2),lineCode=productCodeQtyPrice(line),nextCode=productCodeQtyPrice(next),qtySame=productQtyPriceMatch(line),same=sameProductMatch(line),nextSame=sameProductMatch(next),nextDiscount=discountTotal(next);
+    if(lineCode){
+      var already=out.some(function(x){return x.productCode===lineCode.code&&Number(x.total||0)===lineCode.total});
+      if(!already){
+        var prevName=prev&&!bad.test(prev)?cleanName(prev):"";
+        if(prevName&&validName(prevName,lineCode.total,prev)){
+          add(prev,lineCode.unit,lineCode.qty,lineCode.total,i-1,lineCode.code);
+        }else{
+          out.push({
+            name:"商品名要確認",
+            rawName:String(prev||line||""),
+            unitPrice:lineCode.unit,
+            qty:lineCode.qty,
+            total:lineCode.total,
+            productCode:lineCode.code,
+            quality:priority*10,
+            sourceIndex:i,
+            sourcePriority:priority,
+            lowConfidence:true,
+            candidateOnly:true,
+            candidateSource:"product_code"
+          });
+        }
+      }
+      continue;
+    }
     if(nextCode&&validName(cleanName(line),nextCode.total,line)){
       add(line,nextCode.unit,nextCode.qty,nextCode.total,i,nextCode.code);continue;
     }
@@ -2133,7 +2158,7 @@ function receiptDiagnosticSummary(p){
   p=p||{};
   var rows=Array.isArray(p.itemRows)?p.itemRows:[],cat=p.categoryCandidate||{},meta=p.ocrMeta||{};
   var lines=[
-    "お小遣い家計簿 v3.68.1 レシート診断",
+    "お小遣い家計簿 v3.68.2 レシート診断",
     "日付: "+String(p.date||"未判定"),
     "店名: "+String(p.shop||"未判定"),
     "合計: "+String(Number(p.amount||0))+"円",
@@ -3265,7 +3290,20 @@ function receiptTests(){
   var guFuzzyRakuten=verifiedMerchantPaymentFromText("GU ららぽーと立川立飛店",'PayPay/他QRコー ¥3,980\nド\nフラン"1');
   var guExplicitCount=receiptItemCountFromText("買上点数 2点\n小計 ¥3,980");
   var guCodeRows=itemRowsFromText(productSourceText("4ルリ1バッャ9\nZZ00083271771 1 3¥1,990\nルー-す4がパッャヲリ\n2200083271702 1 ¥1,990"),4);
+  var guCodeOnlyRows=itemRowsFromText(productSourceText([
+    "4ルリ1バッャ9",
+    "ZZ00083271771 1 3¥1,990",
+    "ルー-す4がパッャヲリ",
+    "2200083271702 1 ¥1,990"
+  ].join("\n")),4);
+  var guCodeOnlyMapped=autoConfirmVerifiedSampleRows(
+    "GU ららぽーと立川立飛店",
+    applyMerchantDictionaryCandidatesToRows("GU ららぽーと立川立飛店",guCodeOnlyRows),
+    {accountingStructureValid:true,amountConfidence:"high",merchandiseTarget:3980,itemSum:3980,expectedItemCount:2,actualItemCount:2}
+  );
   return[
+    ["receipt GU code-only rows survive unusable OCR names v3.68.2 test",guCodeOnlyRows.length===2&&guCodeOnlyRows.every(function(x){return x.productCode&&x.total===1990})],
+    ["receipt GU code-only rows recover verified product name v3.68.2 test",guCodeOnlyMapped.length===2&&guCodeOnlyMapped.every(function(x){return x.name==="オーバーサイズシャツ"&&x.autoConfirmed===true})],
     ["receipt GU registration fingerprint shop v3.68 test",guFingerprintShop==="GU ららぽーと立川立飛店"],
     ["receipt GU generic PayPay-other-QR stays generic v3.68 test",guGenericQr==="qr_unknown"],
     ["receipt GU observed fuzzy Rakuten payment v3.68 test",guFuzzyRakuten==="rakutenpay"],
@@ -3464,7 +3502,7 @@ function receiptTests(){
 function attachTests(){
   var b=document.getElementById("selfTest");if(!b||b.dataset.receiptWrapped)return;
   var base=b.onclick;b.dataset.receiptWrapped="1";
-  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),passed=out.filter(function(x){return x[1]}).length,pass=passed===out.length,box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">v3.68.1 レシート機能テスト '+passed+'/'+out.length+' 件すべて合格しました。</div>':'<div class="errorbox">v3.68.1 レシート機能テスト '+passed+'/'+out.length+' 件合格。失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
+  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),passed=out.filter(function(x){return x[1]}).length,pass=passed===out.length,box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">v3.68.2 レシート機能テスト '+passed+'/'+out.length+' 件すべて合格しました。</div>':'<div class="errorbox">v3.68.2 レシート機能テスト '+passed+'/'+out.length+' 件合格。失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
 }
 var body=document.getElementById("modalBody");
 if(body){new MutationObserver(function(){enhance()}).observe(body,{childList:true,subtree:true})}

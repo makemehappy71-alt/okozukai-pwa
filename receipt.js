@@ -2986,7 +2986,67 @@ function receiptTests(){
   var sevenAmountTest=analyzeAmount("小 計 (税抜 8%) ¥198\n消費税等 (8%) ¥15\n(内消費税等 8% ¥15)\n楽天ベイ支払 ¥213","");
   var sevenAliasInference=merchantProductInference("セブン‐イレブン 小平上水新町1丁目店",[{text:"スターバックス 起介もが00ml"}],"スターバックス 起介もが00ml *198",198);
   var sevenWrong198Inference=merchantProductInference("セブン‐イレブン 小平上水新町1丁目店",[{text:"別ブランド レモンティー500ml"}],"別ブランド レモンティー500ml *198",198);
+  var seriaDeviceText=[
+    "15) Serio",
+    "領収書",
+    "登録番号 T4200001013662",
+    "ららぼーと立川立飛店 1714",
+    "TEL042-512-6720 レジ1 00428",
+    "2026/10/02(金) 19:48",
+    "アクリルウォールラック20cm 100",
+    "ネジ替わりピン4 P 100",
+    "泡ポンプボトルモ小-7380ml 100",
+    "小計 3点 300",
+    "消費税 30",
+    "合計 ¥330",
+    "10%対象 330(内 税額 30)",
+    "QRコード ¥330"
+  ].join("\n");
+  var seriaDeviceObj={
+    text:seriaDeviceText,
+    whole:seriaDeviceText,
+    shopText:"3ri",
+    itemText:[
+      "アクリルウォールラック20cm 100",
+      "ネジ替わりピン4 P 100",
+      "泡ポンプボトルモ小-7380ml 100",
+      "小計 3点 300",
+      "消費税 30",
+      "合計 ¥330",
+      "QRコード ¥330"
+    ].join("\n"),
+    paymentText:"小計 3点 300\n消費税 30\nQR3-—",
+    sections:{
+      top:"15) Serio\n領収書\n登録番号 T4200001013662\nららぼーと立川立飛店 1714\n2026/10/02(金) 19:48",
+      middle:"アクリルウォールラック20cm 100\nネジ替わりピン4 P 100\n泡ポンプボトルモ小-7380ml 100\n小計 3点 300\n消費税 30",
+      bottom:"小計 3点 300\n消費税 30\n10%対象 330(内 税額 30)\nQRコード ¥330"
+    },
+    meta:{passes:21,skew:0,ratio:4,fastPath:true}
+  };
+  var pSeriaDevice=parseReceiptText(seriaDeviceObj,"2026-10-02");
+  var seriaNames=(pSeriaDevice.items||[]).slice().sort().join("|");
+  var seriaQrTest=paymentFromText("QRコード ¥330");
+  var seriaFingerprintShop=shopFromText("登録番号 T4200001013662\nららぼーと立川立飛店\n2026/10/02(金)",true);
+  var seriaAliasInference=merchantProductInference("Seria ららぽーと立川立飛店",[{text:"泡ポンプボトルモt修-y380ml"}],"泡ポンプボトルモt修-y380ml 100",100);
+  var seriaWrong100Inference=merchantProductInference("Seria ららぽーと立川立飛店",[{text:"別ブランド収納ケース"}],"別ブランド収納ケース 100",100);
+  var seriaSamePriceAuto=autoConfirmVerifiedSampleRows("Seria ららぽーと立川立飛店",[
+    {name:"泡ポンプボトルモt修-y380ml",rawName:"泡ポンプボトルモt修-y380ml",unitPrice:100,qty:1,total:100,lowConfidence:true,candidateOnly:true}
+  ],{merchandiseTarget:100,itemSum:100,expectedItemCount:1,actualItemCount:1,accountingStructureValid:true,amountConfidence:"high"});
+  var seriaSamePriceWrong=autoConfirmVerifiedSampleRows("Seria ららぽーと立川立飛店",[
+    {name:"別ブランド収納ケース",rawName:"別ブランド収納ケース",unitPrice:100,qty:1,total:100,lowConfidence:true,candidateOnly:true}
+  ],{merchandiseTarget:100,itemSum:100,expectedItemCount:1,actualItemCount:1,accountingStructureValid:true,amountConfidence:"high"});
   return[
+    ["receipt Seria registration fingerprint shop v3.66 test",seriaFingerprintShop==="Seria ららぽーと立川立飛店"],
+    ["receipt generic QR payment v3.66 test",seriaQrTest==="qr_unknown"],
+    ["receipt Seria actual-device date amount count v3.66 test",pSeriaDevice.date==="2026-10-02"&&pSeriaDevice.amount===330&&pSeriaDevice.subtotal===300&&pSeriaDevice.tax===30&&pSeriaDevice.itemRows.length===3&&pSeriaDevice.actualItemCount===3],
+    ["receipt Seria actual-device shop v3.66 test",pSeriaDevice.shop==="Seria ららぽーと立川立飛店"],
+    ["receipt Seria actual-device payment v3.66 test",pSeriaDevice.paymentCandidate==="qr_unknown"],
+    ["receipt Seria actual-device products v3.66 test",seriaNames.indexOf("アクリルウォールラック20cm")>=0&&seriaNames.indexOf("ネジ替わりピン4P")>=0&&seriaNames.indexOf("泡ポンプボトル モノトーン380ml")>=0],
+    ["receipt Seria actual-device item total v3.66 test",pSeriaDevice.itemSum===300&&pSeriaDevice.itemSetComplete===true],
+    ["receipt Seria daily-goods category v3.66 test",pSeriaDevice.categoryCandidate&&pSeriaDevice.categoryCandidate.groupName==="日用品"&&pSeriaDevice.categoryCandidate.subName==="生活用品"],
+    ["receipt Seria same-price alias inference v3.66 test",!!seriaAliasInference&&seriaAliasInference.name==="泡ポンプボトル モノトーン380ml"&&seriaAliasInference.registeredAliasMatch===true&&seriaAliasInference.samePriceMatches===3],
+    ["receipt Seria same-price exact alias auto-confirm v3.66 test",seriaSamePriceAuto.length===1&&seriaSamePriceAuto[0].autoConfirmed===true&&seriaSamePriceAuto[0].name==="泡ポンプボトル モノトーン380ml"],
+    ["receipt Seria same-price unrelated product guard v3.66 test",seriaSamePriceWrong.length===1&&seriaSamePriceWrong[0].autoConfirmed!==true&&(!seriaWrong100Inference||seriaWrong100Inference.registeredAliasMatch!==true)],
     ["receipt Seven verified alias inference v3.65 test",sevenAliasInference&&sevenAliasInference.name==="スターバックス ホワイトモカ500ml"&&sevenAliasInference.registeredAliasMatch===true],
     ["receipt Seven same-price different product guard v3.65 test",!sevenWrong198Inference||sevenWrong198Inference.registeredAliasMatch!==true],
     ["receipt Seven tax-exclusive total v3.65 test",sevenAmountTest.amount===213&&sevenAmountTest.subtotal===198&&sevenAmountTest.tax===15&&sevenAmountTest.taxIncluded===false],
@@ -3010,7 +3070,7 @@ function receiptTests(){
     ["receipt Chateraise actual-device basket recovery v3.58 test",pChateraiseDevice.verifiedBasketRecovered===true&&pChateraiseDevice.itemRows.length===5&&chateraiseQty===6&&pChateraiseDevice.itemSum===1002],
     ["receipt Chateraise actual-device names v3.58 test",pChateraiseDevice.items.indexOf("クリームチーズパンケーキ")>=0&&pChateraiseDevice.items.indexOf("国産バターと餡のパンケーキ")>=0&&pChateraiseDevice.items.indexOf("北海道産バターどらやき")>=0&&pChateraiseDevice.items.indexOf("フィナンシェ")>=0&&pChateraiseDevice.items.indexOf("北海道産あんこもちパイ")>=0],
     ["receipt Chateraise concise detail integration v3.64 test",pChateraiseDevice.detail==="シャトレーゼ／スイーツ 5種類・6点"],
-    ["receipt diagnostic summary fields test",/v3\.65 レシート診断/.test(diagnosticP5)&&/合計: 897円/.test(diagnosticP5)&&/金額信頼度: high/.test(diagnosticP5)&&/商品信頼度:/.test(diagnosticP5)],
+    ["receipt diagnostic summary fields test",/v3\.66 レシート診断/.test(diagnosticP5)&&/合計: 897円/.test(diagnosticP5)&&/金額信頼度: high/.test(diagnosticP5)&&/商品信頼度:/.test(diagnosticP5)],
     ["receipt diagnostic excludes raw header noise test",!/0716|TEL|取引ID/.test(diagnosticP5)],
     ["receipt product confidence high summary test",confidenceHighTest.level==="high"&&confidenceHighTest.autoConfirmed===1],
     ["receipt product confidence medium summary test",confidenceMixedTest.level==="medium"&&confidenceMixedTest.medium===1],

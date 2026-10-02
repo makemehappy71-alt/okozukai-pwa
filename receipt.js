@@ -1025,24 +1025,84 @@ function productNameRequiresConfirmation(name,shop){
   return false;
 }
 function applyFocusedNamesToRows(shop,rows,meta){
-  var focuses=meta&&Array.isArray(meta.multiProductFocus)?meta.multiProductFocus:[],multi=(rows||[]).length>1;
-  return(rows||[]).map(function(row){
-    var x=Object.assign({},row);if(x.autoConfirmed&&x.verifiedBasketRecovery)return x;
-    var matches=focuses.filter(function(f){return Number(f&&f.value||0)===Number(x.total||0)});
-    var best=matches.slice().sort(function(a,b){
-      var ar=a&&a.dictionaryInference&&a.dictionaryInference.autoConfirmEligible?3:a&&a.consensus&&a.consensus.accepted?2:a&&a.consensus&&a.consensus.candidateName?1:0;
-      var br=b&&b.dictionaryInference&&b.dictionaryInference.autoConfirmEligible?3:b&&b.consensus&&b.consensus.accepted?2:b&&b.consensus&&b.consensus.candidateName?1:0;
-      return br-ar;
-    })[0]||null;
+  var focuses=meta&&Array.isArray(meta.multiProductFocus)?meta.multiProductFocus:[],list=(rows||[]).map(function(row){return Object.assign({},row)}),multi=list.length>1,assignedFocus={};
+  function focusRank(f){
+    return f&&f.dictionaryInference&&f.dictionaryInference.autoConfirmEligible?3:f&&f.consensus&&f.consensus.accepted?2:f&&f.consensus&&f.consensus.candidateName?1:0;
+  }
+  function focusName(f){
+    if(f&&f.dictionaryInference&&f.dictionaryInference.name)return String(f.dictionaryInference.name||"");
+    if(f&&f.consensus&&f.consensus.accepted)return String(f.consensus.name||"");
+    if(f&&f.consensus&&f.consensus.candidateName)return String(f.consensus.candidateName||"");
+    return"";
+  }
+  function rowFocusSimilarity(row,f){
+    var name=focusName(f);if(!name)return 0;
+    var a=String(row&&row.rawName||""),b=String(row&&row.name||"");
+    return Math.max(a?productSimilarity(a,name):0,b?productSimilarity(b,name):0);
+  }
+
+  // Focused OCR passes are keyed by price. When several products have the same
+  // price, price alone is ambiguous. Assign those focus results one-to-one by
+  // name similarity so a strong reading for one ¥100 item cannot overwrite
+  // every other ¥100 item on the receipt.
+  var priceRows={},priceFocus={};
+  list.forEach(function(row,ri){
+    var key=String(Number(row&&row.total||0));if(!priceRows[key])priceRows[key]=[];priceRows[key].push(ri);
+  });
+  focuses.forEach(function(f,fi){
+    var key=String(Number(f&&f.value||0));if(!priceFocus[key])priceFocus[key]=[];priceFocus[key].push(fi);
+  });
+  Object.keys(priceRows).forEach(function(key){
+    var ris=priceRows[key]||[],fis=priceFocus[key]||[];
+    if(ris.length<2||fis.length<2)return;
+    var pairs=[];
+    ris.forEach(function(ri){fis.forEach(function(fi){
+      pairs.push({ri:ri,fi:fi,sim:rowFocusSimilarity(list[ri],focuses[fi]),rank:focusRank(focuses[fi])});
+    })});
+    pairs.sort(function(a,b){return b.sim-a.sim||b.rank-a.rank});
+    var usedRows={},usedFocus={};
+    pairs.forEach(function(p){
+      if(usedRows[p.ri]||usedFocus[p.fi]||p.sim<.28)return;
+      usedRows[p.ri]=1;usedFocus[p.fi]=1;assignedFocus[p.ri]=p.fi;
+    });
+  });
+
+  return list.map(function(x,ri){
+    if(x.autoConfirmed&&x.verifiedBasketRecovery)return x;
+    var price=Number(x.total||0),matches=focuses.map(function(f,fi){return{f:f,fi:fi}}).filter(function(z){return Number(z.f&&z.f.value||0)===price});
+    var duplicatePrice=(priceRows[String(price)]||[]).length>1,best=null;
+    if(Object.prototype.hasOwnProperty.call(assignedFocus,ri)){
+      best=focuses[assignedFocus[ri]]||null;
+    }else if(!duplicatePrice&&matches.length){
+      best=matches.slice().sort(function(a,b){
+        var ar=focusRank(a.f),br=focusRank(b.f),asim=rowFocusSimilarity(x,a.f),bsim=rowFocusSimilarity(x,b.f);
+        return br-ar||bsim-asim;
+      })[0].f;
+    }else if(duplicatePrice&&matches.length===1){
+      // One focused result cannot safely identify multiple same-price rows.
+      best=null;
+    }else if(duplicatePrice&&matches.length>1){
+      var ranked=matches.map(function(z){return{f:z.f,sim:rowFocusSimilarity(x,z.f),rank:focusRank(z.f)}}).sort(function(a,b){return b.sim-a.sim||b.rank-a.rank});
+      if(ranked[0]&&ranked[0].sim>=.55&&(!ranked[1]||ranked[0].sim-ranked[1].sim>=.12))best=ranked[0].f;
+    }
+
+    // Preserve the original OCR text. Later merchant-dictionary correction uses
+    // rawName to distinguish products that share the same price.
+    var originalRaw=String(x.rawName||x.name||"");
     if(best&&best.dictionaryInference&&best.dictionaryInference.autoConfirmEligible){
-      x.name=best.dictionaryInference.name;x.rawName=x.name;x.lowConfidence=false;x.autoConfirmed=true;x.candidateSource="learned";x.learnedCorrection=true;x.nameConfidence="high";
+      x.name=best.dictionaryInference.name;
+      if(!x.rawName)x.rawName=originalRaw;
+      x.lowConfidence=false;x.autoConfirmed=true;x.candidateSource="learned";x.learnedCorrection=true;x.nameConfidence="high";
       return x;
     }
     if(best&&best.consensus&&best.consensus.accepted){
       var consensusName=best.consensus.name,cleanEnough=!productNameRequiresConfirmation(consensusName,shop);
       var strongIndependent=Number(best.consensus.familySupport||0)>=3&&Number(best.consensus.support||0)>=3&&Number(best.consensus.score||0)>=90;
-      if(!multi||(cleanEnough&&strongIndependent)){
-        x.name=consensusName;x.rawName=x.name;x.lowConfidence=false;x.candidateOnly=false;x.candidateSource="focused";x.nameConfidence="high";
+      var similarityToRow=rowFocusSimilarity(x,best);
+      if(!multi||(cleanEnough&&strongIndependent&&(!duplicatePrice||similarityToRow>=.55))){
+        x.name=consensusName;
+        if(!x.rawName)x.rawName=originalRaw;
+        x.lowConfidence=false;x.candidateOnly=false;x.candidateSource="focused";x.nameConfidence="high";
         return x;
       }
       var oldName=String(x.name||""),oldScore=productMeaningfulScore(oldName),newScore=productMeaningfulScore(consensusName),simAccepted=productSimilarity(oldName,consensusName);
@@ -1053,8 +1113,6 @@ function applyFocusedNamesToRows(shop,rows,meta){
     }
     if(best&&best.consensus&&best.consensus.candidateName){
       var cand=best.consensus.candidateName,current=String(x.name||""),candScore=productMeaningfulScore(cand),currentScore=productMeaningfulScore(current),sim=productSimilarity(cand,current);
-      // A single/medium OCR candidate is only an alternative. Do not replace the
-      // existing row with a different, equally noisy reading.
       if((!current||current==="商品名要確認")||(candScore>=currentScore+5&&sim>=.55))x.name=cand;
       x.lowConfidence=true;x.candidateOnly=true;x.candidateSource="focused";x.nameConfidence="medium";x.nameAlternatives=(best.consensus.candidates||[]).slice(0,3);
       return x;
@@ -1977,7 +2035,7 @@ function receiptDiagnosticSummary(p){
   p=p||{};
   var rows=Array.isArray(p.itemRows)?p.itemRows:[],cat=p.categoryCandidate||{},meta=p.ocrMeta||{};
   var lines=[
-    "お小遣い家計簿 v3.66 レシート診断",
+    "お小遣い家計簿 v3.67 レシート診断",
     "日付: "+String(p.date||"未判定"),
     "店名: "+String(p.shop||"未判定"),
     "合計: "+String(Number(p.amount||0))+"円",
@@ -3035,7 +3093,30 @@ function receiptTests(){
   var seriaSamePriceWrong=autoConfirmVerifiedSampleRows("Seria ららぽーと立川立飛店",[
     {name:"別ブランド収納ケース",rawName:"別ブランド収納ケース",unitPrice:100,qty:1,total:100,lowConfidence:true,candidateOnly:true}
   ],{merchandiseTarget:100,itemSum:100,expectedItemCount:1,actualItemCount:1,accountingStructureValid:true,amountConfidence:"high"});
+  var samePriceFocusRows=[
+    {name:"アクリルウォールラック20cm",rawName:"アクリルウォールラック20cm",total:100,unitPrice:100,qty:1},
+    {name:"ネジ替わりピン4 P",rawName:"ネジ替わりピン4 P",total:100,unitPrice:100,qty:1},
+    {name:"泡ポンプボトルモ小-7380ml",rawName:"泡ポンプボトルモ小-7380ml",total:100,unitPrice:100,qty:1}
+  ];
+  var samePriceFocusMeta={multiProductFocus:[
+    {value:100,consensus:{accepted:true,name:"ネジ替わりピン4P",familySupport:3,support:3,score:98,candidates:["ネジ替わりピン4P"]}},
+    {value:100,consensus:{accepted:true,name:"泡ポンプボトルモ小-7380ml",familySupport:3,support:3,score:96,candidates:["泡ポンプボトルモ小-7380ml"]}},
+    {value:100,consensus:{accepted:true,name:"アクリルウォールラック20cm",familySupport:3,support:3,score:97,candidates:["アクリルウォールラック20cm"]}}
+  ]};
+  var samePriceFocused=applyFocusedNamesToRows("Seria ららぽーと立川立飛店",samePriceFocusRows,samePriceFocusMeta);
+  var samePriceFocusedFinal=autoConfirmVerifiedSampleRows(
+    "Seria ららぽーと立川立飛店",
+    applyMerchantDictionaryCandidatesToRows("Seria ららぽーと立川立飛店",samePriceFocused),
+    {accountingStructureValid:true,amountConfidence:"high",merchandiseTarget:300,itemSum:300,expectedItemCount:3,actualItemCount:3}
+  );
+  var singleSharedFocus=applyFocusedNamesToRows("Seria ららぽーと立川立飛店",samePriceFocusRows,{multiProductFocus:[
+    {value:100,consensus:{accepted:true,name:"ネジ替わりピン4P",familySupport:3,support:3,score:99,candidates:["ネジ替わりピン4P"]}}
+  ]});
   return[
+    ["receipt same-price focused OCR keeps three identities v3.67 test",samePriceFocused.map(function(x){return x.name}).join("|")==="アクリルウォールラック20cm|ネジ替わりピン4P|泡ポンプボトルモ小-7380ml"],
+    ["receipt same-price focused OCR preserves raw names v3.67 test",samePriceFocused.map(function(x){return x.rawName}).join("|")==="アクリルウォールラック20cm|ネジ替わりピン4 P|泡ポンプボトルモ小-7380ml"],
+    ["receipt Seria same-price dictionary final names v3.67 test",samePriceFocusedFinal.map(function(x){return x.name}).join("|")==="アクリルウォールラック20cm|ネジ替わりピン4P|泡ポンプボトル モノトーン380ml"],
+    ["receipt single focus cannot overwrite all same-price rows v3.67 test",singleSharedFocus.filter(function(x){return x.name==="ネジ替わりピン4P"}).length<=1],
     ["receipt Seria registration fingerprint shop v3.66 test",seriaFingerprintShop==="Seria ららぽーと立川立飛店"],
     ["receipt generic QR payment v3.66 test",seriaQrTest==="qr_unknown"],
     ["receipt Seria actual-device date amount count v3.66 test",pSeriaDevice.date==="2026-10-02"&&pSeriaDevice.amount===330&&pSeriaDevice.subtotal===300&&pSeriaDevice.tax===30&&pSeriaDevice.itemRows.length===3&&pSeriaDevice.actualItemCount===3],
@@ -3070,7 +3151,7 @@ function receiptTests(){
     ["receipt Chateraise actual-device basket recovery v3.58 test",pChateraiseDevice.verifiedBasketRecovered===true&&pChateraiseDevice.itemRows.length===5&&chateraiseQty===6&&pChateraiseDevice.itemSum===1002],
     ["receipt Chateraise actual-device names v3.58 test",pChateraiseDevice.items.indexOf("クリームチーズパンケーキ")>=0&&pChateraiseDevice.items.indexOf("国産バターと餡のパンケーキ")>=0&&pChateraiseDevice.items.indexOf("北海道産バターどらやき")>=0&&pChateraiseDevice.items.indexOf("フィナンシェ")>=0&&pChateraiseDevice.items.indexOf("北海道産あんこもちパイ")>=0],
     ["receipt Chateraise concise detail integration v3.64 test",pChateraiseDevice.detail==="シャトレーゼ／スイーツ 5種類・6点"],
-    ["receipt diagnostic summary fields test",/v3\.66 レシート診断/.test(diagnosticP5)&&/合計: 897円/.test(diagnosticP5)&&/金額信頼度: high/.test(diagnosticP5)&&/商品信頼度:/.test(diagnosticP5)],
+    ["receipt diagnostic summary fields test",/v3\.67 レシート診断/.test(diagnosticP5)&&/合計: 897円/.test(diagnosticP5)&&/金額信頼度: high/.test(diagnosticP5)&&/商品信頼度:/.test(diagnosticP5)],
     ["receipt diagnostic excludes raw header noise test",!/0716|TEL|取引ID/.test(diagnosticP5)],
     ["receipt product confidence high summary test",confidenceHighTest.level==="high"&&confidenceHighTest.autoConfirmed===1],
     ["receipt product confidence medium summary test",confidenceMixedTest.level==="medium"&&confidenceMixedTest.medium===1],
@@ -3218,7 +3299,7 @@ function receiptTests(){
 function attachTests(){
   var b=document.getElementById("selfTest");if(!b||b.dataset.receiptWrapped)return;
   var base=b.onclick;b.dataset.receiptWrapped="1";
-  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),passed=out.filter(function(x){return x[1]}).length,pass=passed===out.length,box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">v3.66 レシート機能テスト '+passed+'/'+out.length+' 件すべて合格しました。</div>':'<div class="errorbox">v3.66 レシート機能テスト '+passed+'/'+out.length+' 件合格。失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
+  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),passed=out.filter(function(x){return x[1]}).length,pass=passed===out.length,box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">v3.67 レシート機能テスト '+passed+'/'+out.length+' 件すべて合格しました。</div>':'<div class="errorbox">v3.67 レシート機能テスト '+passed+'/'+out.length+' 件合格。失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
 }
 var body=document.getElementById("modalBody");
 if(body){new MutationObserver(function(){enhance()}).observe(body,{childList:true,subtree:true})}

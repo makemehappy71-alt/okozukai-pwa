@@ -3211,7 +3211,73 @@ function receiptTests(){
   var singleSharedFocus=applyFocusedNamesToRows("Seria ららぽーと立川立飛店",samePriceFocusRows,{multiProductFocus:[
     {value:100,consensus:{accepted:true,name:"ネジ替わりピン4P",familySupport:3,support:3,score:99,candidates:["ネジ替わりピン4P"]}}
   ]});
+  var guDeviceText=[
+    "GU",
+    "ジーユー ららぼ-と立川立飛店",
+    "TEL 050-3096-9940",
+    "登録番号 T1250001002853",
+    "2026年10月02日",
+    "<0642> [19:22]",
+    "4ルリ1バッャ9",
+    "ZZ00083271771 1 3¥1,990",
+    "ルー-す4がパッャヲリ",
+    "2200083271702 1 ¥1,990",
+    "買上点数 2点",
+    "小計 ¥3,980",
+    "合計 ¥3,980",
+    "内消費税 10.00% ¥361",
+    "支払い方法",
+    "PayPay/他QRコー ¥3,980",
+    "ド",
+    "フラン\"1"
+  ].join("\n");
+  var guDeviceObj={
+    text:guDeviceText,
+    whole:guDeviceText,
+    shopText:"H6EEADRIARE",
+    itemText:[
+      "4ルリ1バッャ9",
+      "ZZ00083271771 1 3¥1,990",
+      "ルー-す4がパッャヲリ",
+      "2200083271702 1 ¥1,990",
+      "買上点数 2点",
+      "小計 ¥3,980",
+      "合計 ¥3,980",
+      "内消費税 10.00% ¥361"
+    ].join("\n"),
+    paymentText:"PayPay/他QRコー ¥3,980\nド\nフラン\"1",
+    sections:{
+      top:"登録番号 T1250001002853\nららぼ-と立川立飛店\n2026年10月02日\n[19:22]",
+      middle:"4ルリ1バッャ9\nZZ00083271771 1 3¥1,990\nルー-す4がパッャヲリ\n2200083271702 1 ¥1,990\n買上点数 2点",
+      bottom:"小計 ¥3,980\n合計 ¥3,980\n内消費税 10.00% ¥361\n支払い方法\nPayPay/他QRコー ¥3,980\nド\nフラン\"1"
+    },
+    meta:{passes:16,skew:0,ratio:4}
+  };
+  var pGuDevice=parseReceiptText(guDeviceObj,"2026-10-02");
+  var guCodes=(pGuDevice.itemRows||[]).map(function(x){return x.productCode}).sort().join("|");
+  var guNames=(pGuDevice.itemRows||[]).map(function(x){return x.name}).join("|");
+  var guTotals=(pGuDevice.itemRows||[]).map(function(x){return Number(x.total||0)}).join("|");
+  var guSplitTax=(pGuDevice.splitRows||[]).reduce(function(a,x){return a+Number(x.extra||0)},0);
+  var guSplitGross=(pGuDevice.splitRows||[]).reduce(function(a,x){return a+Number(x.gross||0)},0);
+  var guSplitNet=(pGuDevice.splitRows||[]).reduce(function(a,x){return a+Number(x.net||0)},0);
+  var guFingerprintShop=shopFromText("登録番号 T1250001002853\nしはすずす立川立飛店\n2026年10月02日",true);
+  var guGenericQr=paymentFromText("PayPay/他QRコード ¥3,980");
+  var guFuzzyRakuten=verifiedMerchantPaymentFromText("GU ららぽーと立川立飛店",'PayPay/他QRコー ¥3,980\nド\nフラン"1');
+  var guExplicitCount=receiptItemCountFromText("買上点数 2点\n小計 ¥3,980");
+  var guCodeRows=itemRowsFromText(productSourceText("4ルリ1バッャ9\nZZ00083271771 1 3¥1,990\nルー-す4がパッャヲリ\n2200083271702 1 ¥1,990"),4);
   return[
+    ["receipt GU registration fingerprint shop v3.68 test",guFingerprintShop==="GU ららぽーと立川立飛店"],
+    ["receipt GU generic PayPay-other-QR stays generic v3.68 test",guGenericQr==="qr_unknown"],
+    ["receipt GU observed fuzzy Rakuten payment v3.68 test",guFuzzyRakuten==="rakutenpay"],
+    ["receipt GU explicit purchased item count v3.68 test",guExplicitCount===2],
+    ["receipt GU product-code row parser v3.68 test",guCodeRows.length===2&&guCodeRows.every(function(x){return x.total===1990&&x.productCode})],
+    ["receipt GU actual-device accounting v3.68 test",pGuDevice.date==="2026-10-02"&&pGuDevice.amount===3980&&pGuDevice.subtotal===3980&&pGuDevice.tax===361&&pGuDevice.taxIncluded===true],
+    ["receipt GU actual-device shop/payment v3.68 test",pGuDevice.shop==="GU ららぽーと立川立飛店"&&pGuDevice.paymentCandidate==="rakutenpay"],
+    ["receipt GU actual-device two product variants v3.68 test",pGuDevice.itemRows.length===2&&guCodes==="2200083271702|2200083271771"&&guTotals==="1990|1990"],
+    ["receipt GU product-code dictionary names v3.68 test",guNames==="オーバーサイズシャツ|オーバーサイズシャツ"&&pGuDevice.productConfidenceLevel==="high"],
+    ["receipt GU apparel category v3.68 test",pGuDevice.categoryCandidate&&pGuDevice.categoryCandidate.groupName==="ファッション"&&pGuDevice.categoryCandidate.subName==="シャツ"],
+    ["receipt GU included-tax allocation v3.68 test",pGuDevice.splitRows.length===2&&guSplitTax===361&&guSplitGross===3980&&guSplitNet===3619],
+    ["receipt GU two types two points v3.68 test",pGuDevice.actualItemCount===2&&pGuDevice.expectedItemCount===2&&pGuDevice.itemQuantityMatch===true],
     ["receipt same-price focused OCR keeps three identities v3.67 test",samePriceFocused.map(function(x){return x.name}).join("|")==="アクリルウォールラック20cm|ネジ替わりピン4P|泡ポンプボトルモ小-7380ml"],
     ["receipt same-price focused OCR preserves raw names v3.67 test",samePriceFocused.map(function(x){return x.rawName}).join("|")==="アクリルウォールラック20cm|ネジ替わりピン4 P|泡ポンプボトルモ小-7380ml"],
     ["receipt Seria same-price dictionary final names v3.67 test",samePriceFocusedFinal.map(function(x){return x.name}).join("|")==="アクリルウォールラック20cm|ネジ替わりピン4P|泡ポンプボトル モノトーン380ml"],
@@ -3250,7 +3316,7 @@ function receiptTests(){
     ["receipt Chateraise actual-device basket recovery v3.58 test",pChateraiseDevice.verifiedBasketRecovered===true&&pChateraiseDevice.itemRows.length===5&&chateraiseQty===6&&pChateraiseDevice.itemSum===1002],
     ["receipt Chateraise actual-device names v3.58 test",pChateraiseDevice.items.indexOf("クリームチーズパンケーキ")>=0&&pChateraiseDevice.items.indexOf("国産バターと餡のパンケーキ")>=0&&pChateraiseDevice.items.indexOf("北海道産バターどらやき")>=0&&pChateraiseDevice.items.indexOf("フィナンシェ")>=0&&pChateraiseDevice.items.indexOf("北海道産あんこもちパイ")>=0],
     ["receipt Chateraise concise detail integration v3.64 test",pChateraiseDevice.detail==="シャトレーゼ／スイーツ 5種類・6点"],
-    ["receipt diagnostic summary fields test",/v3\.67 レシート診断/.test(diagnosticP5)&&/合計: 897円/.test(diagnosticP5)&&/金額信頼度: high/.test(diagnosticP5)&&/商品信頼度:/.test(diagnosticP5)],
+    ["receipt diagnostic summary fields test",/v3\.68 レシート診断/.test(diagnosticP5)&&/合計: 897円/.test(diagnosticP5)&&/金額信頼度: high/.test(diagnosticP5)&&/商品信頼度:/.test(diagnosticP5)],
     ["receipt diagnostic excludes raw header noise test",!/0716|TEL|取引ID/.test(diagnosticP5)],
     ["receipt product confidence high summary test",confidenceHighTest.level==="high"&&confidenceHighTest.autoConfirmed===1],
     ["receipt product confidence medium summary test",confidenceMixedTest.level==="medium"&&confidenceMixedTest.medium===1],

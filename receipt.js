@@ -467,7 +467,7 @@ function numberFromLine(line){
   return vals.length?vals[vals.length-1]:0;
 }
 function ocrMoneyClean(line){
-  var s=String(line||"").replace(/[￥]/g,"¥").replace(/[，]/g,",").replace(/[．。]/g,".");
+  var s=String(line||"").replace(/[￥\\]/g,"¥").replace(/[，]/g,",").replace(/[．。]/g,".");
   s=s.replace(/([0-9])[OoＯ](?=[0-9])/g,"$10").replace(/([0-9])[Il｜](?=[0-9])/g,"$11");
   s=s.replace(/([0-9])\.([0-9]{3})(?![0-9])/g,"$1,$2");
   return s;
@@ -603,6 +603,8 @@ function paymentFromSources(bottom,raw,whole){
 }
 function normalizeOCRCapacityTokens(value){
   var s=String(value||"");
+  // OCR can read the small unit separator in "20g" as a cent sign.
+  s=s.replace(/([0-9]{1,4})\s*[¢￠]\s*g\b/gi,"$1g");
   // OCR often reads zeros as U/O and inserts an extra "n" before ml.
   // Only repair tokens that already have a numeric-capacity shape.
   s=s.replace(/\b([1-9])([UuOoＯ〇]{1,4})\s*(?:n\s*)?m[lI1]\b/g,function(_m,d,zeros){
@@ -1512,7 +1514,7 @@ function itemRowsFromText(text,sourcePriority){
     return{code:code,qty:qty,total:total,unit:qty?Math.round(total/qty):total};
   }
   function standalonePrice(s){
-    var x=ocrMoneyClean(s).replace(/\s+/g," ").trim(),m=x.match(/^\s*(?:¥|￥|\\|Y)\s*([0-9]{1,3}(?:,[0-9]{3})*|[0-9]{1,7})\s*(?:円)?\s*(?:内|外|軽|[A-Z※*])?\s*$/i);
+    var x=ocrMoneyClean(s).replace(/\s+/g," ").trim(),m=x.match(/^\s*(?:¥|￥|\\|Y)\s*([0-9]{1,3}(?:,[0-9]{3})*|[0-9]{1,7})\s*(?:円)?\s*(?:内|外|軽|[A-Z※*%])?\s*$/i);
     if(!m)m=x.match(/^\s*([0-9]{1,3}(?:,[0-9]{3})+)\s*(?:円)?\s*(?:内|外|軽|[A-Z※*])?\s*$/i);
     if(!m)return 0;
     var n=Number(String(m[1]||"").replace(/,/g,""));return n>0&&n<=1000000?n:0;
@@ -1526,8 +1528,12 @@ function itemRowsFromText(text,sourcePriority){
     if(q<2||q>99||unit<=0||total<=0||q*unit!==total)return null;
     return{qty:q,unit:unit,total:total};
   }
-  function sameProductMatch(s){return ocrMoneyClean(s).match(/^(.{2,58}?[ぁ-んァ-ヶー一-龠A-Za-z][^¥￥]*?)\s+[※*]?\s*(?:¥|￥)?\s*([0-9]{1,7})\s*(?:円)?\s*(?:外|内|軽|[A-Z※*])?\s*$/i)}
-  function productQtyPriceMatch(s){return ocrMoneyClean(s).match(/^(.{2,58}?[ぁ-んァ-ヶー一-龠A-Za-z][^¥￥]*?)[\s,、]+([0-9]{1,3})\s+(?:¥|￥)\s*([0-9]{1,7})\s*(?:円)?\s*(?:外|内|軽|[A-Z※*])?\s*$/i)}
+  function sameProductMatch(s){
+    var x=ocrMoneyClean(s),m=x.match(/^(.{2,58}?[ぁ-んァ-ヶー一-龠A-Za-z][^¥￥]*?)\s+(?:([0-9]{1,2})\s*)?[※*]?\s*(?:¥|￥)\s*([0-9]{1,7})\s*(?:円)?\s*(?:外|内|軽|[A-Z※*%])?\s*$/i);
+    if(m)return[m[0],m[1],m[3]];
+    return x.match(/^(.{2,58}?[ぁ-んァ-ヶー一-龠A-Za-z][^¥￥]*?)\s+[※*]?\s*(?:¥|￥)?\s*([0-9]{1,7})\s*(?:円)?\s*(?:外|内|軽|[A-Z※*%])?\s*$/i);
+  }
+  function productQtyPriceMatch(s){return ocrMoneyClean(s).match(/^(.{2,58}?[ぁ-んァ-ヶー一-龠A-Za-z][^¥￥]*?)[\s,、]+([0-9]{1,3})\s+(?:¥|￥)\s*([0-9]{1,7})\s*(?:円)?\s*(?:外|内|軽|[A-Z※*%])?\s*$/i)}
   function discountTotal(s){var x=ocrMoneyClean(s);if(!/値下|値引|割引|特価|sale/i.test(x))return 0;var nums=[],re=/(?:¥|￥)?\s*([0-9]{1,7})/g,m;while((m=re.exec(x)))nums.push(Number(m[1]||0));return nums.length?nums[nums.length-1]:0;}
   for(var i=0;i<lines.length;i++){
     var line=ocrMoneyClean(lines[i]);if(bad.test(line))continue;

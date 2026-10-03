@@ -3202,6 +3202,58 @@ function receiptTests(){
   };
   var pYaokoActual=parseReceiptText(yaokoActualObj,"2026-10-03"),yaokoActualRow=pYaokoActual.itemRows[0]||null;
 
+  var kfcActualObj={
+    text:[
+      "|SELUREBIE",
+      "機",
+      "_I COPA東大和店",
+      "5*クリル^ 1 2半額 \\700",
+      "=8t+ ¥700",
+      "(内消費千 ¥51)",
+      "ESof d ¥700(%% ¥51)",
+      "10%対象 ¥0 (3% ¥0)",
+      "QRコード \\700",
+      "ご利用日 2026/10/03 13:10:49",
+      "<楽天ベイ>",
+      "ご利用日 2026/10/03 13:10:41",
+      "取引金額 ¥700",
+      "登録番号 T3010001244022"
+    ].join("\n"),
+    whole:[
+      "KFC",
+      "LICOPA東大和店",
+      "5*クリスピー 1ピース半額 ¥700",
+      "合計 ¥700",
+      "(内消費税 ¥51)",
+      "8%対象 ¥700(税 ¥51)",
+      "QRコード ¥700",
+      "<楽天ペイ>",
+      "取引金額 ¥700"
+    ].join("\n"),
+    shopText:"KFC\nKFC\nCOPARAIE",
+    itemText:[
+      "|_ ICOPA東大和店",
+      "Esクリメル ーー半額 ¥700",
+      "5*クリスルト^ ーー半額 ¥700",
+      "リルーー 1 スス半額 \\700",
+      "5*クリル* 1半額 ¥700",
+      "xsリス 1ヒースス半額 ¥700",
+      "SxYzE\" 1 2半額 ¥700",
+      "お買上 ¥700",
+      "内消費笑 ¥51",
+      "QRコード ¥700",
+      "取引金額 ¥700"
+    ].join("\n"),
+    paymentText:"<楽天ペイ>\n取引金額 ¥700",
+    sections:{
+      top:"KFC\nLICOPA東大和店\n2026/10/03 13:10",
+      middle:"5*クリル* 1半額 ¥700",
+      bottom:"お買上 ¥700\n合計 ¥700\n(内消費税 ¥51)\n8%対象 ¥700(税 ¥51)\nQRコード ¥700"
+    },
+    meta:{passes:25,skew:0,ratio:4}
+  };
+  var pKfcActual=parseReceiptText(kfcActualObj,"2026-10-03"),kfcActualRow=pKfcActual.itemRows[0]||null,kfcActualSplit=pKfcActual.splitRows[0]||null;
+
   var bkRegressionObj={
     text:"バーガーキング立川北口趾\n2026-09-27 10:28:26\nE 【りのたかセト】 1 ¥1,090\nクーポン割引 ¥-250\nE >Sフレンチフライ 1 ¥0\n合計金額 ¥840\n(内 消費税 ¥76)\n[ 現金 ] ¥1,000\n[ お釣 ] ¥160",
     whole:"ガーキンク立川北口店\nE 【7の7ーたがセト】 ¥1,090\nクーポン割引 ¥-250\n合計金額 ¥840\n[ 現金 ] ¥1,000\n[ お釣 ] ¥160",
@@ -3927,6 +3979,11 @@ function receiptTests(){
     ["receipt Yaoko noisy actual confidence v3.70.4 test",pYaokoActual.productConfidenceLevel==="high"&&pYaokoActual.itemRows.length===1&&pYaokoActual.actualItemCount===2&&pYaokoActual.itemSum===198&&pYaokoActual.itemSetComplete===true],
     ["receipt Yaoko noisy distractor rejection v3.70.4 test",!pYaokoActual.items.some(function(x){return /7Z|~\)|通常P|累計/.test(x)})],
     ["receipt Yaoko noisy accounting/shop v3.70.4 test",pYaokoActual.shop==="ヤオコー東大和店"&&pYaokoActual.amount===213&&pYaokoActual.subtotal===198&&pYaokoActual.tax===15&&pYaokoActual.paymentCandidate==="wallet"],
+    ["receipt KFC actual shop/payment v3.70.5 test",pKfcActual.shop==="KFC LICOPA東大和店"&&pKfcActual.amount===700&&pKfcActual.paymentCandidate==="rakutenpay"],
+    ["receipt KFC actual product v3.70.5 test",pKfcActual.itemRows.length===1&&!!kfcActualRow&&kfcActualRow.name==="カーネルクリスピー 1ピース半額"&&pKfcActual.productConfidenceLevel==="high"],
+    ["receipt KFC five-piece quantity v3.70.5 test",!!kfcActualRow&&kfcActualRow.qty===5&&kfcActualRow.unitPrice===140&&kfcActualRow.total===700&&pKfcActual.actualItemCount===5&&pKfcActual.itemSum===700&&pKfcActual.itemSetComplete===true],
+    ["receipt KFC included-tax split v3.70.5 test",pKfcActual.tax===51&&pKfcActual.taxIncluded===true&&!!kfcActualSplit&&kfcActualSplit.net===649&&kfcActualSplit.extra===51&&kfcActualSplit.gross===700],
+    ["receipt KFC external-category v3.70.5 test",pKfcActual.categoryCandidate&&pKfcActual.categoryCandidate.groupName==="食費"&&pKfcActual.categoryCandidate.subName==="外食"&&!pKfcActual.items.some(function(x){return /取引金額|お買上|内消費/.test(x)})],
     ["receipt SEIYU registration fingerprint test",seiyuRegShop==="西友"],
     ["receipt item category snack test",splitSnack&&/お菓子|スイーツ/.test(splitSnack.categoryLabel)],
     ["receipt item category drink test",splitDrink&&/飲み物/.test(splitDrink.categoryLabel)],

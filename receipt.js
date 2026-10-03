@@ -573,7 +573,9 @@ function productSourceText(text){
   return receiptPurchaseSectionText(text).split("\n").map(function(line){
     var s=line.trim();
     if(!s)return"";
-    var codeShape=ocrMoneyClean(s).replace(/\s+/g," ").trim().match(/^([A-Za-z0-9]{10,18})\s+(?:[0-9]{1,3}\s+)?[^¥￥\\Y]{0,4}(?:¥|￥|\\|Y)\s*[0-9]{1,3}(?:,[0-9]{3})+/i);
+    var compactCodeLine=ocrMoneyClean(s).replace(/\s+/g," ").trim();
+    var codeShape=compactCodeLine.match(/^([A-Za-z0-9]{10,18})\s+(?:[0-9]{1,3}\s+)?[^¥￥\\Y]{0,4}(?:¥|￥|\\|Y)\s*[0-9]{1,3}(?:,[0-9]{3})+/i);
+    if(!codeShape)codeShape=compactCodeLine.match(/^([A-Za-z0-9]{10,18})\s+(?:[0-9]{1,3}\s+)?[0-9]{1,3}(?:,[0-9]{3})+\s*(?:内|外|軽|[A-Z※*])?\s*$/i);
     if(codeShape&&normalizeProductCodeToken(codeShape[1]))return s;
     var kind=classifyReceiptLine(s);
     if(kind==="payment"||kind==="accounting")return"";
@@ -971,6 +973,13 @@ function mergeProductRows(rows){
       var g=groups[i],sameTotal=row.total&&g.total&&row.total===g.total,qtyCompatible=row.qty===g.qty||row.qty===1||g.qty===1;
       if(!sameTotal||!qtyCompatible)continue;
       if(row.productCode&&g.productCode&&row.productCode!==g.productCode)continue;
+      // Do not collapse two separate merchandise rows seen in the same OCR source.
+      // Cross-source duplicates are still merged one-to-one; subtotal/count validation
+      // can then decide whether repeated same-name/same-price rows are real purchases.
+      var sameSourceOccurrence=g.candidates.some(function(c){
+        return Number(c.sourcePriority||0)===Number(row.sourcePriority||0)&&Number(c.sourceIndex||0)!==Number(row.sourceIndex||0);
+      });
+      if(sameSourceOccurrence)continue;
       var sim=Math.max.apply(null,g.candidates.map(function(c){return productSimilarity(row.name,c.name)}).concat([0]));
       var garbage=isGarbageProductName(row.name),groupHasGood=g.candidates.some(function(c){return !isGarbageProductName(c.name)});
       var numericGroup=garbage&&groupHasGood;
@@ -995,6 +1004,12 @@ function mergeProductRows(rows){
       var h=groups[gj],qtyOk=g.qty===h.qty||g.qty===1||h.qty===1;
       if(g.total!==h.total||!qtyOk)continue;
       if(g.productCode&&h.productCode&&g.productCode!==h.productCode)continue;
+      var sameSourceCollision=g.candidates.some(function(gc){
+        return h.candidates.some(function(hc){
+          return Number(gc.sourcePriority||0)===Number(hc.sourcePriority||0)&&Number(gc.sourceIndex||0)!==Number(hc.sourceIndex||0);
+        });
+      });
+      if(sameSourceCollision)continue;
       var hName=chooseBestNameForCandidates(h.candidates),hs=productMeaningfulScore(hName);
       if(hs>targetScore){targetScore=hs;target=gj}
     }
@@ -1012,7 +1027,7 @@ function mergeProductRows(rows){
     })[0];
     if(bestCandidate&&productMeaningfulScore(bestCandidate.name)>=productMeaningfulScore(name)-2)name=bestCandidate.name;
     var quality=productMeaningfulScore(name)+tokenSupportScore(name,g.candidates);
-    return{name:name,unitPrice:g.unitPrice,qty:g.qty,total:g.total,productCode:g.productCode||"",quality:quality,candidateCount:g.candidates.length};
+    return{name:name,rawName:bestCandidate&&bestCandidate.rawName||bestCandidate&&bestCandidate.name||name,unitPrice:g.unitPrice,qty:g.qty,total:g.total,productCode:g.productCode||"",quality:quality,candidateCount:g.candidates.length,sourceIndex:Number(bestCandidate&&bestCandidate.sourceIndex||0),sourcePriority:Number(bestCandidate&&bestCandidate.sourcePriority||1)};
   }).filter(function(x){return !isChangeCueText(String(x.name||""));});
 }
 function receiptItemCountFromText(text){
@@ -1168,9 +1183,10 @@ function applyMerchantDictionaryCandidatesToRows(shop,rows){
   return(rows||[]).map(function(row){
     var x=Object.assign({},row);
     if(x.autoConfirmed)return x;
-    var price=Number(x.originalTotal||x.total||0),codeHit=merchantProductByCode(shop,x.productCode),observed=[{text:x.rawName||x.name},{text:x.name}];
+    var price=Number(x.originalTotal||x.total||0),codeMatch=merchantProductCodeMatch(shop,x.productCode,price),codeHit=codeMatch&&codeMatch.entry,observed=[{text:x.rawName||x.name},{text:x.name}];
     if(codeHit&&(!codeHit.priceHints||!codeHit.priceHints.length||codeHit.priceHints.indexOf(price)>=0)){
       x.name=codeHit.name;x.lowConfidence=true;x.candidateOnly=true;x.candidateSource=codeHit.source||"verified_sample";x.dictionarySuggested=true;x.codeMatched=true;x.nameConfidence="medium";x.nameAlternatives=[codeHit.name];x.quality=Math.max(75,Number(x.quality||0));
+      if(codeMatch.fuzzy){x.rawProductCode=x.productCode;x.productCode=codeMatch.code;x.codeFuzzyMatched=true}
       return x;
     }
     var inf=merchantProductInferenceFromDictionary(dict,observed,[x.rawName||"",x.name||""].join("\n"),price);
@@ -1230,9 +1246,11 @@ function autoConfirmVerifiedSampleRows(shop,rows,context){
   return(rows||[]).map(function(row){
     var x=Object.assign({},row);
     if(x.autoConfirmed)return x;
-    var price=Number(x.originalTotal||x.total||0),raw=String(x.rawName||x.name||""),codeHit=merchantProductByCode(shop,x.productCode);
+    var price=Number(x.originalTotal||x.total||0),raw=String(x.rawName||x.name||""),codeMatch=merchantProductCodeMatch(shop,x.productCode,price),codeHit=codeMatch&&codeMatch.entry;
     if(codeHit&&codeHit.source==="verified_sample"&&(!codeHit.priceHints||!codeHit.priceHints.length||codeHit.priceHints.indexOf(price)>=0)){
-      x.name=codeHit.name;x.lowConfidence=false;x.candidateOnly=false;x.autoConfirmed=true;x.candidateSource="verified_sample";x.dictionarySuggested=true;x.verifiedSampleCorrection=true;x.codeMatched=true;x.nameConfidence="high";x.quality=Math.max(96,Number(x.quality||0));return x;
+      x.name=codeHit.name;x.lowConfidence=false;x.candidateOnly=false;x.autoConfirmed=true;x.candidateSource="verified_sample";x.dictionarySuggested=true;x.verifiedSampleCorrection=true;x.codeMatched=true;x.nameConfidence="high";x.quality=Math.max(96,Number(x.quality||0));
+      if(codeMatch.fuzzy){x.rawProductCode=x.productCode;x.productCode=codeMatch.code;x.codeFuzzyMatched=true}
+      return x;
     }
     if(!price||!raw)return x;
     var inf=merchantProductInferenceFromDictionary(dict,[{text:raw}],raw,price);
@@ -1411,14 +1429,41 @@ function normalizeProductCodeToken(token){
   var fixed=raw.replace(/Z/g,"2").replace(/[OQ]/g,"0").replace(/[IL]/g,"1").replace(/[^0-9]/g,"");
   return fixed.length>=10&&fixed.length<=14?fixed:"";
 }
-function merchantProductByCode(shop,code){
-  code=normalizeProductCodeToken(code);if(!code)return null;
-  var dict=merchantProductDictionary(shop);
+function ean13ChecksumValid(code){
+  var s=String(code||"");if(!/^\d{13}$/.test(s))return false;
+  var sum=0;for(var i=0;i<12;i++)sum+=Number(s[i])*(i%2?3:1);
+  return (10-(sum%10))%10===Number(s[12]);
+}
+function digitHammingDistance(a,b){
+  a=String(a||"");b=String(b||"");if(a.length!==b.length)return 99;
+  var d=0;for(var i=0;i<a.length;i++)if(a[i]!==b[i])d++;
+  return d;
+}
+function merchantProductCodeMatch(shop,code,price){
+  code=normalizeProductCodeToken(code);price=Number(price||0);if(!code)return null;
+  var dict=merchantProductDictionary(shop),fuzzy=[];
   for(var i=0;i<dict.length;i++){
-    var codes=Array.isArray(dict[i].productCodes)?dict[i].productCodes:[];
-    if(codes.map(normalizeProductCodeToken).indexOf(code)>=0)return dict[i];
+    var entry=dict[i],codes=Array.isArray(entry.productCodes)?entry.productCodes.map(normalizeProductCodeToken).filter(Boolean):[];
+    for(var j=0;j<codes.length;j++){
+      if(codes[j]===code)return{entry:entry,code:codes[j],fuzzy:false,distance:0};
+    }
   }
-  return null;
+  // A one-digit correction is only allowed for a broken EAN-13 checksum, a
+  // unique known code at this merchant, and a matching verified price hint.
+  // This avoids "repairing" an otherwise valid but unknown product code.
+  if(code.length!==13||ean13ChecksumValid(code))return null;
+  for(var di=0;di<dict.length;di++){
+    var de=dict[di],priceHints=Array.isArray(de.priceHints)?de.priceHints:[],known=Array.isArray(de.productCodes)?de.productCodes.map(normalizeProductCodeToken).filter(Boolean):[];
+    if(price>0&&priceHints.length&&priceHints.indexOf(price)<0)continue;
+    known.forEach(function(k){
+      if(k.length===13&&ean13ChecksumValid(k)&&digitHammingDistance(code,k)===1)fuzzy.push({entry:de,code:k,fuzzy:true,distance:1});
+    });
+  }
+  return fuzzy.length===1?fuzzy[0]:null;
+}
+function merchantProductByCode(shop,code){
+  var match=merchantProductCodeMatch(shop,code,0);
+  return match&&!match.fuzzy?match.entry:null;
 }
 function itemRowsFromText(text,sourcePriority){
   var lines=normalize(text).split("\n").map(function(x){return x.trim()}).filter(Boolean),priority=Number(sourcePriority||1);
@@ -1446,10 +1491,17 @@ function itemRowsFromText(text,sourcePriority){
   function productCodeQtyPrice(s){
     var x=ocrMoneyClean(s).replace(/\s+/g," ").trim();
     var m=x.match(/^([A-Za-z0-9]{10,18})\s+(?:([0-9]{1,3})\s+)?[^¥￥\\Y]{0,4}(?:¥|￥|\\|Y)\s*([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{3,7})/i);
+    if(!m)m=x.match(/^([A-Za-z0-9]{10,18})\s+(?:([0-9]{1,3})\s+)?([0-9]{1,3}(?:,[0-9]{3})+)\s*(?:内|外|軽|[A-Z※*])?\s*$/i);
     if(!m)return null;
     var code=normalizeProductCodeToken(m[1]),qty=Number(m[2]||1),total=Number(String(m[3]||"").replace(/,/g,""));
     if(!code||qty<1||qty>99||total<=0)return null;
     return{code:code,qty:qty,total:total,unit:qty?Math.round(total/qty):total};
+  }
+  function standalonePrice(s){
+    var x=ocrMoneyClean(s).replace(/\s+/g," ").trim(),m=x.match(/^\s*(?:¥|￥|\\|Y)\s*([0-9]{1,3}(?:,[0-9]{3})*|[0-9]{1,7})\s*(?:円)?\s*(?:内|外|軽|[A-Z※*])?\s*$/i);
+    if(!m)m=x.match(/^\s*([0-9]{1,3}(?:,[0-9]{3})+)\s*(?:円)?\s*(?:内|外|軽|[A-Z※*])?\s*$/i);
+    if(!m)return 0;
+    var n=Number(String(m[1]||"").replace(/,/g,""));return n>0&&n<=1000000?n:0;
   }
   function quantitySummary(s){
     var x=ocrMoneyClean(s);
@@ -1470,7 +1522,7 @@ function itemRowsFromText(text,sourcePriority){
     if(qtySummary&&prev&&!bad.test(prev)&&!isReceiptHeaderLine(prev)&&validName(cleanName(prev),qtySummary.total,prev)){
       add(prev,qtySummary.unit,qtySummary.qty,qtySummary.total,i-1);continue;
     }
-    var linePrice=priceRowOf(line),nextPrice=priceRowOf(next),priceRow2=priceRowOf(next2),lineCode=productCodeQtyPrice(line),nextCode=productCodeQtyPrice(next),qtySame=productQtyPriceMatch(line),same=sameProductMatch(line),nextSame=sameProductMatch(next),nextDiscount=discountTotal(next);
+    var linePrice=priceRowOf(line),nextPrice=priceRowOf(next),priceRow2=priceRowOf(next2),nextStandalone=standalonePrice(next),lineCode=productCodeQtyPrice(line),nextCode=productCodeQtyPrice(next),qtySame=productQtyPriceMatch(line),same=sameProductMatch(line),nextSame=sameProductMatch(next),nextDiscount=discountTotal(next);
     if(lineCode){
       var already=out.some(function(x){return x.productCode===lineCode.code&&Number(x.total||0)===lineCode.total});
       if(!already){
@@ -1505,6 +1557,7 @@ function itemRowsFromText(text,sourcePriority){
     }
     if(nextDiscount&&validName(cleanName(line),nextDiscount,line)){add(line,0,1,nextDiscount,i);continue}
     if(validName(cleanName(line),nextPrice&&nextPrice[3],line)&&nextPrice){add(line,nextPrice[1],nextPrice[2],nextPrice[3],i);continue}
+    if(nextStandalone&&validName(cleanName(line),nextStandalone,line)&&!isReceiptHeaderLine(line)){add(line,nextStandalone,1,nextStandalone,i);continue}
 
     if(priceRow2&&!linePrice&&!nextPrice&&!same&&!nextSame&&!bad.test(next)&&!isReceiptHeaderLine(line)&&!isReceiptHeaderLine(next)){
       var joined=joinProductNameParts(line,next);
@@ -2168,7 +2221,7 @@ function receiptDiagnosticSummary(p){
   p=p||{};
   var rows=Array.isArray(p.itemRows)?p.itemRows:[],cat=p.categoryCandidate||{},meta=p.ocrMeta||{};
   var lines=[
-    "お小遣い家計簿 v3.68.4 レシート診断",
+    "お小遣い家計簿 v3.69.0 レシート診断",
     "日付: "+String(p.date||"未判定"),
     "店名: "+String(p.shop||"未判定"),
     "合計: "+String(Number(p.amount||0))+"円",
@@ -3373,7 +3426,29 @@ function receiptTests(){
   var guSubtotalUnreadableBasket=recoverVerifiedMerchantBasket("GU ららぽーと立川立飛店",guSubtotalUnreadableText,[],{
     amount:3980,subtotal:0,expectedItemCount:2,amountConfidence:"high",tax:361,taxIncluded:true
   });
+  var repeatedSameSourceRows=[
+    {name:"テスト同一商品",rawName:"テスト同一商品",unitPrice:100,qty:1,total:100,sourceIndex:1,sourcePriority:4,quality:80},
+    {name:"テスト同一商品",rawName:"テスト同一商品",unitPrice:100,qty:1,total:100,sourceIndex:2,sourcePriority:4,quality:80},
+    {name:"テスト同一商品",rawName:"テスト同一商品",unitPrice:100,qty:1,total:100,sourceIndex:11,sourcePriority:2,quality:70},
+    {name:"テスト同一商品",rawName:"テスト同一商品",unitPrice:100,qty:1,total:100,sourceIndex:12,sourcePriority:2,quality:70}
+  ];
+  var repeatedMerged=mergeProductRows(repeatedSameSourceRows);
+  var repeatedTwoChoice=chooseItemsForSubtotal(repeatedSameSourceRows,200,200,0);
+  var repeatedOneChoice=chooseItemsForSubtotal(repeatedSameSourceRows,100,100,0);
+  var qtyTwoParsed=itemRowsFromText("テスト同一商品\n@100 2 200",4);
+  var splitPriceParsed=itemRowsFromText("テスト商品名\n¥1,280",4);
+  var codeNoYenParsed=itemRowsFromText(productSourceText("オーバーサイズシャツ\n2200083271771 1 1,990"),4);
+  var fuzzyCodeMatch=merchantProductCodeMatch("GU ららぽーと立川立飛店","2200083271777",1990);
+  var fuzzyCodeWrongPrice=merchantProductCodeMatch("GU ららぽーと立川立飛店","2200083271777",2990);
   return[
+    ["receipt repeated same-source rows stay distinct v3.69 test",repeatedMerged.length===2&&repeatedMerged.every(function(x){return x.total===100})],
+    ["receipt repeated same product subtotal 200 keeps two lines v3.69 test",repeatedTwoChoice.matched===true&&repeatedTwoChoice.rows.length===2&&repeatedTwoChoice.rows.reduce(function(a,x){return a+x.total},0)===200],
+    ["receipt duplicate OCR subtotal 100 selects one line v3.69 test",repeatedOneChoice.matched===true&&repeatedOneChoice.rows.length===1&&repeatedOneChoice.rows[0].total===100],
+    ["receipt quantity-two row remains one row v3.69 test",qtyTwoParsed.length===1&&qtyTwoParsed[0].qty===2&&qtyTwoParsed[0].total===200],
+    ["receipt name plus next-line price without code v3.69 test",splitPriceParsed.length===1&&splitPriceParsed[0].name==="テスト商品名"&&splitPriceParsed[0].total===1280],
+    ["receipt product code comma price without yen v3.69 test",codeNoYenParsed.length===1&&codeNoYenParsed[0].productCode==="2200083271771"&&codeNoYenParsed[0].total===1990],
+    ["receipt unique invalid EAN one-digit recovery v3.69 test",!!fuzzyCodeMatch&&fuzzyCodeMatch.fuzzy===true&&fuzzyCodeMatch.code==="2200083271771"],
+    ["receipt fuzzy product code requires matching price v3.69 test",fuzzyCodeWrongPrice===null],
     ["receipt GU verified basket allows unreadable subtotal v3.68.4 test",!!guSubtotalUnreadableBasket&&guSubtotalUnreadableBasket.rows.length===2&&guSubtotalUnreadableBasket.rows.every(function(x){return x.name==="オーバーサイズシャツ"&&x.total===1990})],
     ["receipt GU verified basket subtotal fallback keeps two codes v3.68.4 test",!!guSubtotalUnreadableBasket&&guSubtotalUnreadableBasket.rows.map(function(x){return x.productCode}).join("|")==="2200083271771|2200083271702"],
     ["receipt GU verified basket fingerprint v3.68.3 test",!!guVerifiedBasket&&guVerifiedBasket.rows.length===2&&guVerifiedBasket.rows.every(function(x){return x.name==="オーバーサイズシャツ"&&x.total===1990&&x.autoConfirmed===true})],
@@ -3579,7 +3654,7 @@ function receiptTests(){
 function attachTests(){
   var b=document.getElementById("selfTest");if(!b||b.dataset.receiptWrapped)return;
   var base=b.onclick;b.dataset.receiptWrapped="1";
-  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),passed=out.filter(function(x){return x[1]}).length,pass=passed===out.length,box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">v3.68.4 レシート機能テスト '+passed+'/'+out.length+' 件すべて合格しました。</div>':'<div class="errorbox">v3.68.4 レシート機能テスト '+passed+'/'+out.length+' 件合格。失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
+  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),passed=out.filter(function(x){return x[1]}).length,pass=passed===out.length,box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">v3.69.0 レシート機能テスト '+passed+'/'+out.length+' 件すべて合格しました。</div>':'<div class="errorbox">v3.69.0 レシート機能テスト '+passed+'/'+out.length+' 件合格。失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
 }
 var body=document.getElementById("modalBody");
 if(body){new MutationObserver(function(){enhance()}).observe(body,{childList:true,subtree:true})}

@@ -1258,7 +1258,7 @@ function autoConfirmVerifiedSampleRows(shop,rows,context){
     var rawKey=productKey(raw),registeredAliasMatches=dict.filter(function(entry){
       return [entry.name].concat(entry.aliases||[]).some(function(alias){return productKey(alias)===rawKey});
     }).length;
-    var uniqueRegisteredAlias=!!inf.registeredAliasMatch&&registeredAliasMatches===1;
+    var uniqueRegisteredAlias=registeredAliasMatches===1;
     var uniquePrice=Number(inf.samePriceMatches||0)===1;
     if(!uniquePrice&&!uniqueRegisteredAlias)return x;
     // Normal rows still need a uniquely registered alias (or an extremely close OCR match at a unique price).
@@ -2221,7 +2221,7 @@ function receiptDiagnosticSummary(p){
   p=p||{};
   var rows=Array.isArray(p.itemRows)?p.itemRows:[],cat=p.categoryCandidate||{},meta=p.ocrMeta||{};
   var lines=[
-    "お小遣い家計簿 v3.69.0 レシート診断",
+    "お小遣い家計簿 v3.69.1 レシート診断",
     "日付: "+String(p.date||"未判定"),
     "店名: "+String(p.shop||"未判定"),
     "合計: "+String(Number(p.amount||0))+"円",
@@ -3506,7 +3506,7 @@ function receiptTests(){
     ["receipt Chateraise actual-device basket recovery v3.58 test",pChateraiseDevice.verifiedBasketRecovered===true&&pChateraiseDevice.itemRows.length===5&&chateraiseQty===6&&pChateraiseDevice.itemSum===1002],
     ["receipt Chateraise actual-device names v3.58 test",pChateraiseDevice.items.indexOf("クリームチーズパンケーキ")>=0&&pChateraiseDevice.items.indexOf("国産バターと餡のパンケーキ")>=0&&pChateraiseDevice.items.indexOf("北海道産バターどらやき")>=0&&pChateraiseDevice.items.indexOf("フィナンシェ")>=0&&pChateraiseDevice.items.indexOf("北海道産あんこもちパイ")>=0],
     ["receipt Chateraise concise detail integration v3.64 test",pChateraiseDevice.detail==="シャトレーゼ／スイーツ 5種類・6点"],
-    ["receipt diagnostic summary fields test",/v3\.68 レシート診断/.test(diagnosticP5)&&/合計: 897円/.test(diagnosticP5)&&/金額信頼度: high/.test(diagnosticP5)&&/商品信頼度:/.test(diagnosticP5)],
+    ["receipt diagnostic summary fields test",/v3\.\d+(?:\.\d+)* レシート診断/.test(diagnosticP5)&&/合計: 897円/.test(diagnosticP5)&&/金額信頼度: high/.test(diagnosticP5)&&/商品信頼度:/.test(diagnosticP5)],
     ["receipt diagnostic excludes raw header noise test",!/0716|TEL|取引ID/.test(diagnosticP5)],
     ["receipt product confidence high summary test",confidenceHighTest.level==="high"&&confidenceHighTest.autoConfirmed===1],
     ["receipt product confidence medium summary test",confidenceMixedTest.level==="medium"&&confidenceMixedTest.medium===1],
@@ -3654,7 +3654,7 @@ function receiptTests(){
 function attachTests(){
   var b=document.getElementById("selfTest");if(!b||b.dataset.receiptWrapped)return;
   var base=b.onclick;b.dataset.receiptWrapped="1";
-  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),passed=out.filter(function(x){return x[1]}).length,pass=passed===out.length,box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">v3.69.0 レシート機能テスト '+passed+'/'+out.length+' 件すべて合格しました。</div>':'<div class="errorbox">v3.69.0 レシート機能テスト '+passed+'/'+out.length+' 件合格。失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
+  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),passed=out.filter(function(x){return x[1]}).length,pass=passed===out.length,box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">v3.69.1 レシート機能テスト '+passed+'/'+out.length+' 件すべて合格しました。</div>':'<div class="errorbox">v3.69.1 レシート機能テスト '+passed+'/'+out.length+' 件合格。失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
 }
 var body=document.getElementById("modalBody");
 if(body){new MutationObserver(function(){enhance()}).observe(body,{childList:true,subtree:true})}

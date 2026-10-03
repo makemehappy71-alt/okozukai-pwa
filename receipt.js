@@ -1538,13 +1538,29 @@ function itemRowsFromText(text,sourcePriority){
     var n=Number(String(m[1]||"").replace(/,/g,""));return n>0&&n<=1000000?n:0;
   }
   function quantitySummary(s){
-    var x=ocrMoneyClean(s);
-    if(!/(?:コ|個).{0,5}(?:[xX×]|メX|Xメ).{0,6}(?:単|単価)/i.test(x))return null;
-    var nums=(x.match(/[0-9]{1,7}/g)||[]).map(Number);
-    if(nums.length<3)return null;
-    var q=nums[0],unit=nums[1],total=nums[nums.length-1];
-    if(q<2||q>99||unit<=0||total<=0||q*unit!==total)return null;
-    return{qty:q,unit:unit,total:total};
+    var x=ocrMoneyClean(s),strict=/(?:コ|個).{0,5}(?:[xX×]|メX|Xメ).{0,6}(?:単|単価)/i.test(x);
+    if(strict){
+      var nums=(x.match(/[0-9]{1,7}/g)||[]).map(Number);
+      if(nums.length>=3){
+        var q=nums[0],unit=nums[1],total=nums[nums.length-1];
+        if(q>=2&&q<=99&&unit>0&&total>0&&q*unit===total)return{qty:q,unit:unit,total:total};
+      }
+    }
+    // OCR often mangles "2コ" into "21", "2]" or similar while preserving
+    // the multiplication sign, unit-price label, and line total. When those
+    // stronger accounting tokens survive, derive quantity from total/unit.
+    // This is accepted only for an exact integer relationship and a visible
+    // leading quantity-like token, so ordinary text containing "X" is ignored.
+    if(!/(?:[xX×]|メX|Xメ).{0,8}(?:単|単価)/i.test(x))return null;
+    var unitMatch=x.match(/(?:単|単価)s*(?:¥s*)?([0-9]{1,6})/i);
+    var totalMatch=x.match(/(?:¥|￥)s*([0-9]{1,7})s*(?:円)?s*(?:外|内|軽|[A-Z※*%])?s*$/i);
+    var lead=x.match(/^s*([0-9]{1,3})[^0-9]{0,3}(?=[xX×]|メX|Xメ)/i);
+    if(!unitMatch||!totalMatch||!lead)return null;
+    var unit2=Number(unitMatch[1]||0),total2=Number(totalMatch[1]||0),q2=unit2>0?total2/unit2:0;
+    if(q2<2||q2>99||Math.floor(q2)!==q2)return null;
+    var leadDigits=String(lead[1]||"");
+    if(leadDigits.charAt(0)!==String(q2).charAt(0)&&Number(leadDigits)!==q2)return null;
+    return{qty:q2,unit:unit2,total:total2,derivedQty:true};
   }
   function sameProductMatch(s){
     var x=ocrMoneyClean(s),m=x.match(/^(.{2,58}?[ぁ-んァ-ヶー一-龠A-Za-z][^¥￥]*?)\s+(?:([0-9]{1,2})\s*)?[※*]?\s*(?:¥|￥)\s*([0-9]{1,7})\s*(?:円)?\s*(?:外|内|軽|[A-Z※*%])?\s*$/i);

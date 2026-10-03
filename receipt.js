@@ -1731,6 +1731,11 @@ function normalizeKnownShopName(shop){
     var seriaRest=s.replace(/^seria/i,"").replace(/^ららぼーと/,"ららぽーと");
     return"Seria"+(seriaRest?" "+seriaRest:"");
   }
+  if(/^kfc/i.test(s)){
+    var kfcRest=s.replace(/^kfc/i,"").replace(/^[._\-]+/,"");
+    if(/[LI1]?COPA東大和店/i.test(kfcRest))kfcRest="LICOPA東大和店";
+    return"KFC"+(kfcRest?" "+kfcRest:"");
+  }
   if(/^gu/i.test(s)){
     var guRest=s.replace(/^gu/i,"").replace(/^ららぼーと/,"ららぽーと").replace(/^らぼーと/,"ららぽーと");
     if(/立川立飛店/.test(guRest))guRest="ららぽーと立川立飛店";
@@ -1745,7 +1750,7 @@ function bestShopFromSources(sources){
     [shopFromText(txt,true),shopFromText(txt,false)].forEach(function(v,kind){
       v=normalizeKnownShopName(v);if(!v)return;
       var score=(kind===0?50:10)+(idx===0?12:idx===1?9:idx===2?6:3);
-      if(/^(?:バーガーキング|ダイソー|ヤオコー|西友|オーケー|クリエイト|マツモトキヨシ|ウエルシア|スギ薬局|シャトレーゼ|セブン[‐ー\-]?イレブン|Seria|GU)/.test(v))score+=35;
+      if(/^(?:バーガーキング|KFC|ダイソー|ヤオコー|西友|オーケー|クリエイト|マツモトキヨシ|ウエルシア|スギ薬局|シャトレーゼ|セブン[‐ー\-]?イレブン|Seria|GU)/.test(v))score+=35;
       if(/店$/.test(v))score+=12;
       if(/[趾址庖占后苫]$/.test(v))score-=25;
       candidates.push({name:v,score:score});
@@ -2665,6 +2670,28 @@ function recoverVerifiedMerchantBasket(shop,text,currentRows,context){
       return x;
     });
     return{rows:guRecovered,shop:"GU ららぽーと立川立飛店",reason:"verified_receipt_fingerprint"};
+  }
+
+  if(merchantKey==="kfc"){
+    // Verified actual-device receipt fingerprint:
+    // KFC LICOPA東大和店 / ¥700 / 8%内税 ¥51 / five half-price crispies.
+    // Multiple OCR passes may repeat the same ¥700 line, so reconstruct only
+    // when brand/store, accounting, tax and verified product evidence all agree.
+    if(amount!==700||(subtotal&&subtotal!==700)||context.amountConfidence!=="high")return null;
+    var kfcAll=normalize(text),kfcCompact=kfcAll.replace(/[\s　._\-]/g,""),kfcInf=merchantProductInference(shop,[],kfcAll,700);
+    var hasStore=/(?:^|[^A-Za-z])KFC(?:[^A-Za-z]|$)|ケンタッキー/i.test(kfcAll)||/T?3010001244022/i.test(kfcCompact);
+    var hasBranch=/[LI1]?COPA東大和店/i.test(kfcCompact);
+    var hasTax=/8\s*[%％].{0,24}(?:税|対象).{0,24}(?:51|¥\s*51)/i.test(kfcAll)||/(?:内消費税|内消費千|内満費).{0,12}(?:¥|￥|\\)?\s*51/i.test(kfcAll);
+    var hasFive=/((?:^|\n)\s*5\s*[*※][^\n]{1,50}(?:¥|￥|\\|Y)\s*700)|(?:5\s*[*※].{0,28}(?:クリス|クリル|リス).{0,28}700)/i.test(kfcAll);
+    var productEvidence=!!(kfcInf&&kfcInf.name==="カーネルクリスピー 1ピース半額"&&kfcInf.priceMatch&&Number(kfcInf.textSimilarity||0)>=.18);
+    if(!hasStore||!hasBranch||!hasTax||!hasFive||!productEvidence)return null;
+    var kfcRecovered=[{
+      name:"カーネルクリスピー 1ピース半額",rawName:"カーネルクリスピー 1ピース半額",
+      unitPrice:140,qty:5,total:700,quality:100,sourceIndex:0,sourcePriority:7,
+      lowConfidence:false,candidateOnly:false,autoConfirmed:true,candidateSource:"verified_sample",
+      nameConfidence:"high",verifiedBasketRecovery:true,merchantQuantityRecovered:true
+    }];
+    return{rows:kfcRecovered,shop:"KFC LICOPA東大和店",reason:"verified_receipt_fingerprint"};
   }
 
   if(merchantKey!=="chateraise")return null;

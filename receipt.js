@@ -497,7 +497,7 @@ function taxAmountFromLine(line){
   return 0;
 }
 function moneyLineExcluded(line){
-  return /(ポイント|通常P|合計P|今回P|前回累計|累計P|当月お買上累計額|お買上累計額|残高|お?預り|お\s*(?:釣|つ|的)\s*り?|釣銭|消費税|内税|外税|税率|登録番号|取引ID|POS\s*取引番号|注文番号|決済番号|受付番号|カードNo|TEL|電話|〒|レジ|バーコード|QR\s*コード|対象金額)/i.test(String(line||""));
+  return /(ポイント|通常P|合計P|今回P|前回累計|累計P|当月お買上累計額|お買上累計額|お買上|取引金額|残高|お?預り|お\s*(?:釣|つ|的)\s*り?|釣銭|消費税|内消費[税千笑]|内税|外税|税率|登録番号|取引ID|POS\s*取引番号|注文番号|決済番号|受付番号|カードNo|TEL|電話|〒|レジ|バーコード|QR\s*コード|対象金額)/i.test(String(line||""));
 }
 function mergeOCRTexts(a,b){
   var seen={},out=[];
@@ -1527,7 +1527,7 @@ function merchantProductByCode(shop,code){
 }
 function itemRowsFromText(text,sourcePriority){
   var lines=normalize(text).split("\n").map(function(x){return x.trim()}).filter(Boolean),priority=Number(sourcePriority||1);
-  var bad=/(総合計|合計|小計|税込|お支払|お?預り|お\s*(?:釣|つ|的)\s*り?|釣銭|消費税|内税|外税|税率|8\s*%|10\s*%|軽減税率|対象金額|ポイント|通常P|合計P|今回P|前回累計|累計P|当月お買上累計額|お買上累計額|値引|割引|クーポン|楽天\s*(?:pay|ペイ|ベイ|べイ)|paypay|d払い|au\s*pay|クレジット|visa|master|jcb|amex|残高|receipt|領収|tel|電話|〒|登録番号|取引ID|POS\s*取引番号|注文番号|決済番号|受付番号|伝票番号|承認番号|決済手段|取引内容|ご利用金額|カード\s*no|カード番号|レジ|店番号|担当|日時|日付|営業時間|営業\s*時間|バーコード|QR|LINEスタンプ|ハッピープライス|公式通販|オンラインショップ|引換商品|引換期間|1\s*本\s*無料)/i,out=[];
+  var bad=/(総合計|合計|小計|税込|お支払|お買上|お?預り|お\s*(?:釣|つ|的)\s*り?|釣銭|消費税|内消費[税千笑]|内税|外税|税率|8\s*%|10\s*%|軽減税率|対象金額|ポイント|通常P|合計P|今回P|前回累計|累計P|当月お買上累計額|お買上累計額|値引|割引|クーポン|楽天\s*(?:pay|ペイ|ベイ|べイ)|paypay|d払い|au\s*pay|クレジット|visa|master|jcb|amex|残高|receipt|領収|tel|電話|〒|登録番号|取引ID|POS\s*取引番号|注文番号|決済番号|受付番号|伝票番号|承認番号|決済手段|取引内容|取引金額|ご利用金額|カード\s*no|カード番号|レジ|店番号|担当|日時|日付|営業時間|営業\s*時間|バーコード|QR|LINEスタンプ|ハッピープライス|公式通販|オンラインショップ|引換商品|引換期間|1\s*本\s*無料)/i,out=[];
   function cleanName(s){return normalizeProductName(s)}
   function validName(s,total,raw){
     if(!s||s.length<2||s.length>58||bad.test(s)||!/[ぁ-んァ-ヶ一-龠A-Za-z]/.test(s))return false;

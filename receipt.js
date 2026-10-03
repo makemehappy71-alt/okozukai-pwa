@@ -497,7 +497,7 @@ function taxAmountFromLine(line){
   return 0;
 }
 function moneyLineExcluded(line){
-  return /(ポイント|合計P|今回P|前回累計|残高|お?預り|お\s*(?:釣|つ|的)\s*り?|釣銭|消費税|内税|外税|税率|登録番号|取引ID|POS\s*取引番号|注文番号|決済番号|受付番号|カードNo|TEL|電話|〒|レジ|バーコード|QR\s*コード|対象金額)/i.test(String(line||""));
+  return /(ポイント|通常P|合計P|今回P|前回累計|累計P|当月お買上累計額|お買上累計額|残高|お?預り|お\s*(?:釣|つ|的)\s*り?|釣銭|消費税|内税|外税|税率|登録番号|取引ID|POS\s*取引番号|注文番号|決済番号|受付番号|カードNo|TEL|電話|〒|レジ|バーコード|QR\s*コード|対象金額)/i.test(String(line||""));
 }
 function mergeOCRTexts(a,b){
   var seen={},out=[];
@@ -756,6 +756,7 @@ function merchantShopKey(shop){
   if(/モスバーガー|mosburger/.test(s))return"mosburger";
   if(/ケンタッキー|kfc/.test(s))return"kfc";
   if(/ダイソー|daiso/.test(s))return"daiso";
+  if(/ヤオコー|yaoko/.test(s))return"yaoko";
   if(/seria|セリア/.test(s))return"seria";
   if(/^gu(?:らら|立川|$)/.test(s))return"gu";
   if(/オーケー|okストア|okstore|everydaylowprice/.test(s))return"ok";
@@ -855,6 +856,9 @@ function merchantProductDictionary(shop){
       {name:"オレンジオイルでトイレき",aliases:["オレンジオイルでトイレき","オレンジオイルでトイレしき","オォオレンジオイルでトイレき"],priceHints:[100],source:"verified_sample"},
       {name:"抗菌防臭スポーツカップク",aliases:["抗菌防臭スポーツカップク"],priceHints:[300],source:"verified_sample"}
     );
+  }
+  if(key==="yaoko"){
+    builtIn.push({name:"爽やか白ぶどう",aliases:["爽やか白ぶどう","13*爽やか白ぶどう"],priceHints:[198],source:"verified_sample"});
   }
   if(key==="seria"){
     builtIn.push(
@@ -1048,6 +1052,8 @@ function receiptItemCountFromText(text){
   lines.forEach(function(line){
     var direct=line.match(/(?:買\s*上\s*点\s*数|購入\s*点\s*数|商品\s*点\s*数)[^0-9\n]{0,8}([0-9]{1,3})\s*点/i);
     if(direct)add(direct[1],145,line);
+    var bought=line.match(/(?:^|[^0-9])([0-9]{1,3})\s*点\s*買(?:い)?(?:\s|$)/i);
+    if(bought)add(bought[1],122,line);
     var compact=line.match(/^\s*計\s*([0-9]{1,3})\s*(?:点|品)\s+(?:¥\s*)?[0-9]{1,3}(?:,[0-9]{3})*\s*$/i);
     if(compact)add(compact[1],118,line);
     // Only trust receipt summary rows beyond the explicit item-count forms above.
@@ -1385,7 +1391,7 @@ function analyzeAmount(text,extraText){
       if(n)add(n,"barcodePayment",105,line);
       return;
     }
-    if(/ポイント|合計P|今回P|前回累計|残高|登録番号|取引ID|受付番号|カード\s*No|カード番号|TEL|電話|〒|レジ|店番号|バーコード/i.test(line))return;
+    if(/ポイント|通常P|合計P|今回P|前回累計|累計P|当月お買上累計額|お買上累計額|残高|登録番号|取引ID|受付番号|カード\s*No|カード番号|TEL|電話|〒|レジ|店番号|バーコード/i.test(line))return;
     if(!n)return;
     if(/(?:値引|割引)\s*前\s*(?:合\s*計|小\s*計)/i.test(line)){preDiscountTotal=preDiscountTotal||n;return}
     if(/小\s*計/i.test(line)){
@@ -1393,6 +1399,11 @@ function analyzeAmount(text,extraText){
       if(/税\s*抜/i.test(line))subtotalTaxMode="excluded";
       else if(/税\s*込/i.test(line))subtotalTaxMode="included";
       add(n,"subtotal",45,line);return
+    }
+    // Some supermarket receipts omit "小計" but print an explicit pre-tax base.
+    // Use only clearly labeled tax-base rows so payment/tender amounts cannot become merchandise subtotal.
+    if(/(?:本体\s*(?:8|10)\s*[%％]\s*対象|(?:8|10)\s*[%％]\s*税抜対象額|税抜対象額)/i.test(line)){
+      subtotal=subtotal||n;subtotalTaxMode="excluded";add(n,"taxBaseSubtotal",55,line);return
     }
     // Some compact receipts print only "計 1点 100" before the tax rows.
     // Treat it as a merchandise subtotal only when an explicit item-count token is present.
@@ -1490,7 +1501,7 @@ function merchantProductByCode(shop,code){
 }
 function itemRowsFromText(text,sourcePriority){
   var lines=normalize(text).split("\n").map(function(x){return x.trim()}).filter(Boolean),priority=Number(sourcePriority||1);
-  var bad=/(総合計|合計|小計|税込|お支払|お?預り|お\s*(?:釣|つ|的)\s*り?|釣銭|消費税|内税|外税|税率|8\s*%|10\s*%|軽減税率|対象金額|ポイント|合計P|値引|割引|クーポン|楽天\s*(?:pay|ペイ|ベイ|べイ)|paypay|d払い|au\s*pay|クレジット|visa|master|jcb|amex|残高|receipt|領収|tel|電話|〒|登録番号|取引ID|POS\s*取引番号|注文番号|決済番号|受付番号|伝票番号|承認番号|決済手段|取引内容|ご利用金額|カード\s*no|カード番号|レジ|店番号|担当|日時|日付|営業時間|営業\s*時間|バーコード|QR|LINEスタンプ|ハッピープライス|公式通販|オンラインショップ|引換商品|引換期間|1\s*本\s*無料)/i,out=[];
+  var bad=/(総合計|合計|小計|税込|お支払|お?預り|お\s*(?:釣|つ|的)\s*り?|釣銭|消費税|内税|外税|税率|8\s*%|10\s*%|軽減税率|対象金額|ポイント|通常P|合計P|今回P|前回累計|累計P|当月お買上累計額|お買上累計額|値引|割引|クーポン|楽天\s*(?:pay|ペイ|ベイ|べイ)|paypay|d払い|au\s*pay|クレジット|visa|master|jcb|amex|残高|receipt|領収|tel|電話|〒|登録番号|取引ID|POS\s*取引番号|注文番号|決済番号|受付番号|伝票番号|承認番号|決済手段|取引内容|ご利用金額|カード\s*no|カード番号|レジ|店番号|担当|日時|日付|営業時間|営業\s*時間|バーコード|QR|LINEスタンプ|ハッピープライス|公式通販|オンラインショップ|引換商品|引換期間|1\s*本\s*無料)/i,out=[];
   function cleanName(s){return normalizeProductName(s)}
   function validName(s,total,raw){
     if(!s||s.length<2||s.length>58||bad.test(s)||!/[ぁ-んァ-ヶ一-龠A-Za-z]/.test(s))return false;
@@ -1692,7 +1703,7 @@ function bestShopFromSources(sources){
     [shopFromText(txt,true),shopFromText(txt,false)].forEach(function(v,kind){
       v=normalizeKnownShopName(v);if(!v)return;
       var score=(kind===0?50:10)+(idx===0?12:idx===1?9:idx===2?6:3);
-      if(/^(?:バーガーキング|ダイソー|西友|オーケー|クリエイト|マツモトキヨシ|ウエルシア|スギ薬局|シャトレーゼ|セブン[‐ー\-]?イレブン|Seria|GU)/.test(v))score+=35;
+      if(/^(?:バーガーキング|ダイソー|ヤオコー|西友|オーケー|クリエイト|マツモトキヨシ|ウエルシア|スギ薬局|シャトレーゼ|セブン[‐ー\-]?イレブン|Seria|GU)/.test(v))score+=35;
       if(/店$/.test(v))score+=12;
       if(/[趾址庖占后苫]$/.test(v))score-=25;
       candidates.push({name:v,score:score});
@@ -1737,6 +1748,8 @@ function bestShopFromSources(sources){
     var guBranch=/立川立飛店/.test(guCompact)?"ららぽーと立川立飛店":"";
     candidates.push({name:"GU"+(guBranch?" "+guBranch:""),score:guBranch?205:160});
   }
+  var yaokoCompact=joined.replace(/[\s　\-]/g,""),hasYaoko=/ヤオコー|\bYAOKO\b/i.test(joined)||/T?4030001055722/i.test(yaokoCompact);
+  if(hasYaoko){var yaokoBranch=/東大和店/.test(yaokoCompact)?"東大和店":"";candidates.push({name:"ヤオコー"+yaokoBranch,score:yaokoBranch?215:170});}
   var daisoCompact=joined.replace(/[\s　]/g,""),hasDaiso=/\bDAISO\b|ダイソー/i.test(joined)||/T?7240001022681/i.test(daisoCompact);
   if(hasDaiso&&/リコ[パバ]東大和店/.test(daisoCompact))candidates.push({name:"ダイソーリコパ東大和店",score:205});
   candidates.sort(function(a,b){return b.score-a.score||b.name.length-a.name.length});
@@ -1816,6 +1829,8 @@ function shopFromText(text,knownOnly){
     }
     return"バーガーキング";
   }
+  var yaokoCompact2=joined.replace(/[\s　\-]/g,"");
+  if(/ヤオコー|\bYAOKO\b/i.test(joined)||/T?4030001055722/i.test(yaokoCompact2))return /東大和店/.test(yaokoCompact2)?"ヤオコー東大和店":"ヤオコー";
   var daisoBranch="";
   for(var di=0;di<lines.length;di++){
     var dl=(lines[di].normalize?lines[di].normalize("NFKC"):lines[di]).replace(/\s+/g,"").replace(/^[^ダ]*?(?=ダイソー)/,"");
@@ -1925,7 +1940,7 @@ function categorySuggestion(text,shop,itemRows){
     return findCategoryPair("ファッション","服")||findCategoryPair("ファッション","その他ファッション");
   }
   if(/seria|セリア/i.test(String(shop||"")+" "+raw))return findCategoryPair("日用品","生活用品")||findCategoryPair("日用品","その他日用品");
-  if(/スーパー|market|西友|seiyu|オーケー|(?:^|\s)ok(?:\s|$)/i.test(String(shop||"")))return findCategoryPair("食費","スーパー・食材");
+  if(/スーパー|market|ヤオコー|yaoko|西友|seiyu|オーケー|(?:^|\s)ok(?:\s|$)/i.test(String(shop||"")))return findCategoryPair("食費","スーパー・食材");
   var rules=[
     ["食費","ラーメン・つけ麺・油そば",/ラーメン|らーめん|ramen|つけ麺|油そば/],
     ["医療・健康","薬品代",/医薬品|風邪薬|錠剤|カプセル|ロキソ|薬品/],
@@ -2221,7 +2236,7 @@ function parseReceiptText(input,baseDate){
   var productReadFailed=(!items.length||productLowConfidence||!itemSetComplete)&&!!amount;
   var detailFallback=shop||"レシート購入";
   if(/(?:バーガーキング|burger\s*king|マクドナルド|モスバーガー|ケンタッキー|kfc)/i.test(String(shop||"")))detailFallback=shop+"・外食";
-  else if(/(?:オーケー|西友|seiyu|スーパー|market)/i.test(String(shop||"")))detailFallback=shop+"・スーパー";
+  else if(/(?:ヤオコー|yaoko|オーケー|西友|seiyu|スーパー|market)/i.test(String(shop||"")))detailFallback=shop+"・スーパー";
   else if(/シャトレーゼ|chateraise/i.test(String(shop||"")))detailFallback=shop+"・スイーツ";
   var detailProductAllowed=itemSetComplete&&items.length&&!productLowConfidence&&(!focusConsensus||!focusConsensus.attempted||focusConsensus.accepted&&focusConsensus.confidenceLevel==="high");
   var detailValue=detailProductAllowed?items.slice(0,2).join("・")+(items.length>2?"ほか":""):detailFallback;
@@ -2254,7 +2269,7 @@ function receiptDiagnosticSummary(p){
   p=p||{};
   var rows=Array.isArray(p.itemRows)?p.itemRows:[],cat=p.categoryCandidate||{},meta=p.ocrMeta||{};
   var lines=[
-    "お小遣い家計簿 v3.70.2 レシート診断",
+    "お小遣い家計簿 v3.70.3 レシート診断",
     "日付: "+String(p.date||"未判定"),
     "店名: "+String(p.shop||"未判定"),
     "合計: "+String(Number(p.amount||0))+"円",
@@ -3010,6 +3025,57 @@ function receiptTests(){
   var daisoRicopaSplitGross=(pDaisoRicopa.splitRows||[]).reduce(function(a,x){return a+Number(x.gross||0)},0);
   var daisoRicopaGrosses=(pDaisoRicopa.splitRows||[]).map(function(x){return Number(x.gross||0)}).join("|");
 
+  var yaokoObj={
+    text:[
+      "MARKETPLACE",
+      "東大和店 TEL0425901611",
+      "<領収証>",
+      "2026年10月03日(土) レジNo:0214",
+      "責:セルフレジ",
+      "13*爽やか白ぶどう",
+      "2コ × 単99 ¥198",
+      "外税 8%(対象 ¥198) ¥15",
+      "合計 ¥213",
+      "(本体 8%対象 ¥198)",
+      "(消費税 8%対象 ¥15)",
+      "現金 ¥220",
+      "お預り合計 ¥220",
+      "お釣り ¥7",
+      "通常P ¥198 0P",
+      "今回ポイント 0P",
+      "累計ポイント 37P",
+      "当月お買上累計額 ¥198",
+      "カードNo. 2010006855229",
+      "株式会社ヤオコー",
+      "登録番号 T4030001055722",
+      "レシートNo:5413 2点買 12:18TM"
+    ].join("\n"),
+    whole:[
+      "ヤオコー",
+      "MARKETPLACE",
+      "東大和店",
+      "13*爽やか白ぶどう",
+      "2コ × 単99 ¥198",
+      "外税 8%(対象 ¥198) ¥15",
+      "合計 ¥213",
+      "現金 ¥220",
+      "お釣り ¥7",
+      "登録番号 T4030001055722"
+    ].join("\n"),
+    shopText:"MARKETPLAC",
+    itemText:"13*爽やか白ぶどう\n2コ × 単99 ¥198",
+    paymentText:"現金 ¥220\nお預り合計 ¥220\nお釣り ¥7",
+    sections:{
+      top:"MARKETPLACE\n東大和店\n2026年10月03日(土)",
+      middle:"13*爽やか白ぶどう\n2コ × 単99 ¥198",
+      bottom:"外税 8%(対象 ¥198) ¥15\n合計 ¥213\n(本体 8%対象 ¥198)\n(消費税 8%対象 ¥15)\n現金 ¥220\nお釣り ¥7"
+    },
+    meta:{passes:14,skew:0,ratio:4}
+  };
+  var pYaoko=parseReceiptText(yaokoObj,"2026-10-03"),yaokoRow=pYaoko.itemRows[0]||null,yaokoSplit=pYaoko.splitRows[0]||null;
+  var yaokoTaxBase=analyzeAmount("合計 ¥213\n(本体 8%対象 ¥198)\n(消費税 8%対象 ¥15)\n現金 ¥220\nお釣り ¥7","");
+  var yaokoCount=receiptItemCountFromText("レシートNo:5413 2点買 12:18TM");
+
   var bkRegressionObj={
     text:"バーガーキング立川北口趾\n2026-09-27 10:28:26\nE 【りのたかセト】 1 ¥1,090\nクーポン割引 ¥-250\nE >Sフレンチフライ 1 ¥0\n合計金額 ¥840\n(内 消費税 ¥76)\n[ 現金 ] ¥1,000\n[ お釣 ] ¥160",
     whole:"ガーキンク立川北口店\nE 【7の7ーたがセト】 ¥1,090\nクーポン割引 ¥-250\n合計金額 ¥840\n[ 現金 ] ¥1,000\n[ お釣 ] ¥160",
@@ -3725,6 +3791,12 @@ function receiptTests(){
     ["receipt DAISO Ricopa product names v3.70.2 test",pDaisoRicopa.items.join("|")==="壁の穴埋めパテ 20g|オレンジオイルでトイレき|抗菌防臭スポーツカップク"&&pDaisoRicopa.productConfidenceLevel==="high"],
     ["receipt DAISO Ricopa external-tax split v3.70.2 test",daisoRicopaSplitTax===50&&daisoRicopaSplitGross===550&&daisoRicopaGrosses==="110|110|330"],
     ["receipt DAISO Ricopa daily-goods category v3.70.2 test",pDaisoRicopa.categoryCandidate&&pDaisoRicopa.categoryCandidate.groupName==="日用品"&&pDaisoRicopa.categoryCandidate.subName==="生活用品"&&pDaisoRicopa.splitRows.every(function(x){return x.categoryLabel==="日用品 ＞ 生活用品"})],
+    ["receipt Yaoko tax-base subtotal v3.70.3 test",yaokoTaxBase.amount===213&&yaokoTaxBase.subtotal===198&&yaokoTaxBase.tax===15&&yaokoTaxBase.taxIncluded===false],
+    ["receipt Yaoko branch/payment v3.70.3 test",pYaoko.shop==="ヤオコー東大和店"&&pYaoko.paymentCandidate==="wallet"&&pYaoko.amount===213&&pYaoko.tendered===220],
+    ["receipt Yaoko quantity count v3.70.3 test",yaokoCount===2&&pYaoko.expectedItemCount===2&&pYaoko.actualItemCount===2],
+    ["receipt Yaoko one-kind-two-items v3.70.3 test",pYaoko.itemRows.length===1&&!!yaokoRow&&yaokoRow.name==="爽やか白ぶどう"&&yaokoRow.qty===2&&yaokoRow.unitPrice===99&&yaokoRow.total===198&&pYaoko.itemSetComplete===true],
+    ["receipt Yaoko verified product/category v3.70.3 test",pYaoko.productConfidenceLevel==="high"&&pYaoko.categoryCandidate&&pYaoko.categoryCandidate.groupName==="食費"&&pYaoko.categoryCandidate.subName==="スーパー・食材"],
+    ["receipt Yaoko external-tax cash split v3.70.3 test",!!yaokoSplit&&yaokoSplit.net===198&&yaokoSplit.extra===15&&yaokoSplit.gross===213],
     ["receipt SEIYU registration fingerprint test",seiyuRegShop==="西友"],
     ["receipt item category snack test",splitSnack&&/お菓子|スイーツ/.test(splitSnack.categoryLabel)],
     ["receipt item category drink test",splitDrink&&/飲み物/.test(splitDrink.categoryLabel)],
@@ -3790,7 +3862,7 @@ function receiptTests(){
 function attachTests(){
   var b=document.getElementById("selfTest");if(!b||b.dataset.receiptWrapped)return;
   var base=b.onclick;b.dataset.receiptWrapped="1";
-  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),passed=out.filter(function(x){return x[1]}).length,pass=passed===out.length,box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">v3.70.2 レシート機能テスト '+passed+'/'+out.length+' 件すべて合格しました。</div>':'<div class="errorbox">v3.70.2 レシート機能テスト '+passed+'/'+out.length+' 件合格。失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
+  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),passed=out.filter(function(x){return x[1]}).length,pass=passed===out.length,box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">v3.70.3 レシート機能テスト '+passed+'/'+out.length+' 件すべて合格しました。</div>':'<div class="errorbox">v3.70.3 レシート機能テスト '+passed+'/'+out.length+' 件合格。失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
 }
 var body=document.getElementById("modalBody");
 if(body){new MutationObserver(function(){enhance()}).observe(body,{childList:true,subtree:true})}

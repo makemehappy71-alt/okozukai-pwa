@@ -1538,13 +1538,29 @@ function itemRowsFromText(text,sourcePriority){
     var n=Number(String(m[1]||"").replace(/,/g,""));return n>0&&n<=1000000?n:0;
   }
   function quantitySummary(s){
-    var x=ocrMoneyClean(s);
-    if(!/(?:コ|個).{0,5}(?:[xX×]|メX|Xメ).{0,6}(?:単|単価)/i.test(x))return null;
-    var nums=(x.match(/[0-9]{1,7}/g)||[]).map(Number);
-    if(nums.length<3)return null;
-    var q=nums[0],unit=nums[1],total=nums[nums.length-1];
-    if(q<2||q>99||unit<=0||total<=0||q*unit!==total)return null;
-    return{qty:q,unit:unit,total:total};
+    var x=ocrMoneyClean(s),strict=/(?:コ|個).{0,5}(?:[xX×]|メX|Xメ).{0,6}(?:単|単価)/i.test(x);
+    if(strict){
+      var nums=(x.match(/[0-9]{1,7}/g)||[]).map(Number);
+      if(nums.length>=3){
+        var q=nums[0],unit=nums[1],total=nums[nums.length-1];
+        if(q>=2&&q<=99&&unit>0&&total>0&&q*unit===total)return{qty:q,unit:unit,total:total};
+      }
+    }
+    // OCR often mangles "2コ" into "21", "2]" or similar while preserving
+    // the multiplication sign, unit-price label, and line total. When those
+    // stronger accounting tokens survive, derive quantity from total/unit.
+    // This is accepted only for an exact integer relationship and a visible
+    // leading quantity-like token, so ordinary text containing "X" is ignored.
+    if(!/(?:[xX×]|メX|Xメ).{0,8}(?:単|単価)/i.test(x))return null;
+    var unitMatch=x.match(/(?:単|単価)s*(?:¥s*)?([0-9]{1,6})/i);
+    var totalMatch=x.match(/(?:¥|￥)s*([0-9]{1,7})s*(?:円)?s*(?:外|内|軽|[A-Z※*%])?s*$/i);
+    var lead=x.match(/^s*([0-9]{1,3})[^0-9]{0,3}(?=[xX×]|メX|Xメ)/i);
+    if(!unitMatch||!totalMatch||!lead)return null;
+    var unit2=Number(unitMatch[1]||0),total2=Number(totalMatch[1]||0),q2=unit2>0?total2/unit2:0;
+    if(q2<2||q2>99||Math.floor(q2)!==q2)return null;
+    var leadDigits=String(lead[1]||"");
+    if(leadDigits.charAt(0)!==String(q2).charAt(0)&&Number(leadDigits)!==q2)return null;
+    return{qty:q2,unit:unit2,total:total2,derivedQty:true};
   }
   function sameProductMatch(s){
     var x=ocrMoneyClean(s),m=x.match(/^(.{2,58}?[ぁ-んァ-ヶー一-龠A-Za-z][^¥￥]*?)\s+(?:([0-9]{1,2})\s*)?[※*]?\s*(?:¥|￥)\s*([0-9]{1,7})\s*(?:円)?\s*(?:外|内|軽|[A-Z※*%])?\s*$/i);
@@ -2269,7 +2285,7 @@ function receiptDiagnosticSummary(p){
   p=p||{};
   var rows=Array.isArray(p.itemRows)?p.itemRows:[],cat=p.categoryCandidate||{},meta=p.ocrMeta||{};
   var lines=[
-    "お小遣い家計簿 v3.70.3 レシート診断",
+    "お小遣い家計簿 v3.70.4 レシート診断",
     "日付: "+String(p.date||"未判定"),
     "店名: "+String(p.shop||"未判定"),
     "合計: "+String(Number(p.amount||0))+"円",
@@ -3075,6 +3091,58 @@ function receiptTests(){
   var pYaoko=parseReceiptText(yaokoObj,"2026-10-03"),yaokoRow=pYaoko.itemRows[0]||null,yaokoSplit=pYaoko.splitRows[0]||null;
   var yaokoTaxBase=analyzeAmount("合計 ¥213\n(本体 8%対象 ¥198)\n(消費税 8%対象 ¥15)\n現金 ¥220\nお釣り ¥7","");
   var yaokoCount=receiptItemCountFromText("レシートNo:5413 2点買 12:18TM");
+  var yaokoActualObj={
+    text:[
+      "い MARKETPLACE",
+      "お取替えは1 週間以内にお願いします",
+      "ー部商品は除きます",
+      "東大和店TELO425901611",
+      "<$H H4¥X EIE>",
+      "2026%10803H8 (£) L¥ No:0214",
+      "責:セルフレジ",
+      "13*爽やか白ぶどう",
+      "21 X 単99 ¥198",
+      "外税 8%(対象 \\198) \\15",
+      "合計 ¥213",
+      "(本体 8%対象 ¥198)",
+      "(消費税 8%対象 ¥15)",
+      "現金 \\220",
+      "お預り合計 ¥220",
+      "お釣り ¥7",
+      "通常P ¥198 OP",
+      "今回ポイント OP",
+      "累計ポイント 37P",
+      "当月お買上累計額 \\198",
+      "カードMNo 2010006855229",
+      "株式会社ヤやヤオコー",
+      "登録番号 T4030001055722"
+    ].join("\n"),
+    whole:"ヤオコー\nMARKETPLACE\n東大和店\n13*爽やか白ぶどう\n21 X 単99 ¥198\n合計 ¥213\n現金 ¥220\nお釣り ¥7",
+    shopText:"MARKETPLAC\nMARKETPLACE",
+    itemText:[
+      "<$H HX 言正>",
+      "2026年10月03日(土) ウツNo:0214",
+      "次:セリルテス",
+      "13*爽やか白ぶどう",
+      "21 X 単99 ¥198",
+      "人外税 8%(対象 ¥198) ¥15",
+      "合計 ¥213",
+      "(本体 8%対象 ¥198)",
+      "(消費税 8%対象 ¥15)",
+      "通常P",
+      "は 7Z ~) L",
+      "¥198",
+      "ND"
+    ].join("\n"),
+    paymentText:"現金 ¥220\nお預り合計 ¥220\nお釣り ¥7",
+    sections:{
+      top:"MARKETPLACE\n東大和店\n2026年10月03日(土)",
+      middle:"13*爽やか白ぶどう\n21 X 単99 ¥198",
+      bottom:"外税 8%(対象 ¥198) ¥15\n合計 ¥213\n(本体 8%対象 ¥198)\n(消費税 8%対象 ¥15)\n現金 ¥220\nお釣り ¥7"
+    },
+    meta:{passes:15,skew:0,ratio:4}
+  };
+  var pYaokoActual=parseReceiptText(yaokoActualObj,"2026-10-03"),yaokoActualRow=pYaokoActual.itemRows[0]||null;
 
   var bkRegressionObj={
     text:"バーガーキング立川北口趾\n2026-09-27 10:28:26\nE 【りのたかセト】 1 ¥1,090\nクーポン割引 ¥-250\nE >Sフレンチフライ 1 ¥0\n合計金額 ¥840\n(内 消費税 ¥76)\n[ 現金 ] ¥1,000\n[ お釣 ] ¥160",
@@ -3797,6 +3865,10 @@ function receiptTests(){
     ["receipt Yaoko one-kind-two-items v3.70.3 test",pYaoko.itemRows.length===1&&!!yaokoRow&&yaokoRow.name==="爽やか白ぶどう"&&yaokoRow.qty===2&&yaokoRow.unitPrice===99&&yaokoRow.total===198&&pYaoko.itemSetComplete===true],
     ["receipt Yaoko verified product/category v3.70.3 test",pYaoko.productConfidenceLevel==="high"&&pYaoko.categoryCandidate&&pYaoko.categoryCandidate.groupName==="食費"&&pYaoko.categoryCandidate.subName==="スーパー・食材"],
     ["receipt Yaoko external-tax cash split v3.70.3 test",!!yaokoSplit&&yaokoSplit.net===198&&yaokoSplit.extra===15&&yaokoSplit.gross===213],
+    ["receipt Yaoko noisy quantity arithmetic v3.70.4 test",!!yaokoActualRow&&yaokoActualRow.name==="爽やか白ぶどう"&&yaokoActualRow.qty===2&&yaokoActualRow.unitPrice===99&&yaokoActualRow.total===198],
+    ["receipt Yaoko noisy actual confidence v3.70.4 test",pYaokoActual.productConfidenceLevel==="high"&&pYaokoActual.itemRows.length===1&&pYaokoActual.actualItemCount===2&&pYaokoActual.itemSum===198&&pYaokoActual.itemSetComplete===true],
+    ["receipt Yaoko noisy distractor rejection v3.70.4 test",!pYaokoActual.items.some(function(x){return /7Z|~\)|通常P|累計/.test(x)})],
+    ["receipt Yaoko noisy accounting/shop v3.70.4 test",pYaokoActual.shop==="ヤオコー東大和店"&&pYaokoActual.amount===213&&pYaokoActual.subtotal===198&&pYaokoActual.tax===15&&pYaokoActual.paymentCandidate==="wallet"],
     ["receipt SEIYU registration fingerprint test",seiyuRegShop==="西友"],
     ["receipt item category snack test",splitSnack&&/お菓子|スイーツ/.test(splitSnack.categoryLabel)],
     ["receipt item category drink test",splitDrink&&/飲み物/.test(splitDrink.categoryLabel)],
@@ -3862,7 +3934,7 @@ function receiptTests(){
 function attachTests(){
   var b=document.getElementById("selfTest");if(!b||b.dataset.receiptWrapped)return;
   var base=b.onclick;b.dataset.receiptWrapped="1";
-  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),passed=out.filter(function(x){return x[1]}).length,pass=passed===out.length,box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">v3.70.3 レシート機能テスト '+passed+'/'+out.length+' 件すべて合格しました。</div>':'<div class="errorbox">v3.70.3 レシート機能テスト '+passed+'/'+out.length+' 件合格。失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
+  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),passed=out.filter(function(x){return x[1]}).length,pass=passed===out.length,box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">v3.70.4 レシート機能テスト '+passed+'/'+out.length+' 件すべて合格しました。</div>':'<div class="errorbox">v3.70.4 レシート機能テスト '+passed+'/'+out.length+' 件合格。失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
 }
 var body=document.getElementById("modalBody");
 if(body){new MutationObserver(function(){enhance()}).observe(body,{childList:true,subtree:true})}

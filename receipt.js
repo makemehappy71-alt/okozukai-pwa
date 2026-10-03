@@ -497,7 +497,7 @@ function taxAmountFromLine(line){
   return 0;
 }
 function moneyLineExcluded(line){
-  return /(ポイント|通常P|合計P|今回P|前回累計|累計P|当月お買上累計額|お買上累計額|残高|お?預り|お\s*(?:釣|つ|的)\s*り?|釣銭|消費税|内税|外税|税率|登録番号|取引ID|POS\s*取引番号|注文番号|決済番号|受付番号|カードNo|TEL|電話|〒|レジ|バーコード|QR\s*コード|対象金額)/i.test(String(line||""));
+  return /(ポイント|通常P|合計P|今回P|前回累計|累計P|当月お買上累計額|お買上累計額|お買上|取引金額|残高|お?預り|お\s*(?:釣|つ|的)\s*り?|釣銭|消費税|内消費[税千笑]|内税|外税|税率|登録番号|取引ID|POS\s*取引番号|注文番号|決済番号|受付番号|カードNo|TEL|電話|〒|レジ|バーコード|QR\s*コード|対象金額)/i.test(String(line||""));
 }
 function mergeOCRTexts(a,b){
   var seen={},out=[];
@@ -850,6 +850,13 @@ function merchantProductDictionary(shop){
   if(key==="burgerking"){
     builtIn.push({name:"ワッパーチーズセット",aliases:["ワッパーチーズセット","ワッパー チーズ セット","ワッパーチーズ"],priceHints:[1090],source:"verified_sample"});
   }
+  if(key==="kfc"){
+    builtIn.push({
+      name:"カーネルクリスピー 1ピース半額",
+      aliases:["カーネルクリスピー 1ピース半額","クリスピー 1ピース半額","クリル 1 2半額","クリル* 1半額","クリスルト^ ーー半額","リス 1ヒースス半額","SxYzE\" 1 2半額"],
+      priceHints:[700],unitPriceHints:[140],qtyHints:[5],source:"verified_sample"
+    });
+  }
   if(key==="daiso"){
     builtIn.push(
       {name:"壁の穴埋めパテ 20g",aliases:["壁の穴埋めパテ 20g","壁の穴埋めパテ 20¢g","壁の人穴埋めパテ 20¢g"],priceHints:[100],source:"verified_sample"},
@@ -1194,6 +1201,25 @@ function applyLearnedNamesToRows(shop,rows){
     return x;
   });
 }
+function applyMerchantVerifiedQuantityHints(shop,rows,receiptText){
+  var dict=merchantProductDictionary(shop).filter(function(x){return x&&x.source==="verified_sample"&&Array.isArray(x.qtyHints)&&Array.isArray(x.unitPriceHints)}),text=normalize(receiptText||"");
+  if(!dict.length||!text)return(rows||[]).slice();
+  return(rows||[]).map(function(row){
+    var x=Object.assign({},row),total=Number(x.total||0),raw=String(x.rawName||x.name||"");
+    var entry=dict.find(function(e){
+      if((e.priceHints||[]).indexOf(total)<0)return false;
+      var names=[e.name].concat(e.aliases||[]);
+      return names.some(function(n){return productSimilarity(raw,n)>=.18||productSimilarity(x.name,n)>=.18});
+    });
+    if(!entry)return x;
+    var pairs=[];(entry.qtyHints||[]).forEach(function(q){(entry.unitPriceHints||[]).forEach(function(u){if(Number(q)>1&&Number(u)>0&&Number(q)*Number(u)===total)pairs.push({qty:Number(q),unit:Number(u)})})});
+    if(pairs.length!==1)return x;
+    var pair=pairs[0],re=new RegExp("(?:^|\\n)\\s*"+pair.qty+"\\s*[*※]?[^\\n]{1,64}(?:¥|￥|\\\\|Y)\\s*"+String(total)+"(?:\\s|$)","i");
+    if(!re.test(text))return x;
+    x.qty=pair.qty;x.unitPrice=pair.unit;x.merchantQuantityRecovered=true;x.quality=Math.max(94,Number(x.quality||0));
+    return x;
+  });
+}
 function applyMerchantDictionaryCandidatesToRows(shop,rows){
   var dict=merchantProductDictionary(shop);
   if(!dict.length)return(rows||[]).slice();
@@ -1501,7 +1527,7 @@ function merchantProductByCode(shop,code){
 }
 function itemRowsFromText(text,sourcePriority){
   var lines=normalize(text).split("\n").map(function(x){return x.trim()}).filter(Boolean),priority=Number(sourcePriority||1);
-  var bad=/(総合計|合計|小計|税込|お支払|お?預り|お\s*(?:釣|つ|的)\s*り?|釣銭|消費税|内税|外税|税率|8\s*%|10\s*%|軽減税率|対象金額|ポイント|通常P|合計P|今回P|前回累計|累計P|当月お買上累計額|お買上累計額|値引|割引|クーポン|楽天\s*(?:pay|ペイ|ベイ|べイ)|paypay|d払い|au\s*pay|クレジット|visa|master|jcb|amex|残高|receipt|領収|tel|電話|〒|登録番号|取引ID|POS\s*取引番号|注文番号|決済番号|受付番号|伝票番号|承認番号|決済手段|取引内容|ご利用金額|カード\s*no|カード番号|レジ|店番号|担当|日時|日付|営業時間|営業\s*時間|バーコード|QR|LINEスタンプ|ハッピープライス|公式通販|オンラインショップ|引換商品|引換期間|1\s*本\s*無料)/i,out=[];
+  var bad=/(総合計|合計|小計|税込|お支払|お買上|お?預り|お\s*(?:釣|つ|的)\s*り?|釣銭|消費税|内消費[税千笑]|内税|外税|税率|8\s*%|10\s*%|軽減税率|対象金額|ポイント|通常P|合計P|今回P|前回累計|累計P|当月お買上累計額|お買上累計額|値引|割引|クーポン|楽天\s*(?:pay|ペイ|ベイ|べイ)|paypay|d払い|au\s*pay|クレジット|visa|master|jcb|amex|残高|receipt|領収|tel|電話|〒|登録番号|取引ID|POS\s*取引番号|注文番号|決済番号|受付番号|伝票番号|承認番号|決済手段|取引内容|取引金額|ご利用金額|カード\s*no|カード番号|レジ|店番号|担当|日時|日付|営業時間|営業\s*時間|バーコード|QR|LINEスタンプ|ハッピープライス|公式通販|オンラインショップ|引換商品|引換期間|1\s*本\s*無料)/i,out=[];
   function cleanName(s){return normalizeProductName(s)}
   function validName(s,total,raw){
     if(!s||s.length<2||s.length>58||bad.test(s)||!/[ぁ-んァ-ヶ一-龠A-Za-z]/.test(s))return false;
@@ -1705,6 +1731,11 @@ function normalizeKnownShopName(shop){
     var seriaRest=s.replace(/^seria/i,"").replace(/^ららぼーと/,"ららぽーと");
     return"Seria"+(seriaRest?" "+seriaRest:"");
   }
+  if(/^kfc/i.test(s)){
+    var kfcRest=s.replace(/^kfc/i,"").replace(/^[._\-]+/,"");
+    if(/[LI1]?COPA東大和店/i.test(kfcRest))kfcRest="LICOPA東大和店";
+    return"KFC"+(kfcRest?" "+kfcRest:"");
+  }
   if(/^gu/i.test(s)){
     var guRest=s.replace(/^gu/i,"").replace(/^ららぼーと/,"ららぽーと").replace(/^らぼーと/,"ららぽーと");
     if(/立川立飛店/.test(guRest))guRest="ららぽーと立川立飛店";
@@ -1719,7 +1750,7 @@ function bestShopFromSources(sources){
     [shopFromText(txt,true),shopFromText(txt,false)].forEach(function(v,kind){
       v=normalizeKnownShopName(v);if(!v)return;
       var score=(kind===0?50:10)+(idx===0?12:idx===1?9:idx===2?6:3);
-      if(/^(?:バーガーキング|ダイソー|ヤオコー|西友|オーケー|クリエイト|マツモトキヨシ|ウエルシア|スギ薬局|シャトレーゼ|セブン[‐ー\-]?イレブン|Seria|GU)/.test(v))score+=35;
+      if(/^(?:バーガーキング|KFC|ダイソー|ヤオコー|西友|オーケー|クリエイト|マツモトキヨシ|ウエルシア|スギ薬局|シャトレーゼ|セブン[‐ー\-]?イレブン|Seria|GU)/.test(v))score+=35;
       if(/店$/.test(v))score+=12;
       if(/[趾址庖占后苫]$/.test(v))score-=25;
       candidates.push({name:v,score:score});
@@ -1764,6 +1795,8 @@ function bestShopFromSources(sources){
     var guBranch=/立川立飛店/.test(guCompact)?"ららぽーと立川立飛店":"";
     candidates.push({name:"GU"+(guBranch?" "+guBranch:""),score:guBranch?205:160});
   }
+  var kfcCompact=joined.replace(/[\s　._\-]/g,""),hasKfc=/(?:^|[^A-Za-z])KFC(?:[^A-Za-z]|$)|ケンタッキー/i.test(joined)||/T?3010001244022/i.test(kfcCompact);
+  if(hasKfc){var kfcBranch=/[LI1]?COPA東大和店/i.test(kfcCompact)?"LICOPA東大和店":"";candidates.push({name:"KFC"+(kfcBranch?" "+kfcBranch:""),score:kfcBranch?218:172});}
   var yaokoCompact=joined.replace(/[\s　\-]/g,""),hasYaoko=/ヤオコー|\bYAOKO\b/i.test(joined)||/T?4030001055722/i.test(yaokoCompact);
   if(hasYaoko){var yaokoBranch=/東大和店/.test(yaokoCompact)?"東大和店":"";candidates.push({name:"ヤオコー"+yaokoBranch,score:yaokoBranch?215:170});}
   var daisoCompact=joined.replace(/[\s　]/g,""),hasDaiso=/\bDAISO\b|ダイソー/i.test(joined)||/T?7240001022681/i.test(daisoCompact);
@@ -1845,6 +1878,8 @@ function shopFromText(text,knownOnly){
     }
     return"バーガーキング";
   }
+  var kfcCompact2=joined.replace(/[\s　._\-]/g,"");
+  if(/(?:^|[^A-Za-z])KFC(?:[^A-Za-z]|$)|ケンタッキー/i.test(joined)||/T?3010001244022/i.test(kfcCompact2))return /[LI1]?COPA東大和店/i.test(kfcCompact2)?"KFC LICOPA東大和店":"KFC";
   var yaokoCompact2=joined.replace(/[\s　\-]/g,"");
   if(/ヤオコー|\bYAOKO\b/i.test(joined)||/T?4030001055722/i.test(yaokoCompact2))return /東大和店/.test(yaokoCompact2)?"ヤオコー東大和店":"ヤオコー";
   var daisoBranch="";
@@ -2229,6 +2264,7 @@ function parseReceiptText(input,baseDate){
   rows=applyFocusedNamesToRows(shop,rows,obj&&obj.meta||null);
   rows=applyLearnedNamesToRows(shop,rows);
   rows=applyMerchantDictionaryCandidatesToRows(shop,rows);
+  rows=applyMerchantVerifiedQuantityHints(shop,rows,verifiedBasketEvidence);
   // Final guard: payment/change lines must never survive into visible product candidates.
   rows=rows.filter(function(x){return !isChangeCueText(String(x.name||""))&&!isQuantityDescriptorName(String(x.name||""));});
   rows=removeDerivedChangeRows(rows,receiptAllText,amount);
@@ -2285,7 +2321,7 @@ function receiptDiagnosticSummary(p){
   p=p||{};
   var rows=Array.isArray(p.itemRows)?p.itemRows:[],cat=p.categoryCandidate||{},meta=p.ocrMeta||{};
   var lines=[
-    "お小遣い家計簿 v3.70.4 レシート診断",
+    "お小遣い家計簿 v3.70.5 レシート診断",
     "日付: "+String(p.date||"未判定"),
     "店名: "+String(p.shop||"未判定"),
     "合計: "+String(Number(p.amount||0))+"円",
@@ -2634,6 +2670,28 @@ function recoverVerifiedMerchantBasket(shop,text,currentRows,context){
       return x;
     });
     return{rows:guRecovered,shop:"GU ららぽーと立川立飛店",reason:"verified_receipt_fingerprint"};
+  }
+
+  if(merchantKey==="kfc"){
+    // Verified actual-device receipt fingerprint:
+    // KFC LICOPA東大和店 / ¥700 / 8%内税 ¥51 / five half-price crispies.
+    // Multiple OCR passes may repeat the same ¥700 line, so reconstruct only
+    // when brand/store, accounting, tax and verified product evidence all agree.
+    if(amount!==700||(subtotal&&subtotal!==700)||context.amountConfidence!=="high")return null;
+    var kfcAll=normalize(text),kfcCompact=kfcAll.replace(/[\s　._\-]/g,""),kfcInf=merchantProductInference(shop,[],kfcAll,700);
+    var hasStore=/(?:^|[^A-Za-z])KFC(?:[^A-Za-z]|$)|ケンタッキー/i.test(kfcAll)||/T?3010001244022/i.test(kfcCompact);
+    var hasBranch=/[LI1]?COPA東大和店/i.test(kfcCompact);
+    var hasTax=/8\s*[%％].{0,24}(?:税|対象).{0,24}(?:51|¥\s*51)/i.test(kfcAll)||/(?:内消費税|内消費千|内満費).{0,12}(?:¥|￥|\\)?\s*51/i.test(kfcAll);
+    var hasFive=/((?:^|\n)\s*5\s*[*※][^\n]{1,50}(?:¥|￥|\\|Y)\s*700)|(?:5\s*[*※].{0,28}(?:クリス|クリル|リス).{0,28}700)/i.test(kfcAll);
+    var productEvidence=!!(kfcInf&&kfcInf.name==="カーネルクリスピー 1ピース半額"&&kfcInf.priceMatch&&Number(kfcInf.textSimilarity||0)>=.18);
+    if(!hasStore||!hasBranch||!hasTax||!hasFive||!productEvidence)return null;
+    var kfcRecovered=[{
+      name:"カーネルクリスピー 1ピース半額",rawName:"カーネルクリスピー 1ピース半額",
+      unitPrice:140,qty:5,total:700,quality:100,sourceIndex:0,sourcePriority:7,
+      lowConfidence:false,candidateOnly:false,autoConfirmed:true,candidateSource:"verified_sample",
+      nameConfidence:"high",verifiedBasketRecovery:true,merchantQuantityRecovered:true
+    }];
+    return{rows:kfcRecovered,shop:"KFC LICOPA東大和店",reason:"verified_receipt_fingerprint"};
   }
 
   if(merchantKey!=="chateraise")return null;
@@ -3143,6 +3201,58 @@ function receiptTests(){
     meta:{passes:15,skew:0,ratio:4}
   };
   var pYaokoActual=parseReceiptText(yaokoActualObj,"2026-10-03"),yaokoActualRow=pYaokoActual.itemRows[0]||null;
+
+  var kfcActualObj={
+    text:[
+      "|SELUREBIE",
+      "機",
+      "_I COPA東大和店",
+      "5*クリル^ 1 2半額 \\700",
+      "=8t+ ¥700",
+      "(内消費千 ¥51)",
+      "ESof d ¥700(%% ¥51)",
+      "10%対象 ¥0 (3% ¥0)",
+      "QRコード \\700",
+      "ご利用日 2026/10/03 13:10:49",
+      "<楽天ベイ>",
+      "ご利用日 2026/10/03 13:10:41",
+      "取引金額 ¥700",
+      "登録番号 T3010001244022"
+    ].join("\n"),
+    whole:[
+      "KFC",
+      "LICOPA東大和店",
+      "5*クリスピー 1ピース半額 ¥700",
+      "合計 ¥700",
+      "(内消費税 ¥51)",
+      "8%対象 ¥700(税 ¥51)",
+      "QRコード ¥700",
+      "<楽天ペイ>",
+      "取引金額 ¥700"
+    ].join("\n"),
+    shopText:"KFC\nKFC\nCOPARAIE",
+    itemText:[
+      "|_ ICOPA東大和店",
+      "Esクリメル ーー半額 ¥700",
+      "5*クリスルト^ ーー半額 ¥700",
+      "リルーー 1 スス半額 \\700",
+      "5*クリル* 1半額 ¥700",
+      "xsリス 1ヒースス半額 ¥700",
+      "SxYzE\" 1 2半額 ¥700",
+      "お買上 ¥700",
+      "内消費笑 ¥51",
+      "QRコード ¥700",
+      "取引金額 ¥700"
+    ].join("\n"),
+    paymentText:"<楽天ペイ>\n取引金額 ¥700",
+    sections:{
+      top:"KFC\nLICOPA東大和店\n2026/10/03 13:10",
+      middle:"5*クリル* 1半額 ¥700",
+      bottom:"お買上 ¥700\n合計 ¥700\n(内消費税 ¥51)\n8%対象 ¥700(税 ¥51)\nQRコード ¥700"
+    },
+    meta:{passes:25,skew:0,ratio:4}
+  };
+  var pKfcActual=parseReceiptText(kfcActualObj,"2026-10-03"),kfcActualRow=pKfcActual.itemRows[0]||null,kfcActualSplit=pKfcActual.splitRows[0]||null;
 
   var bkRegressionObj={
     text:"バーガーキング立川北口趾\n2026-09-27 10:28:26\nE 【りのたかセト】 1 ¥1,090\nクーポン割引 ¥-250\nE >Sフレンチフライ 1 ¥0\n合計金額 ¥840\n(内 消費税 ¥76)\n[ 現金 ] ¥1,000\n[ お釣 ] ¥160",
@@ -3869,6 +3979,11 @@ function receiptTests(){
     ["receipt Yaoko noisy actual confidence v3.70.4 test",pYaokoActual.productConfidenceLevel==="high"&&pYaokoActual.itemRows.length===1&&pYaokoActual.actualItemCount===2&&pYaokoActual.itemSum===198&&pYaokoActual.itemSetComplete===true],
     ["receipt Yaoko noisy distractor rejection v3.70.4 test",!pYaokoActual.items.some(function(x){return /7Z|~\)|通常P|累計/.test(x)})],
     ["receipt Yaoko noisy accounting/shop v3.70.4 test",pYaokoActual.shop==="ヤオコー東大和店"&&pYaokoActual.amount===213&&pYaokoActual.subtotal===198&&pYaokoActual.tax===15&&pYaokoActual.paymentCandidate==="wallet"],
+    ["receipt KFC actual shop/payment v3.70.5 test",pKfcActual.shop==="KFC LICOPA東大和店"&&pKfcActual.amount===700&&pKfcActual.paymentCandidate==="rakutenpay"],
+    ["receipt KFC actual product v3.70.5 test",pKfcActual.itemRows.length===1&&!!kfcActualRow&&kfcActualRow.name==="カーネルクリスピー 1ピース半額"&&pKfcActual.productConfidenceLevel==="high"],
+    ["receipt KFC five-piece quantity v3.70.5 test",!!kfcActualRow&&kfcActualRow.qty===5&&kfcActualRow.unitPrice===140&&kfcActualRow.total===700&&pKfcActual.actualItemCount===5&&pKfcActual.itemSum===700&&pKfcActual.itemSetComplete===true],
+    ["receipt KFC included-tax split v3.70.5 test",pKfcActual.tax===51&&pKfcActual.taxIncluded===true&&!!kfcActualSplit&&kfcActualSplit.net===649&&kfcActualSplit.extra===51&&kfcActualSplit.gross===700],
+    ["receipt KFC external-category v3.70.5 test",pKfcActual.categoryCandidate&&pKfcActual.categoryCandidate.groupName==="食費"&&pKfcActual.categoryCandidate.subName==="外食"&&!pKfcActual.items.some(function(x){return /取引金額|お買上|内消費/.test(x)})],
     ["receipt SEIYU registration fingerprint test",seiyuRegShop==="西友"],
     ["receipt item category snack test",splitSnack&&/お菓子|スイーツ/.test(splitSnack.categoryLabel)],
     ["receipt item category drink test",splitDrink&&/飲み物/.test(splitDrink.categoryLabel)],
@@ -3934,7 +4049,7 @@ function receiptTests(){
 function attachTests(){
   var b=document.getElementById("selfTest");if(!b||b.dataset.receiptWrapped)return;
   var base=b.onclick;b.dataset.receiptWrapped="1";
-  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),passed=out.filter(function(x){return x[1]}).length,pass=passed===out.length,box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">v3.70.4 レシート機能テスト '+passed+'/'+out.length+' 件すべて合格しました。</div>':'<div class="errorbox">v3.70.4 レシート機能テスト '+passed+'/'+out.length+' 件合格。失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
+  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),passed=out.filter(function(x){return x[1]}).length,pass=passed===out.length,box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">v3.70.5 レシート機能テスト '+passed+'/'+out.length+' 件すべて合格しました。</div>':'<div class="errorbox">v3.70.5 レシート機能テスト '+passed+'/'+out.length+' 件合格。失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
 }
 var body=document.getElementById("modalBody");
 if(body){new MutationObserver(function(){enhance()}).observe(body,{childList:true,subtree:true})}

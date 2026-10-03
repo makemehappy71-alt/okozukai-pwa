@@ -3340,6 +3340,40 @@ function receiptTests(){
   var singleSharedFocus=applyFocusedNamesToRows("Seria ららぽーと立川立飛店",samePriceFocusRows,{multiProductFocus:[
     {value:100,consensus:{accepted:true,name:"ネジ替わりピン4P",familySupport:3,support:3,score:99,candidates:["ネジ替わりピン4P"]}}
   ]});
+  var seriaSingleRaw=[
+    "5 Seria",
+    "登録番号 T4200001013662",
+    "領収書",
+    "ザー・vガカットアルイ 絢大和店 1993",
+    "TEL042-569-8313",
+    "2026年10月 3日(土) 12:09 000004",
+    "_ アクリルウォールラック20 100",
+    "計 1点 100",
+    "10%対旬 110(内 税額 10)",
+    "全曲十 、 ¥110",
+    "mE Na 155 =1 ¥110",
+    "楽天ペイ",
+    "POS取引番号 56329",
+    "注文番号 62249000042627643758",
+    "決済番号 62249000042627643758"
+  ].join("\n");
+  var seriaSingleItem=[
+    "げーvーガカットアルイ 宣大和店 1883",
+    "げすーv-カオルトア Whoi 1393",
+    "ーラブラ1 ロー 1ニニコカラウの 100",
+    "アクリルウォールラッツク20 100",
+    "ルラック20 100",
+    "POS取引番号 56329"
+  ].join("\n");
+  var pSeriaSingle=parseReceiptText({
+    text:seriaSingleRaw,
+    whole:seriaSingleRaw,
+    shopText:"Seria",
+    itemText:seriaSingleItem,
+    paymentText:seriaSingleRaw,
+    sections:{top:"Seria\n2026年10月 3日(土) 12:09",middle:seriaSingleItem,bottom:"計 1点 100\n10%対旬 110(内 税額 10)\n楽天ペイ"}
+  },"2026-10-03");
+  var seriaSingleHeaderRows=itemRowsFromText(productSourceText("POS取引番号 56329\n注文番号 123456\n決済番号 654321"),4);
   var guDeviceText=[
     "GU",
     "ジーユー ららぼ-と立川立飛店",
@@ -3497,6 +3531,11 @@ function receiptTests(){
     ["receipt Seria same-price alias inference v3.66 test",!!seriaAliasInference&&seriaAliasInference.name==="泡ポンプボトル モノトーン380ml"&&seriaAliasInference.registeredAliasMatch===true&&seriaAliasInference.samePriceMatches===3],
     ["receipt Seria same-price exact alias auto-confirm v3.66 test",seriaSamePriceAuto.length===1&&seriaSamePriceAuto[0].autoConfirmed===true&&seriaSamePriceAuto[0].name==="泡ポンプボトル モノトーン380ml"],
     ["receipt Seria same-price unrelated product guard v3.66 test",seriaSamePriceWrong.length===1&&seriaSamePriceWrong[0].autoConfirmed!==true&&(!seriaWrong100Inference||seriaWrong100Inference.registeredAliasMatch!==true)],
+    ["receipt Seria compact count-subtotal v3.70.1 test",pSeriaSingle.amount===110&&pSeriaSingle.amountConfidence==="high"&&pSeriaSingle.subtotal===100&&pSeriaSingle.tax===10],
+    ["receipt Seria compact item count v3.70.1 test",pSeriaSingle.expectedItemCount===1&&pSeriaSingle.actualItemCount===1&&pSeriaSingle.itemSetComplete===true],
+    ["receipt Seria compact product v3.70.1 test",pSeriaSingle.itemRows.length===1&&pSeriaSingle.items[0]==="アクリルウォールラック20cm"&&pSeriaSingle.itemSum===100&&pSeriaSingle.productConfidenceLevel==="high"],
+    ["receipt Seria compact payment/category v3.70.1 test",pSeriaSingle.paymentCandidate==="rakutenpay"&&pSeriaSingle.categoryCandidate&&pSeriaSingle.categoryCandidate.groupName==="日用品"&&pSeriaSingle.categoryCandidate.subName==="生活用品"],
+    ["receipt transaction identifiers excluded from products v3.70.1 test",seriaSingleHeaderRows.length===0&&!pSeriaSingle.items.some(function(x){return /POS|注文|決済|56329/.test(x)})],
     ["receipt Seven verified alias inference v3.65 test",sevenAliasInference&&sevenAliasInference.name==="スターバックス ホワイトモカ500ml"&&sevenAliasInference.registeredAliasMatch===true],
     ["receipt Seven same-price different product guard v3.65 test",!sevenWrong198Inference||sevenWrong198Inference.registeredAliasMatch!==true],
     ["receipt Seven tax-exclusive total v3.65 test",sevenAmountTest.amount===213&&sevenAmountTest.subtotal===198&&sevenAmountTest.tax===15&&sevenAmountTest.taxIncluded===false],

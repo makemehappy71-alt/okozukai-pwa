@@ -849,6 +849,13 @@ function merchantProductDictionary(shop){
   if(key==="burgerking"){
     builtIn.push({name:"ワッパーチーズセット",aliases:["ワッパーチーズセット","ワッパー チーズ セット","ワッパーチーズ"],priceHints:[1090],source:"verified_sample"});
   }
+  if(key==="daiso"){
+    builtIn.push(
+      {name:"壁の穴埋めパテ 20g",aliases:["壁の穴埋めパテ 20g","壁の穴埋めパテ 20¢g","壁の人穴埋めパテ 20¢g"],priceHints:[100],source:"verified_sample"},
+      {name:"オレンジオイルでトイレき",aliases:["オレンジオイルでトイレき","オレンジオイルでトイレしき","オォオレンジオイルでトイレき"],priceHints:[100],source:"verified_sample"},
+      {name:"抗菌防臭スポーツカップク",aliases:["抗菌防臭スポーツカップク"],priceHints:[300],source:"verified_sample"}
+    );
+  }
   if(key==="seria"){
     builtIn.push(
       {name:"アクリルウォールラック20cm",aliases:["アクリルウォールラック20cm","アクリルウォールラック20","アクリルウォールラッツク20"],priceHints:[100],source:"verified_sample"},
@@ -1643,6 +1650,7 @@ function normalizeDaisoBranch(name){
   var s=String(name||"").normalize?String(name||"").normalize("NFKC"):String(name||"");
   s=s.replace(/\s+/g,"").trim();
   if(/^ダイソー立川神町店$/.test(s))return"ダイソー立川幸町店";
+  s=s.replace(/^ダイソーリコバ東大和店$/,"ダイソーリコパ東大和店");
   return s;
 }
 function normalizeKnownShopName(shop){
@@ -1729,6 +1737,8 @@ function bestShopFromSources(sources){
     var guBranch=/立川立飛店/.test(guCompact)?"ららぽーと立川立飛店":"";
     candidates.push({name:"GU"+(guBranch?" "+guBranch:""),score:guBranch?205:160});
   }
+  var daisoCompact=joined.replace(/[\s　]/g,""),hasDaiso=/\bDAISO\b|ダイソー/i.test(joined)||/T?7240001022681/i.test(daisoCompact);
+  if(hasDaiso&&/リコ[パバ]東大和店/.test(daisoCompact))candidates.push({name:"ダイソーリコパ東大和店",score:205});
   candidates.sort(function(a,b){return b.score-a.score||b.name.length-a.name.length});
   return candidates.length?normalizeKnownShopName(candidates[0].name):"";
 }
@@ -1860,7 +1870,9 @@ function itemCategorySuggestion(name,shop){
     return findCategoryPair("日用品","生活用品")||findCategoryPair("日用品","その他日用品");
   }
   var one=categorySuggestion("",shop,[{name:n}]);
-  return one||findCategoryPair("食費","スーパー・食材")||null;
+  if(one)return one;
+  if(/ダイソー|\bDAISO\b/i.test(String(shop||"")))return findCategoryPair("日用品","生活用品")||findCategoryPair("日用品","その他日用品");
+  return findCategoryPair("食費","スーパー・食材")||null;
 }
 function allocateReceiptRows(rows,subtotal,tax,total,shop,taxIncluded){
   rows=(rows||[]).filter(function(x){return Number(x.total||0)>0&&!isChangeCueText(String(x.name||""))}).map(function(x){return Object.assign({},x)});
@@ -1929,6 +1941,7 @@ function categorySuggestion(text,shop,itemRows){
     ["娯楽","本",/書店|書籍|文庫|新書/]
   ];
   for(var i=0;i<rules.length;i++){var r=rules[i];if(r[2].test(names+" "+raw)){var hit=findCategoryPair(r[0],r[1]);if(hit)return hit}}
+  if(/ダイソー|\bDAISO\b/i.test(String(shop||"")+" "+raw))return findCategoryPair("日用品","生活用品")||findCategoryPair("日用品","その他日用品");
   return null;
 }
 

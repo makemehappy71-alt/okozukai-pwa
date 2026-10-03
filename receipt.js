@@ -849,7 +849,7 @@ function merchantProductDictionary(shop){
   }
   if(key==="seria"){
     builtIn.push(
-      {name:"アクリルウォールラック20cm",aliases:["アクリルウォールラック20cm","アクリルウォールラック20"],priceHints:[100],source:"verified_sample"},
+      {name:"アクリルウォールラック20cm",aliases:["アクリルウォールラック20cm","アクリルウォールラック20","アクリルウォールラッツク20"],priceHints:[100],source:"verified_sample"},
       {name:"ネジ替わりピン4P",aliases:["ネジ替わりピン4P","ネジ替わりピン4 P","ネジ替わりビン4P"],priceHints:[100],source:"verified_sample"},
       {name:"泡ポンプボトル モノトーン380ml",aliases:["泡ポンプボトル モノトーン380ml","泡ポンプボトルモノトーン380ml","泡ポンプボトルモ小-7380ml","泡ポンプボトルモt修-y380ml","泡ポンプボトルtモ條-ツ380ml","泡ポンプボトルモト-y380ml","泡ポンプボ に 7380m|"],priceHints:[100],source:"verified_sample"}
     );
@@ -1318,7 +1318,7 @@ function recoverMissingMerchandiseRow(sources,currentRows,subtotal,discount,rece
   rows.push({name:best||"商品名要確認",rawName:best||"商品名要確認",unitPrice:gap,qty:1,total:gap,quality:productNameQuality(best||""),sourcePriority:5,recoveredMissing:true,lowConfidence:low,candidateOnly:low,candidateSource:"gap_recovery"});
   return{rows:rows,recovered:true,target:target,sum:target,gap:gap,recoveredName:best||"",lowConfidence:low,support:support};
 }
-function chooseItemsForSubtotal(rows,subtotal,receiptTotal,receiptDiscount){
+function chooseItemsForSubtotal(rows,subtotal,receiptTotal,receiptDiscount,shop){
   rows=mergeProductRows(rows).filter(function(x){return x.total>0&&!isChangeCueText(String(x.name||""))&&!isQuantityDescriptorName(String(x.name||""))});
   subtotal=Number(subtotal||0);receiptTotal=Number(receiptTotal||0);receiptDiscount=Number(receiptDiscount||0);
   var maxItem=receiptTotal>0?receiptTotal:(subtotal>0?subtotal:0);
@@ -1329,13 +1329,20 @@ function chooseItemsForSubtotal(rows,subtotal,receiptTotal,receiptDiscount){
   if(primaryTarget&&fullSum===primaryTarget)return{rows:rows,matched:true,preDiscount:!!preDiscountTarget,sum:fullSum,discount:receiptDiscount};
 
   if(!primaryTarget||rows.length<2||rows.length>18)return{rows:rows,matched:false,sum:fullSum};
-  var n=rows.length,max=1<<n;
+  var n=rows.length,max=1<<n,merchantBonus=rows.map(function(row){
+    if(!shop)return 0;
+    var raw=String(row.rawName||row.name||""),inf=merchantProductInference(shop,[{text:raw}],raw+" "+Number(row.total||0),Number(row.total||0));
+    if(!inf||!inf.priceMatch)return 0;
+    if(inf.registeredAliasMatch)return 90;
+    if(Number(inf.textSimilarity||0)>=.82)return 55;
+    return 0;
+  });
   function bestSubsetForTarget(target){
     var best=null;
     for(var mask=1;mask<max;mask++){
       var sum=0,quality=0,count=0,qtyBonus=0;
       for(var i=0;i<n;i++)if(mask&(1<<i)){
-        sum+=rows[i].total;quality+=Number(rows[i].quality||0);count++;
+        sum+=rows[i].total;quality+=Number(rows[i].quality||0)+Number(merchantBonus[i]||0);count++;
         if(Number(rows[i].qty||1)>1)qtyBonus+=12;
       }
       if(sum!==target)continue;
@@ -2126,7 +2133,7 @@ function parseReceiptText(input,baseDate){
   var preDiscountDecision=validatedPreDiscountTotal(explicitPreDiscountRaw,amountInfo.subtotal,receiptWideDiscount);
   var explicitPreDiscount=Number(preDiscountDecision.value||0),merchandiseAccountingTarget=explicitPreDiscount||amountInfo.subtotal||0;
   var accountingStructureValid=!!(amountInfo.subtotal&&merchandiseAccountingTarget&&merchandiseAccountingTarget-(receiptWideDiscount||0)===amountInfo.subtotal&&(!amountInfo.tax||!amount||(amountInfo.taxIncluded?amountInfo.subtotal===amount:amountInfo.subtotal+amountInfo.tax===amount)));
-  var itemChoice=discounted?{rows:[discounted],matched:true,sum:amount}:chooseItemsForSubtotal(initialRows,amountInfo.subtotal,amount,receiptWideDiscount),rows=itemChoice.rows;
+  var itemChoice=discounted?{rows:[discounted],matched:true,sum:amount}:chooseItemsForSubtotal(initialRows,amountInfo.subtotal,amount,receiptWideDiscount,shop),rows=itemChoice.rows;
   var gapRecovery={recovered:false,target:0,gap:0};
   if(!discounted&&amountInfo.subtotal){
     gapRecovery=recoverMissingMerchandiseRow([itemText,middle,whole,raw],rows,amountInfo.subtotal,Math.max(0,merchandiseAccountingTarget-Number(amountInfo.subtotal||0)),amount);

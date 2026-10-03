@@ -1388,7 +1388,7 @@ function analyzeAmount(text,extraText){
     // Some compact receipts print only "計 1点 100" before the tax rows.
     // Treat it as a merchandise subtotal only when an explicit item-count token is present.
     if(/^\s*計\s*[0-9]{1,3}\s*(?:点|品)\s+(?:¥\s*)?[0-9]{1,3}(?:,[0-9]{3})*\s*$/i.test(line)){
-      subtotal=subtotal||n;add(n,"countSubtotal",55,line);return
+      subtotal=subtotal||n;add(n,"countSubtotal",45,line);return
     }
     var explicitTax=taxAmountFromLine(line);
     if(explicitTax){

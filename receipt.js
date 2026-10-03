@@ -850,6 +850,13 @@ function merchantProductDictionary(shop){
   if(key==="burgerking"){
     builtIn.push({name:"ワッパーチーズセット",aliases:["ワッパーチーズセット","ワッパー チーズ セット","ワッパーチーズ"],priceHints:[1090],source:"verified_sample"});
   }
+  if(key==="kfc"){
+    builtIn.push({
+      name:"カーネルクリスピー 1ピース半額",
+      aliases:["カーネルクリスピー 1ピース半額","クリスピー 1ピース半額","クリル 1 2半額","クリル* 1半額","クリスルト^ ーー半額","リス 1ヒースス半額","SxYzE\" 1 2半額"],
+      priceHints:[700],unitPriceHints:[140],qtyHints:[5],source:"verified_sample"
+    });
+  }
   if(key==="daiso"){
     builtIn.push(
       {name:"壁の穴埋めパテ 20g",aliases:["壁の穴埋めパテ 20g","壁の穴埋めパテ 20¢g","壁の人穴埋めパテ 20¢g"],priceHints:[100],source:"verified_sample"},
@@ -1191,6 +1198,25 @@ function applyLearnedNamesToRows(shop,rows){
     if(inf&&inf.autoConfirmEligible){
       x.name=inf.name;x.rawName=inf.name;x.lowConfidence=false;x.autoConfirmed=true;x.candidateSource="learned";x.learnedCorrection=true;x.quality=Math.max(92,Number(x.quality||0));
     }
+    return x;
+  });
+}
+function applyMerchantVerifiedQuantityHints(shop,rows,receiptText){
+  var dict=merchantProductDictionary(shop).filter(function(x){return x&&x.source==="verified_sample"&&Array.isArray(x.qtyHints)&&Array.isArray(x.unitPriceHints)}),text=normalize(receiptText||"");
+  if(!dict.length||!text)return(rows||[]).slice();
+  return(rows||[]).map(function(row){
+    var x=Object.assign({},row),total=Number(x.total||0),raw=String(x.rawName||x.name||"");
+    var entry=dict.find(function(e){
+      if((e.priceHints||[]).indexOf(total)<0)return false;
+      var names=[e.name].concat(e.aliases||[]);
+      return names.some(function(n){return productSimilarity(raw,n)>=.18||productSimilarity(x.name,n)>=.18});
+    });
+    if(!entry)return x;
+    var pairs=[];(entry.qtyHints||[]).forEach(function(q){(entry.unitPriceHints||[]).forEach(function(u){if(Number(q)>1&&Number(u)>0&&Number(q)*Number(u)===total)pairs.push({qty:Number(q),unit:Number(u)})})});
+    if(pairs.length!==1)return x;
+    var pair=pairs[0],re=new RegExp("(?:^|\\n)\\s*"+pair.qty+"\\s*[*※]?[^\\n]{1,64}(?:¥|￥|\\\\|Y)\\s*"+String(total)+"(?:\\s|$)","i");
+    if(!re.test(text))return x;
+    x.qty=pair.qty;x.unitPrice=pair.unit;x.merchantQuantityRecovered=true;x.quality=Math.max(94,Number(x.quality||0));
     return x;
   });
 }
@@ -1764,6 +1790,8 @@ function bestShopFromSources(sources){
     var guBranch=/立川立飛店/.test(guCompact)?"ららぽーと立川立飛店":"";
     candidates.push({name:"GU"+(guBranch?" "+guBranch:""),score:guBranch?205:160});
   }
+  var kfcCompact=joined.replace(/[\s　._\-]/g,""),hasKfc=/(?:^|[^A-Za-z])KFC(?:[^A-Za-z]|$)|ケンタッキー/i.test(joined)||/T?3010001244022/i.test(kfcCompact);
+  if(hasKfc){var kfcBranch=/[LI1]?COPA東大和店/i.test(kfcCompact)?"LICOPA東大和店":"";candidates.push({name:"KFC"+(kfcBranch?" "+kfcBranch:""),score:kfcBranch?218:172});}
   var yaokoCompact=joined.replace(/[\s　\-]/g,""),hasYaoko=/ヤオコー|\bYAOKO\b/i.test(joined)||/T?4030001055722/i.test(yaokoCompact);
   if(hasYaoko){var yaokoBranch=/東大和店/.test(yaokoCompact)?"東大和店":"";candidates.push({name:"ヤオコー"+yaokoBranch,score:yaokoBranch?215:170});}
   var daisoCompact=joined.replace(/[\s　]/g,""),hasDaiso=/\bDAISO\b|ダイソー/i.test(joined)||/T?7240001022681/i.test(daisoCompact);
@@ -1845,6 +1873,8 @@ function shopFromText(text,knownOnly){
     }
     return"バーガーキング";
   }
+  var kfcCompact2=joined.replace(/[\s　._\-]/g,"");
+  if(/(?:^|[^A-Za-z])KFC(?:[^A-Za-z]|$)|ケンタッキー/i.test(joined)||/T?3010001244022/i.test(kfcCompact2))return /[LI1]?COPA東大和店/i.test(kfcCompact2)?"KFC LICOPA東大和店":"KFC";
   var yaokoCompact2=joined.replace(/[\s　\-]/g,"");
   if(/ヤオコー|\bYAOKO\b/i.test(joined)||/T?4030001055722/i.test(yaokoCompact2))return /東大和店/.test(yaokoCompact2)?"ヤオコー東大和店":"ヤオコー";
   var daisoBranch="";
@@ -2229,6 +2259,7 @@ function parseReceiptText(input,baseDate){
   rows=applyFocusedNamesToRows(shop,rows,obj&&obj.meta||null);
   rows=applyLearnedNamesToRows(shop,rows);
   rows=applyMerchantDictionaryCandidatesToRows(shop,rows);
+  rows=applyMerchantVerifiedQuantityHints(shop,rows,verifiedBasketEvidence);
   // Final guard: payment/change lines must never survive into visible product candidates.
   rows=rows.filter(function(x){return !isChangeCueText(String(x.name||""))&&!isQuantityDescriptorName(String(x.name||""));});
   rows=removeDerivedChangeRows(rows,receiptAllText,amount);

@@ -467,7 +467,7 @@ function numberFromLine(line){
   return vals.length?vals[vals.length-1]:0;
 }
 function ocrMoneyClean(line){
-  var s=String(line||"").replace(/[￥]/g,"¥").replace(/[，]/g,",").replace(/[．。]/g,".");
+  var s=String(line||"").replace(/[￥\\]/g,"¥").replace(/[，]/g,",").replace(/[．。]/g,".");
   s=s.replace(/([0-9])[OoＯ](?=[0-9])/g,"$10").replace(/([0-9])[Il｜](?=[0-9])/g,"$11");
   s=s.replace(/([0-9])\.([0-9]{3})(?![0-9])/g,"$1,$2");
   return s;
@@ -603,6 +603,8 @@ function paymentFromSources(bottom,raw,whole){
 }
 function normalizeOCRCapacityTokens(value){
   var s=String(value||"");
+  // OCR can read the small unit separator in "20g" as a cent sign.
+  s=s.replace(/([0-9]{1,4})\s*[¢￠]\s*g\b/gi,"$1g");
   // OCR often reads zeros as U/O and inserts an extra "n" before ml.
   // Only repair tokens that already have a numeric-capacity shape.
   s=s.replace(/\b([1-9])([UuOoＯ〇]{1,4})\s*(?:n\s*)?m[lI1]\b/g,function(_m,d,zeros){
@@ -846,6 +848,13 @@ function merchantProductDictionary(shop){
   // Built-in entries are limited to products verified from the user's own test receipts.
   if(key==="burgerking"){
     builtIn.push({name:"ワッパーチーズセット",aliases:["ワッパーチーズセット","ワッパー チーズ セット","ワッパーチーズ"],priceHints:[1090],source:"verified_sample"});
+  }
+  if(key==="daiso"){
+    builtIn.push(
+      {name:"壁の穴埋めパテ 20g",aliases:["壁の穴埋めパテ 20g","壁の穴埋めパテ 20¢g","壁の人穴埋めパテ 20¢g"],priceHints:[100],source:"verified_sample"},
+      {name:"オレンジオイルでトイレき",aliases:["オレンジオイルでトイレき","オレンジオイルでトイレしき","オォオレンジオイルでトイレき"],priceHints:[100],source:"verified_sample"},
+      {name:"抗菌防臭スポーツカップク",aliases:["抗菌防臭スポーツカップク"],priceHints:[300],source:"verified_sample"}
+    );
   }
   if(key==="seria"){
     builtIn.push(
@@ -1512,7 +1521,7 @@ function itemRowsFromText(text,sourcePriority){
     return{code:code,qty:qty,total:total,unit:qty?Math.round(total/qty):total};
   }
   function standalonePrice(s){
-    var x=ocrMoneyClean(s).replace(/\s+/g," ").trim(),m=x.match(/^\s*(?:¥|￥|\\|Y)\s*([0-9]{1,3}(?:,[0-9]{3})*|[0-9]{1,7})\s*(?:円)?\s*(?:内|外|軽|[A-Z※*])?\s*$/i);
+    var x=ocrMoneyClean(s).replace(/\s+/g," ").trim(),m=x.match(/^\s*(?:¥|￥|\\|Y)\s*([0-9]{1,3}(?:,[0-9]{3})*|[0-9]{1,7})\s*(?:円)?\s*(?:内|外|軽|[A-Z※*%])?\s*$/i);
     if(!m)m=x.match(/^\s*([0-9]{1,3}(?:,[0-9]{3})+)\s*(?:円)?\s*(?:内|外|軽|[A-Z※*])?\s*$/i);
     if(!m)return 0;
     var n=Number(String(m[1]||"").replace(/,/g,""));return n>0&&n<=1000000?n:0;
@@ -1526,8 +1535,12 @@ function itemRowsFromText(text,sourcePriority){
     if(q<2||q>99||unit<=0||total<=0||q*unit!==total)return null;
     return{qty:q,unit:unit,total:total};
   }
-  function sameProductMatch(s){return ocrMoneyClean(s).match(/^(.{2,58}?[ぁ-んァ-ヶー一-龠A-Za-z][^¥￥]*?)\s+[※*]?\s*(?:¥|￥)?\s*([0-9]{1,7})\s*(?:円)?\s*(?:外|内|軽|[A-Z※*])?\s*$/i)}
-  function productQtyPriceMatch(s){return ocrMoneyClean(s).match(/^(.{2,58}?[ぁ-んァ-ヶー一-龠A-Za-z][^¥￥]*?)[\s,、]+([0-9]{1,3})\s+(?:¥|￥)\s*([0-9]{1,7})\s*(?:円)?\s*(?:外|内|軽|[A-Z※*])?\s*$/i)}
+  function sameProductMatch(s){
+    var x=ocrMoneyClean(s),m=x.match(/^(.{2,58}?[ぁ-んァ-ヶー一-龠A-Za-z][^¥￥]*?)\s+(?:([0-9]{1,2})\s*)?[※*]?\s*(?:¥|￥)\s*([0-9]{1,7})\s*(?:円)?\s*(?:外|内|軽|[A-Z※*%])?\s*$/i);
+    if(m)return[m[0],m[1],m[3]];
+    return x.match(/^(.{2,58}?[ぁ-んァ-ヶー一-龠A-Za-z][^¥￥]*?)\s+[※*]?\s*(?:¥|￥)?\s*([0-9]{1,7})\s*(?:円)?\s*(?:外|内|軽|[A-Z※*%])?\s*$/i);
+  }
+  function productQtyPriceMatch(s){return ocrMoneyClean(s).match(/^(.{2,58}?[ぁ-んァ-ヶー一-龠A-Za-z][^¥￥]*?)[\s,、]+([0-9]{1,3})\s+(?:¥|￥)\s*([0-9]{1,7})\s*(?:円)?\s*(?:外|内|軽|[A-Z※*%])?\s*$/i)}
   function discountTotal(s){var x=ocrMoneyClean(s);if(!/値下|値引|割引|特価|sale/i.test(x))return 0;var nums=[],re=/(?:¥|￥)?\s*([0-9]{1,7})/g,m;while((m=re.exec(x)))nums.push(Number(m[1]||0));return nums.length?nums[nums.length-1]:0;}
   for(var i=0;i<lines.length;i++){
     var line=ocrMoneyClean(lines[i]);if(bad.test(line))continue;
@@ -1637,6 +1650,7 @@ function normalizeDaisoBranch(name){
   var s=String(name||"").normalize?String(name||"").normalize("NFKC"):String(name||"");
   s=s.replace(/\s+/g,"").trim();
   if(/^ダイソー立川神町店$/.test(s))return"ダイソー立川幸町店";
+  s=s.replace(/^ダイソーリコバ東大和店$/,"ダイソーリコパ東大和店");
   return s;
 }
 function normalizeKnownShopName(shop){
@@ -1723,6 +1737,8 @@ function bestShopFromSources(sources){
     var guBranch=/立川立飛店/.test(guCompact)?"ららぽーと立川立飛店":"";
     candidates.push({name:"GU"+(guBranch?" "+guBranch:""),score:guBranch?205:160});
   }
+  var daisoCompact=joined.replace(/[\s　]/g,""),hasDaiso=/\bDAISO\b|ダイソー/i.test(joined)||/T?7240001022681/i.test(daisoCompact);
+  if(hasDaiso&&/リコ[パバ]東大和店/.test(daisoCompact))candidates.push({name:"ダイソーリコパ東大和店",score:205});
   candidates.sort(function(a,b){return b.score-a.score||b.name.length-a.name.length});
   return candidates.length?normalizeKnownShopName(candidates[0].name):"";
 }
@@ -1854,7 +1870,9 @@ function itemCategorySuggestion(name,shop){
     return findCategoryPair("日用品","生活用品")||findCategoryPair("日用品","その他日用品");
   }
   var one=categorySuggestion("",shop,[{name:n}]);
-  return one||findCategoryPair("食費","スーパー・食材")||null;
+  if(one)return one;
+  if(/ダイソー|\bDAISO\b/i.test(String(shop||"")))return findCategoryPair("日用品","生活用品")||findCategoryPair("日用品","その他日用品");
+  return findCategoryPair("食費","スーパー・食材")||null;
 }
 function allocateReceiptRows(rows,subtotal,tax,total,shop,taxIncluded){
   rows=(rows||[]).filter(function(x){return Number(x.total||0)>0&&!isChangeCueText(String(x.name||""))}).map(function(x){return Object.assign({},x)});
@@ -1923,6 +1941,7 @@ function categorySuggestion(text,shop,itemRows){
     ["娯楽","本",/書店|書籍|文庫|新書/]
   ];
   for(var i=0;i<rules.length;i++){var r=rules[i];if(r[2].test(names+" "+raw)){var hit=findCategoryPair(r[0],r[1]);if(hit)return hit}}
+  if(/ダイソー|\bDAISO\b/i.test(String(shop||"")+" "+raw))return findCategoryPair("日用品","生活用品")||findCategoryPair("日用品","その他日用品");
   return null;
 }
 
@@ -2235,7 +2254,7 @@ function receiptDiagnosticSummary(p){
   p=p||{};
   var rows=Array.isArray(p.itemRows)?p.itemRows:[],cat=p.categoryCandidate||{},meta=p.ocrMeta||{};
   var lines=[
-    "お小遣い家計簿 v3.70.1 レシート診断",
+    "お小遣い家計簿 v3.70.2 レシート診断",
     "日付: "+String(p.date||"未判定"),
     "店名: "+String(p.shop||"未判定"),
     "合計: "+String(Number(p.amount||0))+"円",
@@ -2932,6 +2951,64 @@ function receiptTests(){
     meta:{passes:14,skew:0,ratio:4}
   };
   var pda=parseReceiptText(daisoActualObj,"2026-09-26"),pdaRow=pda.itemRows[0]||null;
+
+  var daisoRicopaObj={
+    text:[
+      "DAISO",
+      "Standard Products",
+      "マオゾー UI/NEANG",
+      "2026年10月03日(土) 13:00",
+      "壁の穴埋めパテ 20¢g \\100外",
+      "オレンジオイルでトイレき 3\\100外",
+      "抗菌防臭スポーツカップク ¥30094",
+      "小計 3R ¥500",
+      "10%税抜対象額 ¥500",
+      "10%税額 ¥50",
+      "=&t ¥550",
+      "楽天ペイ ¥550",
+      "決済手段 楽天ベイ",
+      "ご利用金額 ¥550"
+    ].join("\n"),
+    whole:[
+      "DAISO",
+      "Standard Products",
+      "メイゾー",
+      "リコパ東大和店",
+      "2026年10月03日(土) 13:00",
+      "壁の人穴埋めパテ 20¢g",
+      "\\100外",
+      "オレンジオイルでトイレき ¥100%",
+      "抗菌防臭スポーツカップク 3\\300外",
+      "小計 3点 \\500",
+      "10%税抜対象額 \\500",
+      "10%税額 \\50",
+      "=Et ¥550",
+      "楽天ベイ ¥550"
+    ].join("\n"),
+    shopText:"ダイソー",
+    itemText:[
+      "ダイソー リコパ果大和店",
+      "壁の穴埋めパテ 20¢g \\100外",
+      "オレンジオイルでトイレき ¥100%",
+      "抗菌防臭スポーツカップク 3\\300外",
+      "小計 3m ¥500",
+      "10%税抜対象額 \\500",
+      "10%税額 \\50",
+      "=a1T ¥550",
+      "楽天ペイ ¥550"
+    ].join("\n"),
+    paymentText:"決済手段 楽天ベイ\nご利用金額 ¥550",
+    sections:{
+      top:"DAISO\nリコパ東大和店\n2026年10月03日(土) 13:00",
+      middle:"壁の穴埋めパテ 20¢g \\100外\nオレンジオイルでトイレき ¥100%\n抗菌防臭スポーツカップク 3\\300外",
+      bottom:"小計 3点 ¥500\n10%税抜対象額 ¥500\n10%税額 ¥50\n合計 ¥550\n楽天ペイ ¥550"
+    },
+    meta:{passes:17,skew:0,ratio:4}
+  };
+  var pDaisoRicopa=parseReceiptText(daisoRicopaObj,"2026-10-03");
+  var daisoRicopaSplitTax=(pDaisoRicopa.splitRows||[]).reduce(function(a,x){return a+Number(x.extra||0)},0);
+  var daisoRicopaSplitGross=(pDaisoRicopa.splitRows||[]).reduce(function(a,x){return a+Number(x.gross||0)},0);
+  var daisoRicopaGrosses=(pDaisoRicopa.splitRows||[]).map(function(x){return Number(x.gross||0)}).join("|");
 
   var bkRegressionObj={
     text:"バーガーキング立川北口趾\n2026-09-27 10:28:26\nE 【りのたかセト】 1 ¥1,090\nクーポン割引 ¥-250\nE >Sフレンチフライ 1 ¥0\n合計金額 ¥840\n(内 消費税 ¥76)\n[ 現金 ] ¥1,000\n[ お釣 ] ¥160",
@@ -3642,6 +3719,12 @@ function receiptTests(){
     ["receipt DAISO C-C cable product test",!!pd100&&/C-Cケーブル\s*3A/i.test(pd100.name)&&pd100.total===100],
     ["receipt DAISO single item no split test",pd.splitRows.length===1],
     ["receipt DAISO cable category test",pd.categoryCandidate&&pd.categoryCandidate.groupName==="デジタル・IT"&&pd.categoryCandidate.subName==="スマホ用品"],
+    ["receipt DAISO Ricopa actual accounting v3.70.2 test",pDaisoRicopa.date==="2026-10-03"&&pDaisoRicopa.amount===550&&pDaisoRicopa.subtotal===500&&pDaisoRicopa.tax===50&&pDaisoRicopa.amountConfidence==="high"],
+    ["receipt DAISO Ricopa branch/payment v3.70.2 test",pDaisoRicopa.shop==="ダイソーリコパ東大和店"&&pDaisoRicopa.paymentCandidate==="rakutenpay"],
+    ["receipt DAISO Ricopa three products v3.70.2 test",pDaisoRicopa.itemRows.length===3&&pDaisoRicopa.actualItemCount===3&&pDaisoRicopa.expectedItemCount===3&&pDaisoRicopa.itemSum===500&&pDaisoRicopa.itemSetComplete===true],
+    ["receipt DAISO Ricopa product names v3.70.2 test",pDaisoRicopa.items.join("|")==="壁の穴埋めパテ 20g|オレンジオイルでトイレき|抗菌防臭スポーツカップク"&&pDaisoRicopa.productConfidenceLevel==="high"],
+    ["receipt DAISO Ricopa external-tax split v3.70.2 test",daisoRicopaSplitTax===50&&daisoRicopaSplitGross===550&&daisoRicopaGrosses==="110|110|330"],
+    ["receipt DAISO Ricopa daily-goods category v3.70.2 test",pDaisoRicopa.categoryCandidate&&pDaisoRicopa.categoryCandidate.groupName==="日用品"&&pDaisoRicopa.categoryCandidate.subName==="生活用品"&&pDaisoRicopa.splitRows.every(function(x){return x.categoryLabel==="日用品 ＞ 生活用品"})],
     ["receipt SEIYU registration fingerprint test",seiyuRegShop==="西友"],
     ["receipt item category snack test",splitSnack&&/お菓子|スイーツ/.test(splitSnack.categoryLabel)],
     ["receipt item category drink test",splitDrink&&/飲み物/.test(splitDrink.categoryLabel)],
@@ -3707,7 +3790,7 @@ function receiptTests(){
 function attachTests(){
   var b=document.getElementById("selfTest");if(!b||b.dataset.receiptWrapped)return;
   var base=b.onclick;b.dataset.receiptWrapped="1";
-  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),passed=out.filter(function(x){return x[1]}).length,pass=passed===out.length,box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">v3.70.1 レシート機能テスト '+passed+'/'+out.length+' 件すべて合格しました。</div>':'<div class="errorbox">v3.70.1 レシート機能テスト '+passed+'/'+out.length+' 件合格。失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
+  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),passed=out.filter(function(x){return x[1]}).length,pass=passed===out.length,box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">v3.70.2 レシート機能テスト '+passed+'/'+out.length+' 件すべて合格しました。</div>':'<div class="errorbox">v3.70.2 レシート機能テスト '+passed+'/'+out.length+' 件合格。失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
 }
 var body=document.getElementById("modalBody");
 if(body){new MutationObserver(function(){enhance()}).observe(body,{childList:true,subtree:true})}

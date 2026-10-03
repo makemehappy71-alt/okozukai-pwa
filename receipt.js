@@ -2952,6 +2952,64 @@ function receiptTests(){
   };
   var pda=parseReceiptText(daisoActualObj,"2026-09-26"),pdaRow=pda.itemRows[0]||null;
 
+  var daisoRicopaObj={
+    text:[
+      "DAISO",
+      "Standard Products",
+      "マオゾー UI/NEANG",
+      "2026年10月03日(土) 13:00",
+      "壁の穴埋めパテ 20¢g \\100外",
+      "オレンジオイルでトイレき 3\\100外",
+      "抗菌防臭スポーツカップク ¥30094",
+      "小計 3R ¥500",
+      "10%税抜対象額 ¥500",
+      "10%税額 ¥50",
+      "=&t ¥550",
+      "楽天ペイ ¥550",
+      "決済手段 楽天ベイ",
+      "ご利用金額 ¥550"
+    ].join("\n"),
+    whole:[
+      "DAISO",
+      "Standard Products",
+      "メイゾー",
+      "リコパ東大和店",
+      "2026年10月03日(土) 13:00",
+      "壁の人穴埋めパテ 20¢g",
+      "\\100外",
+      "オレンジオイルでトイレき ¥100%",
+      "抗菌防臭スポーツカップク 3\\300外",
+      "小計 3点 \\500",
+      "10%税抜対象額 \\500",
+      "10%税額 \\50",
+      "=Et ¥550",
+      "楽天ベイ ¥550"
+    ].join("\n"),
+    shopText:"ダイソー",
+    itemText:[
+      "ダイソー リコパ果大和店",
+      "壁の穴埋めパテ 20¢g \\100外",
+      "オレンジオイルでトイレき ¥100%",
+      "抗菌防臭スポーツカップク 3\\300外",
+      "小計 3m ¥500",
+      "10%税抜対象額 \\500",
+      "10%税額 \\50",
+      "=a1T ¥550",
+      "楽天ペイ ¥550"
+    ].join("\n"),
+    paymentText:"決済手段 楽天ベイ\nご利用金額 ¥550",
+    sections:{
+      top:"DAISO\nリコパ東大和店\n2026年10月03日(土) 13:00",
+      middle:"壁の穴埋めパテ 20¢g \\100外\nオレンジオイルでトイレき ¥100%\n抗菌防臭スポーツカップク 3\\300外",
+      bottom:"小計 3点 ¥500\n10%税抜対象額 ¥500\n10%税額 ¥50\n合計 ¥550\n楽天ペイ ¥550"
+    },
+    meta:{passes:17,skew:0,ratio:4}
+  };
+  var pDaisoRicopa=parseReceiptText(daisoRicopaObj,"2026-10-03");
+  var daisoRicopaSplitTax=(pDaisoRicopa.splitRows||[]).reduce(function(a,x){return a+Number(x.extra||0)},0);
+  var daisoRicopaSplitGross=(pDaisoRicopa.splitRows||[]).reduce(function(a,x){return a+Number(x.gross||0)},0);
+  var daisoRicopaGrosses=(pDaisoRicopa.splitRows||[]).map(function(x){return Number(x.gross||0)}).join("|");
+
   var bkRegressionObj={
     text:"バーガーキング立川北口趾\n2026-09-27 10:28:26\nE 【りのたかセト】 1 ¥1,090\nクーポン割引 ¥-250\nE >Sフレンチフライ 1 ¥0\n合計金額 ¥840\n(内 消費税 ¥76)\n[ 現金 ] ¥1,000\n[ お釣 ] ¥160",
     whole:"ガーキンク立川北口店\nE 【7の7ーたがセト】 ¥1,090\nクーポン割引 ¥-250\n合計金額 ¥840\n[ 現金 ] ¥1,000\n[ お釣 ] ¥160",
@@ -3661,6 +3719,12 @@ function receiptTests(){
     ["receipt DAISO C-C cable product test",!!pd100&&/C-Cケーブル\s*3A/i.test(pd100.name)&&pd100.total===100],
     ["receipt DAISO single item no split test",pd.splitRows.length===1],
     ["receipt DAISO cable category test",pd.categoryCandidate&&pd.categoryCandidate.groupName==="デジタル・IT"&&pd.categoryCandidate.subName==="スマホ用品"],
+    ["receipt DAISO Ricopa actual accounting v3.70.2 test",pDaisoRicopa.date==="2026-10-03"&&pDaisoRicopa.amount===550&&pDaisoRicopa.subtotal===500&&pDaisoRicopa.tax===50&&pDaisoRicopa.amountConfidence==="high"],
+    ["receipt DAISO Ricopa branch/payment v3.70.2 test",pDaisoRicopa.shop==="ダイソーリコパ東大和店"&&pDaisoRicopa.paymentCandidate==="rakutenpay"],
+    ["receipt DAISO Ricopa three products v3.70.2 test",pDaisoRicopa.itemRows.length===3&&pDaisoRicopa.actualItemCount===3&&pDaisoRicopa.expectedItemCount===3&&pDaisoRicopa.itemSum===500&&pDaisoRicopa.itemSetComplete===true],
+    ["receipt DAISO Ricopa product names v3.70.2 test",pDaisoRicopa.items.join("|")==="壁の穴埋めパテ 20g|オレンジオイルでトイレき|抗菌防臭スポーツカップク"&&pDaisoRicopa.productConfidenceLevel==="high"],
+    ["receipt DAISO Ricopa external-tax split v3.70.2 test",daisoRicopaSplitTax===50&&daisoRicopaSplitGross===550&&daisoRicopaGrosses==="110|110|330"],
+    ["receipt DAISO Ricopa daily-goods category v3.70.2 test",pDaisoRicopa.categoryCandidate&&pDaisoRicopa.categoryCandidate.groupName==="日用品"&&pDaisoRicopa.categoryCandidate.subName==="生活用品"&&pDaisoRicopa.splitRows.every(function(x){return x.categoryLabel==="日用品 ＞ 生活用品"})],
     ["receipt SEIYU registration fingerprint test",seiyuRegShop==="西友"],
     ["receipt item category snack test",splitSnack&&/お菓子|スイーツ/.test(splitSnack.categoryLabel)],
     ["receipt item category drink test",splitDrink&&/飲み物/.test(splitDrink.categoryLabel)],

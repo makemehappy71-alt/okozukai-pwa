@@ -3025,6 +3025,57 @@ function receiptTests(){
   var daisoRicopaSplitGross=(pDaisoRicopa.splitRows||[]).reduce(function(a,x){return a+Number(x.gross||0)},0);
   var daisoRicopaGrosses=(pDaisoRicopa.splitRows||[]).map(function(x){return Number(x.gross||0)}).join("|");
 
+  var yaokoObj={
+    text:[
+      "MARKETPLACE",
+      "東大和店 TEL0425901611",
+      "<領収証>",
+      "2026年10月03日(土) レジNo:0214",
+      "責:セルフレジ",
+      "13*爽やか白ぶどう",
+      "2コ × 単99 ¥198",
+      "外税 8%(対象 ¥198) ¥15",
+      "合計 ¥213",
+      "(本体 8%対象 ¥198)",
+      "(消費税 8%対象 ¥15)",
+      "現金 ¥220",
+      "お預り合計 ¥220",
+      "お釣り ¥7",
+      "通常P ¥198 0P",
+      "今回ポイント 0P",
+      "累計ポイント 37P",
+      "当月お買上累計額 ¥198",
+      "カードNo. 2010006855229",
+      "株式会社ヤオコー",
+      "登録番号 T4030001055722",
+      "レシートNo:5413 2点買 12:18TM"
+    ].join("\n"),
+    whole:[
+      "ヤオコー",
+      "MARKETPLACE",
+      "東大和店",
+      "13*爽やか白ぶどう",
+      "2コ × 単99 ¥198",
+      "外税 8%(対象 ¥198) ¥15",
+      "合計 ¥213",
+      "現金 ¥220",
+      "お釣り ¥7",
+      "登録番号 T4030001055722"
+    ].join("\n"),
+    shopText:"MARKETPLAC",
+    itemText:"13*爽やか白ぶどう\n2コ × 単99 ¥198",
+    paymentText:"現金 ¥220\nお預り合計 ¥220\nお釣り ¥7",
+    sections:{
+      top:"MARKETPLACE\n東大和店\n2026年10月03日(土)",
+      middle:"13*爽やか白ぶどう\n2コ × 単99 ¥198",
+      bottom:"外税 8%(対象 ¥198) ¥15\n合計 ¥213\n(本体 8%対象 ¥198)\n(消費税 8%対象 ¥15)\n現金 ¥220\nお釣り ¥7"
+    },
+    meta:{passes:14,skew:0,ratio:4}
+  };
+  var pYaoko=parseReceiptText(yaokoObj,"2026-10-03"),yaokoRow=pYaoko.itemRows[0]||null,yaokoSplit=pYaoko.splitRows[0]||null;
+  var yaokoTaxBase=analyzeAmount("合計 ¥213\n(本体 8%対象 ¥198)\n(消費税 8%対象 ¥15)\n現金 ¥220\nお釣り ¥7","");
+  var yaokoCount=receiptItemCountFromText("レシートNo:5413 2点買 12:18TM");
+
   var bkRegressionObj={
     text:"バーガーキング立川北口趾\n2026-09-27 10:28:26\nE 【りのたかセト】 1 ¥1,090\nクーポン割引 ¥-250\nE >Sフレンチフライ 1 ¥0\n合計金額 ¥840\n(内 消費税 ¥76)\n[ 現金 ] ¥1,000\n[ お釣 ] ¥160",
     whole:"ガーキンク立川北口店\nE 【7の7ーたがセト】 ¥1,090\nクーポン割引 ¥-250\n合計金額 ¥840\n[ 現金 ] ¥1,000\n[ お釣 ] ¥160",
@@ -3740,6 +3791,12 @@ function receiptTests(){
     ["receipt DAISO Ricopa product names v3.70.2 test",pDaisoRicopa.items.join("|")==="壁の穴埋めパテ 20g|オレンジオイルでトイレき|抗菌防臭スポーツカップク"&&pDaisoRicopa.productConfidenceLevel==="high"],
     ["receipt DAISO Ricopa external-tax split v3.70.2 test",daisoRicopaSplitTax===50&&daisoRicopaSplitGross===550&&daisoRicopaGrosses==="110|110|330"],
     ["receipt DAISO Ricopa daily-goods category v3.70.2 test",pDaisoRicopa.categoryCandidate&&pDaisoRicopa.categoryCandidate.groupName==="日用品"&&pDaisoRicopa.categoryCandidate.subName==="生活用品"&&pDaisoRicopa.splitRows.every(function(x){return x.categoryLabel==="日用品 ＞ 生活用品"})],
+    ["receipt Yaoko tax-base subtotal v3.70.3 test",yaokoTaxBase.amount===213&&yaokoTaxBase.subtotal===198&&yaokoTaxBase.tax===15&&yaokoTaxBase.taxIncluded===false],
+    ["receipt Yaoko branch/payment v3.70.3 test",pYaoko.shop==="ヤオコー東大和店"&&pYaoko.paymentCandidate==="wallet"&&pYaoko.amount===213&&pYaoko.tendered===220],
+    ["receipt Yaoko quantity count v3.70.3 test",yaokoCount===2&&pYaoko.expectedItemCount===2&&pYaoko.actualItemCount===2],
+    ["receipt Yaoko one-kind-two-items v3.70.3 test",pYaoko.itemRows.length===1&&!!yaokoRow&&yaokoRow.name==="爽やか白ぶどう"&&yaokoRow.qty===2&&yaokoRow.unitPrice===99&&yaokoRow.total===198&&pYaoko.itemSetComplete===true],
+    ["receipt Yaoko verified product/category v3.70.3 test",pYaoko.productConfidenceLevel==="high"&&pYaoko.categoryCandidate&&pYaoko.categoryCandidate.groupName==="食費"&&pYaoko.categoryCandidate.subName==="スーパー・食材"],
+    ["receipt Yaoko external-tax cash split v3.70.3 test",!!yaokoSplit&&yaokoSplit.net===198&&yaokoSplit.extra===15&&yaokoSplit.gross===213],
     ["receipt SEIYU registration fingerprint test",seiyuRegShop==="西友"],
     ["receipt item category snack test",splitSnack&&/お菓子|スイーツ/.test(splitSnack.categoryLabel)],
     ["receipt item category drink test",splitDrink&&/飲み物/.test(splitDrink.categoryLabel)],

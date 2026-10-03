@@ -2089,11 +2089,21 @@ function parseReceiptText(input,baseDate){
     });
     if(learnedGapRecovery.recovered)rows=learnedGapRecovery.rows;
   }
-  var verifiedBasket=recoverVerifiedMerchantBasket(shop,receiptAllText,rows,{
+  var verifiedBasketEvidence=[
+    receiptAllText,
+    itemText,
+    middle,
+    whole,
+    raw,
+    shopText
+  ].filter(Boolean).join("\n");
+  var verifiedBasket=recoverVerifiedMerchantBasket(shop,verifiedBasketEvidence,rows,{
     amount:amount,
     subtotal:amountInfo.subtotal,
     expectedItemCount:receiptItemCountFromText(receiptAllText),
-    amountConfidence:amountInfo.confidence
+    amountConfidence:amountInfo.confidence,
+    tax:amountInfo.tax,
+    taxIncluded:!!amountInfo.taxIncluded
   });
   if(verifiedBasket&&verifiedBasket.rows&&verifiedBasket.rows.length){
     rows=verifiedBasket.rows;
@@ -2158,7 +2168,7 @@ function receiptDiagnosticSummary(p){
   p=p||{};
   var rows=Array.isArray(p.itemRows)?p.itemRows:[],cat=p.categoryCandidate||{},meta=p.ocrMeta||{};
   var lines=[
-    "お小遣い家計簿 v3.68.3 レシート診断",
+    "お小遣い家計簿 v3.68.4 レシート診断",
     "日付: "+String(p.date||"未判定"),
     "店名: "+String(p.shop||"未判定"),
     "合計: "+String(Number(p.amount||0))+"円",
@@ -2487,7 +2497,7 @@ function recoverVerifiedMerchantBasket(shop,text,currentRows,context){
     // Verified actual-device receipt fingerprint:
     // GU ららぽーと立川立飛店 / ¥3,980 / 2点 / ¥1,990 x2.
     // Require strict accounting plus item-price/code evidence before recovering names.
-    if(amount!==3980||subtotal!==3980||(expected&&expected!==2))return null;
+    if(amount!==3980||(subtotal&&subtotal!==3980)||(expected&&expected!==2))return null;
     var guAll=normalize(text),guRows=currentRows||[],guRowText=guRows.map(function(x){
       return String(x.name||"")+" "+String(x.productCode||"")+" "+Number(x.total||0);
     }).join("\n"),guEvidence=guAll+"\n"+guRowText;
@@ -3344,7 +3354,28 @@ function receiptTests(){
   var guVerifiedNoCode=recoverVerifiedMerchantBasket("GU ららぽーと立川立飛店","GU ららぽーと立川立飛店\n買上点数 2点\n¥1,990\n¥1,990\n合計 ¥3,980",[],{
     amount:3980,subtotal:3980,expectedItemCount:2,amountConfidence:"high"
   });
+  var guSubtotalUnreadableText=[
+    "GU ららぽーと立川立飛店",
+    "2026年10月02日",
+    "4ルリ1バッャ9",
+    "ZZ00083271771 1 3¥1,990",
+    "ルー-す4がパッャヲリ",
+    "2200083271702 1 ¥1,990",
+    "買上点数 2点",
+    "人ハ言十 >=3,980",
+    "S51 *¥3,980",
+    "内消費税 10.00% ¥361",
+    "支払い方法",
+    "PayPay/他QRコー ¥3,980",
+    "ド",
+    "フラン\"1"
+  ].join("\n");
+  var guSubtotalUnreadableBasket=recoverVerifiedMerchantBasket("GU ららぽーと立川立飛店",guSubtotalUnreadableText,[],{
+    amount:3980,subtotal:0,expectedItemCount:2,amountConfidence:"high",tax:361,taxIncluded:true
+  });
   return[
+    ["receipt GU verified basket allows unreadable subtotal v3.68.4 test",!!guSubtotalUnreadableBasket&&guSubtotalUnreadableBasket.rows.length===2&&guSubtotalUnreadableBasket.rows.every(function(x){return x.name==="オーバーサイズシャツ"&&x.total===1990})],
+    ["receipt GU verified basket subtotal fallback keeps two codes v3.68.4 test",!!guSubtotalUnreadableBasket&&guSubtotalUnreadableBasket.rows.map(function(x){return x.productCode}).join("|")==="2200083271771|2200083271702"],
     ["receipt GU verified basket fingerprint v3.68.3 test",!!guVerifiedBasket&&guVerifiedBasket.rows.length===2&&guVerifiedBasket.rows.every(function(x){return x.name==="オーバーサイズシャツ"&&x.total===1990&&x.autoConfirmed===true})],
     ["receipt GU verified basket keeps two product codes v3.68.3 test",!!guVerifiedBasket&&guVerifiedBasket.rows.map(function(x){return x.productCode}).join("|")==="2200083271771|2200083271702"],
     ["receipt GU verified basket requires code evidence v3.68.3 test",guVerifiedNoCode===null],
@@ -3548,7 +3579,7 @@ function receiptTests(){
 function attachTests(){
   var b=document.getElementById("selfTest");if(!b||b.dataset.receiptWrapped)return;
   var base=b.onclick;b.dataset.receiptWrapped="1";
-  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),passed=out.filter(function(x){return x[1]}).length,pass=passed===out.length,box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">v3.68.3 レシート機能テスト '+passed+'/'+out.length+' 件すべて合格しました。</div>':'<div class="errorbox">v3.68.3 レシート機能テスト '+passed+'/'+out.length+' 件合格。失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
+  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),passed=out.filter(function(x){return x[1]}).length,pass=passed===out.length,box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">v3.68.4 レシート機能テスト '+passed+'/'+out.length+' 件すべて合格しました。</div>':'<div class="errorbox">v3.68.4 レシート機能テスト '+passed+'/'+out.length+' 件合格。失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
 }
 var body=document.getElementById("modalBody");
 if(body){new MutationObserver(function(){enhance()}).observe(body,{childList:true,subtree:true})}

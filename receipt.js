@@ -2413,7 +2413,15 @@ function parseReceiptText(input,baseDate){
   if(firstKitchenSale&&Number(amount)===290&&amountInfo.confidence==="high"&&!receiptWideDiscount&&fkProductHint&&(countHint===0||countHint===1)&&fkStrongHint){
     // Replace a malformed accounting candidate or an unverified name only.
     // A different, independently verified merchandise item must not be changed.
-    var badSingle=rows.length===1&&(receiptBrokenTotalLabel(rows[0].name)||receiptBrokenTotalLabel(rows[0].rawName)||isGarbageProductName(rows[0].name));
+    // A malformed product row such as "あい上の0" can survive the basic
+    // garbage-name filter. It is not independent proof of a purchased item;
+    // when the separate OCR passes still contain the specific potato-product
+    // receipt fingerprint, show a REVIEW-ONLY candidate instead.
+    var badSingle=rows.length===1&&(
+      receiptBrokenTotalLabel(rows[0].name)||receiptBrokenTotalLabel(rows[0].rawName)||
+      isGarbageProductName(rows[0].name)||
+      (productMeaningfulScore(rows[0].name)<25&&productNameRequiresConfirmation(rows[0].name,shop))
+    );
     if(!rows.length||badSingle){
       var fkName="フレーバーポテトL"+(fkFlavorHint?"（焦がしバター醤油味）":"");
       rows=[{name:fkName,rawName:fkName,unitPrice:290,qty:1,total:290,quality:0,sourceIndex:0,sourcePriority:1,lowConfidence:true,candidateOnly:true,candidateSource:"merchant_receipt_hint",nameConfidence:"low",provisionalAmount:true}];
@@ -2442,6 +2450,12 @@ function parseReceiptText(input,baseDate){
   if(amount>0&&rows.reduce(function(a,x){return a+Number(x.total||0)},0)>amount)rows=[];
   // If OCR produced only a weak gibberish item, do not pretend it is a reliable product name.
   if(rows.length===1&&productMeaningfulScore(rows[0].name)<15&&!rows[0].lowConfidence)rows=[];
+  // Under severe OCR damage an untrusted merchandise row may disappear at
+  // final validation rather than during item selection. Retain only a
+  // review-only product hint and never claim independent subtotal matching.
+  if(!rows.length&&firstKitchenSale&&Number(amount)===290&&amountInfo.confidence==="high"&&!receiptWideDiscount&&fkStrongHint&&fkFlavorHint&&(countHint===0||countHint===1)){
+    rows=[{name:"フレーバーポテトL（焦がしバター醤油味）",rawName:"フレーバーポテトL（焦がしバター醤油味）",unitPrice:290,qty:1,total:290,quality:0,sourceIndex:0,sourcePriority:1,lowConfidence:true,candidateOnly:true,candidateSource:"merchant_receipt_hint",nameConfidence:"low",provisionalAmount:true}];
+  }
   // A verified exact basket also reconciles restaurant receipts with no
   // readable subtotal, but an unknown target alone is never a match.
   var merchandiseTarget=Number(merchandiseAccountingTarget||0);
@@ -4070,25 +4084,36 @@ function receiptTests(){
   var fuzzyCodeMatch=merchantProductCodeMatch("GU ららぽーと立川立飛店","2200083271777",1990);
   var fuzzyCodeWrongPrice=merchantProductCodeMatch("GU ららぽーと立川立飛店","2200083271777",2990);
   // V3.71.3 actual-device: OCR turned the subtotal into "計 て ¥290".
-  var fkAccountingNoise=["First Kitchen","田無店","2026年10月10日(土) 12:48","K-7b-A\"-8\"7HL290","集がしター衣油味","計 て ¥290","合計 ¥290","楽天ペイ ¥290","会員ID 0031897","アンケート クーポンをGET!","ポテトS ¥100"].join("\n");
+  var fkAccountingNoise=["First Kitchen","田無店","2026年10月10日(土) 12:48","K-7b-A\"-8\"7HL290","集がしター衣油味","計 て ¥290","合計 ¥290","楽天ペイ ¥290","会員ID 0000000","アンケート クーポンをGET!","ポテトS ¥100"].join("\n");
   var pFkAccountingNoise=parseReceiptText({text:fkAccountingNoise,whole:fkAccountingNoise,itemText:"K-7b-A\"-8\"7HL290\n集がしター衣油味\n計 て ¥290\n合計 ¥290",sections:{top:"First Kitchen\n田無店",middle:"K-7b-A\"-8\"7HL290\n集がしター衣油味\n計 て ¥290",bottom:"合計 ¥290\n楽天ペイ ¥290"}},"2026-10-10");
   var fkOtherProduct=parseReceiptText({text:"First Kitchen\n田無店\n2026年10月10日(土)\nハンバーガー ¥290\n小計 1 ¥290\n合計 ¥290\n楽天ペイ ¥290",sections:{top:"First Kitchen\n田無店",middle:"ハンバーガー ¥290",bottom:"小計 1 ¥290\n合計 ¥290\n楽天ペイ ¥290"}},"2026-10-10");
+  // Real Android v3.71.3 reported separate source fragments, but a mangled
+  // "あい上の0" line consumed the 290-yen product slot.
+  var fkAndroidDamaged=parseReceiptText({
+    text:"City Convenience Restaurant\nFirst Kitchen\n田無店\n2026年10月10日(土) 12:48\nあい上の0 ※* ¥290\n計 て ¥290\n(内消費税等 ¥21)\n楽天ペー ¥290\n<楽天ペイ>\n会員1D 0000000\nアンケート\nクーポンをGET!\nポテト ¥100",
+    whole:"First Kitchen\n田無店\nK-7b-N\"-8\"7H290\nあい上の0 ※* ¥290\n楽天ペー ¥290",
+    itemText:"K--1\"-5\"51L290\nK-7b-A\"-8\"7HL290\n集がしター-衣油味\nあい上の0 ※* ¥290\n計 て ¥290\n楽天ペイ ¥290",
+    sections:{top:"First Kitchen\n田無店",middle:"K-7b-A\"-8\"7HL290\n集がしター-衣油味",bottom:"合計 ¥290\n楽天ペー ¥290"}
+  },"2026-10-10");
+  var fkNoFingerprint=parseReceiptText({text:"First Kitchen\n田無店\nあい上の0 ※* ¥290\n合計 ¥290\n楽天ペイ ¥290",sections:{top:"First Kitchen\n田無店",middle:"あい上の0 ※* ¥290",bottom:"合計 ¥290\n楽天ペイ ¥290"}},"2026-10-10");
   var fkRegressionText=[
     "City Convenience Restaurant","First Kitchen","田無店","2026年10月10日(土) 12:48",
     "K-フレーバーポテトL290 ¥290","焦がしバター醤油味 ¥0","小計 1 ¥290",
     "合計 ¥290","(内消費税等 ¥21)","楽天ペイ ¥290",
-    "<dポイント>","会員ID 0031897","アンケート クーポンをGET!","ポテトS ¥100"
+    "<dポイント>","会員ID 0000000","アンケート クーポンをGET!","ポテトS ¥100"
   ].join("\n");
   var pFkRegression=parseReceiptText({text:fkRegressionText,whole:fkRegressionText,
-    shopText:"nvenience Restaur ant",itemText:"K-フレーバーポテトL290 ¥290\n小計 1 ¥290\n合計 ¥290\n会員ID 0031897\nポテトS ¥100",
+    shopText:"nvenience Restaur ant",itemText:"K-フレーバーポテトL290 ¥290\n小計 1 ¥290\n合計 ¥290\n会員ID 0000000\nポテトS ¥100",
     paymentText:"<楽天ペイ>\n支払 ¥290",sections:{top:"First Kitchen\n田無店",middle:"K-フレーバーポテトL290 ¥290\n焦がしバター醤油味",bottom:"小計 1 ¥290\n合計 ¥290\n楽天ペイ ¥290"}},"2026-10-10");
-  var fkNoisyText="First Kitchen\n田無店\n2026年10月10日(土)\nK-7b-A\"-8\"7HL290\n会員ID 0031897\n楽天ペー ¥290\n<楽天ペイ>\n支払 ¥290\n<dポイント>\nクーポンをGET!\nポテト ¥100";
-  var pFkNoisy=parseReceiptText({text:fkNoisyText,whole:fkNoisyText,itemText:"K-7b-A\"-8\"7HL290\n小計 1 ¥290\n合計 ¥290\n<dポイント>\nポテト ¥100",paymentText:"<楽天ペイ>\n支払 ¥290",sections:{top:"First Kitchen\n田無店",middle:"K-7b-A\"-8\"7HL290",bottom:"楽天ペー ¥290\n会員ID 0031897"}},"2026-10-10");
-  var pFkNoTotal=parseReceiptText("First Kitchen\n田無店\n会員ID 0031897\nアンケート クーポンをGET!\nポテト ¥100","2026-10-10");
+  var fkNoisyText="First Kitchen\n田無店\n2026年10月10日(土)\nK-7b-A\"-8\"7HL290\n会員ID 0000000\n楽天ペー ¥290\n<楽天ペイ>\n支払 ¥290\n<dポイント>\nクーポンをGET!\nポテト ¥100";
+  var pFkNoisy=parseReceiptText({text:fkNoisyText,whole:fkNoisyText,itemText:"K-7b-A\"-8\"7HL290\n小計 1 ¥290\n合計 ¥290\n<dポイント>\nポテト ¥100",paymentText:"<楽天ペイ>\n支払 ¥290",sections:{top:"First Kitchen\n田無店",middle:"K-7b-A\"-8\"7HL290",bottom:"楽天ペー ¥290\n会員ID 0000000"}},"2026-10-10");
+  var pFkNoTotal=parseReceiptText("First Kitchen\n田無店\n会員ID 0000000\nアンケート クーポンをGET!\nポテト ¥100","2026-10-10");
   return[
     ["receipt malformed subtotal glyphs excluded from product text v3.71.3",receiptBrokenTotalLabel("計 て ¥290")&&receiptBrokenTotalLabel("計 て")&&isGarbageProductName("計 て")&&!itemRowsFromText("計 て ¥290",1).length],
     ["receipt First Kitchen corrupted total stays review only v3.71.3",pFkAccountingNoise.amount===290&&pFkAccountingNoise.itemRows.length===1&&/フレーバーポテトL/.test(pFkAccountingNoise.itemRows[0].name)&&pFkAccountingNoise.itemRows[0].lowConfidence===true&&!pFkAccountingNoise.itemRows[0].autoConfirmed&&!pFkAccountingNoise.itemSetComplete],
     ["receipt First Kitchen different 290yen product not guessed v3.71.3",!fkOtherProduct.items.some(function(x){return /フレーバーポテト/.test(x)})],
+    ["receipt v3.71.4 Android OCR malformed item recovers review-only potato hint",fkAndroidDamaged.amount===290&&fkAndroidDamaged.itemRows.length===1&&/フレーバーポテトL/.test(fkAndroidDamaged.itemRows[0].name)&&fkAndroidDamaged.itemRows[0].lowConfidence===true&&!fkAndroidDamaged.itemRows[0].autoConfirmed&&!fkAndroidDamaged.itemSetComplete],
+    ["receipt v3.71.4 must not guess 290-yen potato absent evidence",!fkNoFingerprint.items.some(function(x){return /フレーバーポテト/.test(x)})],
     ["receipt First Kitchen correct branch/category/payment test",pFkRegression.shop==="ファーストキッチン 田無店"&&pFkRegression.paymentCandidate==="rakutenpay"&&pFkRegression.categoryCandidate&&pFkRegression.categoryCandidate.subName==="外食"],
     ["receipt First Kitchen one-item amount and coupon exclusion test",pFkRegression.amount===290&&pFkRegression.itemSetComplete===true&&pFkRegression.itemRows.length===1&&pFkRegression.itemSum===290&&!pFkRegression.items.some(function(x){return /会員|クーポン|100円/.test(x)})],
     ["receipt noisy First Kitchen retains one provisional nonconfirmable row test",pFkNoisy.amount===290&&pFkNoisy.itemRows.length<=1&&!pFkNoisy.itemSetComplete&&pFkNoisy.itemRows.every(function(x){return x.lowConfidence===true})],

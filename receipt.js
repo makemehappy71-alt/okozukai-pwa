@@ -1415,6 +1415,33 @@ function chooseItemsForSubtotal(rows,subtotal,receiptTotal,receiptDiscount,shop)
 function labeledMoney(line){
   var n=numberFromLine(line);return n>0?n:0;
 }
+function receiptTaxBuckets(text){
+  var lines=normalize(text).split("\n").map(function(x){return ocrMoneyClean(String(x||"").trim())}).filter(Boolean),map={},activeRate=0;
+  function moneyToken(s){
+    var n=Number(String(s||"").replace(/[,\s]/g,""));
+    return Number.isFinite(n)&&n>=0&&n<=1000000?n:0;
+  }
+  lines.forEach(function(line){
+    var x=line.replace(/\s+/g," ").trim(),m=x.match(/(?:^|[（(\s])((?:8|10))\s*[%％]\s*(税抜)?\s*対象(?:額)?[^0-9]{0,8}(?:¥|￥)?\s*([0-9][0-9,\s]{0,12})/i);
+    if(m){
+      var rate=Number(m[1]),target=moneyToken(m[3]);
+      if(target){map[rate]=map[rate]||{rate:rate,target:0,tax:0,mode:m[2]?"excluded":"included"};map[rate].target=target;map[rate].mode=m[2]?"excluded":"included";activeRate=rate}
+      var same=x.match(/うち\s*消費税(?:等)?[^0-9]{0,8}(?:¥|￥)?\s*([0-9][0-9,\s]{0,10})/i);
+      if(same&&map[rate])map[rate].tax=moneyToken(same[1]);
+      return;
+    }
+    var direct=x.match(/((?:8|10))\s*[%％]\s*(?:税額|消費税)[^0-9]{0,8}(?:¥|￥)?\s*([0-9][0-9,\s]{0,10})/i);
+    if(direct){
+      var dr=Number(direct[1]);map[dr]=map[dr]||{rate:dr,target:0,tax:0,mode:"excluded"};map[dr].tax=moneyToken(direct[2]);activeRate=dr;return;
+    }
+    var taxOnly=x.match(/うち\s*消費税(?:等)?[^0-9]{0,8}(?:¥|￥)?\s*([0-9][0-9,\s]{0,10})/i);
+    if(taxOnly&&activeRate&&map[activeRate])map[activeRate].tax=moneyToken(taxOnly[1]);
+  });
+  return Object.keys(map).map(function(k){
+    var b=map[k],target=Number(b.target||0),tax=Number(b.tax||0),net=b.mode==="excluded"?target:Math.max(0,target-tax),gross=b.mode==="excluded"?target+tax:target;
+    return{rate:Number(b.rate),target:target,tax:tax,net:net,gross:gross,mode:b.mode};
+  }).filter(function(b){return b.rate&&b.target>0&&b.tax>=0&&b.gross>0}).sort(function(a,b){return a.rate-b.rate});
+}
 function analyzeAmount(text,extraText){
   var allText=normalize([text,extraText].filter(Boolean).join("\n")),lines=allText.split("\n").map(function(x){return ocrMoneyClean(x.trim())}).filter(Boolean),map={},subtotal=0,preDiscountTotal=0,tax=0,taxIncluded=false,subtotalTaxMode="";
   function add(n,label,score,line){
@@ -1465,6 +1492,13 @@ function analyzeAmount(text,extraText){
     if(pk&&pk!=="wallet"){add(n,"payment",95,line);return}
     if(/現金|cash/i.test(line))return;
   });
+  var taxBuckets=receiptTaxBuckets(allText);
+  if(taxBuckets.length>=2){
+    var bucketTax=taxBuckets.reduce(function(a,b){return a+Number(b.tax||0)},0),bucketNet=taxBuckets.reduce(function(a,b){return a+Number(b.net||0)},0),bucketGross=taxBuckets.reduce(function(a,b){return a+Number(b.gross||0)},0);
+    if(bucketTax>0)tax=bucketTax;
+    if(!subtotal&&bucketNet>0){subtotal=bucketNet;subtotalTaxMode="excluded";add(bucketNet,"mixedTaxSubtotal",70,"mixed tax buckets")}
+    if(bucketGross>0)add(bucketGross,"mixedTaxTotal",150,"mixed tax buckets");
+  }
   if(subtotalTaxMode==="excluded")taxIncluded=false;
   else if(subtotalTaxMode==="included")taxIncluded=true;
   if(subtotal&&tax&&!taxIncluded)add(subtotal+tax,"derivedTotal",160,"subtotal+tax");
@@ -1492,7 +1526,7 @@ function analyzeAmount(text,extraText){
     if(best.score>=180||(best.labels.total&&(best.labels.payment||best.labels.barcodePayment))||best.labels.subtotalTaxMatch)confidence="high";
     else if(best.score>=100)confidence="medium";
   }
-  return{amount:best?best.amount:0,confidence:confidence,score:best?best.score:0,subtotal:subtotal,preDiscountTotal:preDiscountTotal,tax:tax,taxIncluded:taxIncluded,candidates:cand};
+  return{amount:best?best.amount:0,confidence:confidence,score:best?best.score:0,subtotal:subtotal,preDiscountTotal:preDiscountTotal,tax:tax,taxIncluded:taxIncluded,taxBuckets:taxBuckets,candidates:cand};
 }
 function normalizeProductCodeToken(token){
   var raw=String(token||"").toUpperCase().replace(/[^A-Z0-9]/g,""),digits=(raw.match(/[0-9]/g)||[]).length;
@@ -1960,7 +1994,7 @@ function itemCategorySuggestion(name,shop){
   if(/ダイソー|\bDAISO\b/i.test(String(shop||"")))return findCategoryPair("日用品","生活用品")||findCategoryPair("日用品","その他日用品");
   return findCategoryPair("食費","スーパー・食材")||null;
 }
-function allocateReceiptRows(rows,subtotal,tax,total,shop,taxIncluded){
+function allocateReceiptRows(rows,subtotal,tax,total,shop,taxIncluded,taxBuckets){
   rows=(rows||[]).filter(function(x){return Number(x.total||0)>0&&!isChangeCueText(String(x.name||""))}).map(function(x){return Object.assign({},x)});
   var originalSum=rows.reduce(function(a,x){return a+Number(x.total||0)},0),target=Number(total||0),netTarget=Number(subtotal||0),taxTarget=Number(tax||0);
   if(!rows.length)return[];
@@ -1971,6 +2005,37 @@ function allocateReceiptRows(rows,subtotal,tax,total,shop,taxIncluded){
     return parts.map(function(x){return x.value});
   }
   var originals=rows.map(function(x){return Number(x.total||0)});
+  var mixedBuckets=(Array.isArray(taxBuckets)?taxBuckets:[]).filter(function(b){return b&&Number(b.net||0)>=0&&Number(b.tax||0)>=0&&Number(b.gross||0)>0});
+  if(!taxIncluded&&mixedBuckets.length>=2){
+    var bucketByRate={};mixedBuckets.forEach(function(b){bucketByRate[Number(b.rate)]=b});
+    function rateHint(row){
+      var raw=String(row.rawName||row.name||"");
+      if(bucketByRate[8]&&/^\s*[◎◉○@＠©⑧⑨]/.test(raw))return 8;
+      var cat=itemCategorySuggestion(row.name,shop);
+      if(cat&&cat.groupName==="食費"&&bucketByRate[8])return 8;
+      if(cat&&cat.groupName!=="食費"&&bucketByRate[10])return 10;
+      return 0;
+    }
+    var hints=rows.map(rateHint),valid=hints.every(function(r){return !!bucketByRate[r]});
+    if(valid){
+      mixedBuckets.forEach(function(b){
+        var net=0;for(var i=0;i<rows.length;i++)if(hints[i]===Number(b.rate))net+=originals[i];
+        if(net!==Number(b.net||0))valid=false;
+      });
+    }
+    var bucketGrossSum=mixedBuckets.reduce(function(a,b){return a+Number(b.gross||0)},0),bucketTaxSum=mixedBuckets.reduce(function(a,b){return a+Number(b.tax||0)},0);
+    if(valid&&(!target||bucketGrossSum===target)&&(!taxTarget||bucketTaxSum===taxTarget)){
+      var mixedTaxes=new Array(rows.length).fill(0);
+      mixedBuckets.forEach(function(b){
+        var idx=[],weights=[];for(var i=0;i<rows.length;i++)if(hints[i]===Number(b.rate)){idx.push(i);weights.push(originals[i])}
+        var parts=proportional(Number(b.tax||0),weights);idx.forEach(function(rowIndex,j){mixedTaxes[rowIndex]=parts[j]||0});
+      });
+      return rows.map(function(row,i){
+        var cat=itemCategorySuggestion(row.name,shop),rate=hints[i];
+        return{index:i,name:row.name,originalNet:originals[i],discount:0,net:originals[i],extra:mixedTaxes[i],gross:originals[i]+mixedTaxes[i],taxRate:rate,categoryId:cat&&cat.categoryId||"",subcategoryId:cat&&cat.subcategoryId||"",categoryLabel:cat&&cat.label||""};
+      });
+    }
+  }
   if(taxIncluded){
     var grossTarget=target||netTarget||originalSum,discountTotal=Math.max(0,originalSum-grossTarget);
     if(originalSum<grossTarget)return[];
@@ -2314,7 +2379,7 @@ function parseReceiptText(input,baseDate){
   var detailValue=detailProductAllowed?items.slice(0,2).join("・")+(items.length>2?"ほか":""):detailFallback;
   if(detailProductAllowed&&items.length>=3&&productConfidence.level==="high")detailValue=compactReceiptDetail(shop,cat,items.length,actualItemCount);
   var subtotalTaxMatch=!!(amountInfo.subtotal&&amountInfo.tax&&(amountInfo.taxIncluded?amountInfo.subtotal===amount:amountInfo.subtotal+amountInfo.tax===amount));
-  var splitRows=itemSetComplete?allocateReceiptRows(rows,amountInfo.subtotal,amountInfo.tax,amount,shop,amountInfo.taxIncluded):[];
+  var splitRows=itemSetComplete?allocateReceiptRows(rows,amountInfo.subtotal,amountInfo.tax,amount,shop,amountInfo.taxIncluded,amountInfo.taxBuckets):[];
   var diag=obj&&obj.diagnostics||[];var diagnosticText=diag.map(function(d,i){return"--- PASS "+(i+1)+" / "+d.label+" ---\n"+(d.text||"(空)")}).join("\n\n");
   var debugText=maskReceiptDebugText([diagnosticText,raw?"--- 統合OCR ---\n"+raw:"",shopText?"--- 店名専用OCR統合 ---\n"+shopText:"",itemText?"--- 商品専用OCR統合 ---\n"+itemText:"",paymentText?"--- 支払専用OCR統合 ---\n"+paymentText:""].filter(Boolean).join("\n\n"));
   var dictionaryAutoConfirmed=!!(dictionaryInference&&dictionaryInference.name&&rows.some(function(x){return !!x.autoConfirmed&&x.name===dictionaryInference.name}));
@@ -2322,7 +2387,7 @@ function parseReceiptText(input,baseDate){
   var candidateSource=focusConsensus&&focusConsensus.accepted?"ocr":dictionaryAutoConfirmed?"learned":dictionaryInference&&dictionaryInference.name?(dictionaryInference.source||"verified_sample"):focusConsensus&&focusConsensus.candidateName?"ocr":"";
   var candidateList=dictionaryInference&&dictionaryInference.name?[dictionaryInference.name].concat(dictionaryInference.alternatives||[]):focusConsensus&&focusConsensus.candidates||[];
   candidateList=candidateList.filter(function(x,i,a){return x&&a.indexOf(x)===i}).slice(0,3);
-  return{rawText:raw,debugText:debugText,date:date,shop:shop,verifiedBasketRecovered:!!(verifiedBasket&&verifiedBasket.rows&&verifiedBasket.rows.length),amount:amount,amountConfidence:amountInfo.confidence,amountScore:amountInfo.score,subtotal:amountInfo.subtotal,preDiscountTotal:explicitPreDiscount,preDiscountOCR:explicitPreDiscountRaw,preDiscountSource:preDiscountDecision.source,preDiscountConflict:!!preDiscountDecision.conflict,discount:receiptWideDiscount,accountingStructureValid:accountingStructureValid,tax:amountInfo.tax,taxIncluded:!!amountInfo.taxIncluded,subtotalTaxMatch:subtotalTaxMatch,paymentCandidate:payment,categoryCandidate:cat,items:items,itemRows:rows,splitRows:splitRows,itemSum:itemSum,merchandiseTarget:merchandiseTarget,itemSetComplete:itemSetComplete,expectedItemCount:expectedItemCount,actualItemCount:actualItemCount,itemQuantityMatch:itemQuantityMatch,autoConfirmedItemCount:autoConfirmedItemCount,itemSubtotalMatch:!!(amountInfo.subtotal&&itemSum===amountInfo.subtotal),itemPreDiscountMatch:!!(amountInfo.subtotal&&receiptWideDiscount>0&&itemSum===amountInfo.subtotal+receiptWideDiscount),gapRecovered:!!gapRecovery.recovered,gapRecoveredAmount:Number(gapRecovery.gap||0),gapRecoveredName:gapRecovery.recoveredName||"",learnedGapRecovered:!!learnedGapRecovery.recovered,learnedGapRecoveredAmount:Number(learnedGapRecovery.gap||0),learnedGapRecoveredName:learnedGapRecovery.recoveredName||"",productConfidenceLevel:productConfidence.level,highConfidenceItemCount:productConfidence.high,mediumConfidenceItemCount:productConfidence.medium,requiresProductReview:productConfidence.requiresReview,productReviewRecommended:productConfidence.reviewRecommended,detail:detailValue,productReadFailed:productReadFailed,productLowConfidence:productLowConfidence,lowConfidenceItemCount:lowConfidenceItemCount,productCandidateStatus:candidateStatus,productCandidateSource:candidateSource,productCandidateAutoConfirmed:dictionaryAutoConfirmed,productCandidates:candidateList,productCandidateReason:dictionaryAutoConfirmed?"learned_auto_confirmed":dictionaryInference&&dictionaryInference.name?"merchant_dictionary":focusConsensus&&focusConsensus.rejectionReason||"",tendered:receiptTenderedAmount(receiptAllText,amount),ocrMeta:obj&&obj.meta||null};
+  return{rawText:raw,debugText:debugText,date:date,shop:shop,verifiedBasketRecovered:!!(verifiedBasket&&verifiedBasket.rows&&verifiedBasket.rows.length),amount:amount,amountConfidence:amountInfo.confidence,amountScore:amountInfo.score,subtotal:amountInfo.subtotal,preDiscountTotal:explicitPreDiscount,preDiscountOCR:explicitPreDiscountRaw,preDiscountSource:preDiscountDecision.source,preDiscountConflict:!!preDiscountDecision.conflict,discount:receiptWideDiscount,accountingStructureValid:accountingStructureValid,tax:amountInfo.tax,taxIncluded:!!amountInfo.taxIncluded,taxBuckets:amountInfo.taxBuckets||[],subtotalTaxMatch:subtotalTaxMatch,paymentCandidate:payment,categoryCandidate:cat,items:items,itemRows:rows,splitRows:splitRows,itemSum:itemSum,merchandiseTarget:merchandiseTarget,itemSetComplete:itemSetComplete,expectedItemCount:expectedItemCount,actualItemCount:actualItemCount,itemQuantityMatch:itemQuantityMatch,autoConfirmedItemCount:autoConfirmedItemCount,itemSubtotalMatch:!!(amountInfo.subtotal&&itemSum===amountInfo.subtotal),itemPreDiscountMatch:!!(amountInfo.subtotal&&receiptWideDiscount>0&&itemSum===amountInfo.subtotal+receiptWideDiscount),gapRecovered:!!gapRecovery.recovered,gapRecoveredAmount:Number(gapRecovery.gap||0),gapRecoveredName:gapRecovery.recoveredName||"",learnedGapRecovered:!!learnedGapRecovery.recovered,learnedGapRecoveredAmount:Number(learnedGapRecovery.gap||0),learnedGapRecoveredName:learnedGapRecovery.recoveredName||"",productConfidenceLevel:productConfidence.level,highConfidenceItemCount:productConfidence.high,mediumConfidenceItemCount:productConfidence.medium,requiresProductReview:productConfidence.requiresReview,productReviewRecommended:productConfidence.reviewRecommended,detail:detailValue,productReadFailed:productReadFailed,productLowConfidence:productLowConfidence,lowConfidenceItemCount:lowConfidenceItemCount,productCandidateStatus:candidateStatus,productCandidateSource:candidateSource,productCandidateAutoConfirmed:dictionaryAutoConfirmed,productCandidates:candidateList,productCandidateReason:dictionaryAutoConfirmed?"learned_auto_confirmed":dictionaryInference&&dictionaryInference.name?"merchant_dictionary":focusConsensus&&focusConsensus.rejectionReason||"",tendered:receiptTenderedAmount(receiptAllText,amount),ocrMeta:obj&&obj.meta||null};
 }
 function summarizeProductConfidence(rows){
   var list=rows||[],high=0,medium=0,low=0,autoConfirmed=0;

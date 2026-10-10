@@ -2509,7 +2509,7 @@ function receiptDiagnosticSummary(p){
   p=p||{};
   var rows=Array.isArray(p.itemRows)?p.itemRows:[],cat=p.categoryCandidate||{},meta=p.ocrMeta||{};
   var lines=[
-    "お小遣い家計簿 v3.71.3 レシート診断",
+    "お小遣い家計簿 v3.71.5 レシート診断",
     "日付: "+String(p.date||"未判定"),
     "店名: "+String(p.shop||"未判定"),
     "合計: "+String(Number(p.amount||0))+"円",
@@ -2615,6 +2615,103 @@ function shouldCompactReceiptProducts(p,reviewModels){
   p=p||{};reviewModels=Array.isArray(reviewModels)?reviewModels:[];
   return p.productConfidenceLevel==="high"&&p.itemSetComplete===true&&reviewModels.length===0&&Array.isArray(p.itemRows)&&p.itemRows.length>0;
 }
+// Product-only OCR rescue is deliberately a user-controlled process: never
+// turn a low-confidence OCR string into an approved purchased product.
+function productCropSelection(){
+  var top=document.getElementById("receiptProductCropTop"),bottom=document.getElementById("receiptProductCropBottom");
+  var t=clamp(Number(top&&top.value||18)/100,0,.92),b=clamp(Number(bottom&&bottom.value||42)/100,.08,1);
+  if(b-t<.06){b=Math.min(1,t+.06);if(bottom)bottom.value=String(Math.round(b*100))}
+  return{top:t,bottom:b};
+}
+function productCropImage(){
+  if(!pendingReceipt||!pendingReceipt.source)return null;
+  // Use the same paper crop selected for the original receipt; no new site storage.
+  return cropCanvas(pendingReceipt.source,pendingReceipt.crop);
+}
+function drawProductCropPreview(){
+  var canvas=document.getElementById("receiptProductCropPreview"),src=productCropImage();
+  if(!canvas||!src)return;
+  var h=Math.min(680,src.height),scale=h/src.height,w=Math.max(1,Math.round(src.width*scale));
+  canvas.width=w;canvas.height=h;
+  var c=canvas.getContext("2d"),sel=productCropSelection();
+  c.drawImage(src,0,0,w,h);
+  c.save();c.fillStyle="rgba(0,0,0,.58)";c.fillRect(0,0,w,h);
+  var y=sel.top*h,hh=(sel.bottom-sel.top)*h;
+  c.clearRect(0,y,w,hh);c.drawImage(src,0,sel.top*src.height,src.width,(sel.bottom-sel.top)*src.height,0,y,w,hh);
+  c.strokeStyle="#22c55e";c.lineWidth=3;c.strokeRect(1,y+1,Math.max(1,w-2),Math.max(1,hh-2));c.restore();
+}
+function productFocusedCandidateLines(value){
+  // The OCR's raw strings are made visible, not silently written to the expense.
+  // Remove summary, payment, membership and coupon rows before suggesting a line.
+  var lines=normalize(value).split("\n").map(function(x){return x.trim()}).filter(Boolean),out=[];
+  lines.forEach(function(line){
+    if(/(?:合計|小計|対象計|消費税|内税|外税|支払|支払い|楽天ペイ|クーポン|アンケート|会員|ポイント|登録番号|番号|レシート|店名|住所|領収|お釣り|預り)/i.test(line))return;
+    if(receiptBrokenTotalLabel(line)||receiptNonMerchandiseLabel(line)||isGarbageProductName(line))return;
+    var name=cleanFocusedProductName(line,0).replace(/(?:[¥￥\\]\s*[0-9][0-9,]*|[0-9]{2,6}\s*円)\s*$/,'').trim();
+    if(!name||isGarbageProductName(name)||receiptBrokenTotalLabel(name)||productMeaningfulScore(name)<22)return;
+    if(!out.includes(name))out.push(name);
+  });
+  return out.slice(0,6);
+}
+async function recheckProductCrop(){
+  if(busy||!pendingReceipt)return;
+  var start=document.getElementById("receiptProductCropRead"),result=document.getElementById("receiptProductCropResult");
+  var paper=productCropImage(),sel=productCropSelection();
+  if(!paper||!result)return;
+  var y0=sel.top*paper.height,y1=sel.bottom*paper.height,worker=null,raw=[];
+  if(start)start.disabled=true;
+  try{
+    setBusy(true,"商品名の選択範囲だけを拡大して認識しています…");
+    await loadOCR();
+    worker=await globalThis.Tesseract.createWorker(["jpn","eng"],1,{logger:progress});
+    var modes=[
+      {label:"カラー拡大",mode:"6",canvas:makeOCRPixelRegion(paper,0,y0,paper.width,y1,3)},
+      {label:"強調拡大",mode:"6",canvas:focusedTextVariant(paper,0,y0,paper.width,y1,3.2,"contrast")},
+      {label:"二値化",mode:"11",canvas:focusedTextVariant(paper,0,y0,paper.width,y1,3.2,"binary")}
+    ];
+    for(var i=0;i<modes.length;i++){
+      var x=modes[i];ocrPassLabel="商品名・"+x.label;
+      await worker.setParameters({tessedit_char_whitelist:"",preserve_interword_spaces:"1",tessedit_pageseg_mode:x.mode});
+      var resp=await worker.recognize(x.canvas),text=String(resp&&resp.data&&resp.data.text||"").trim();
+      raw.push({label:x.label,text:text});
+    }
+    var candidates=[];raw.forEach(function(r){productFocusedCandidateLines(r.text).forEach(function(x){if(!candidates.includes(x))candidates.push(x)})});
+    result.innerHTML='<div class="small">拡大OCR候補（必ず原本と照合）</div>'+
+      '<textarea id="receiptProductCropCandidate" rows="2" placeholder="読み取れなければ正しい商品名をここに入力">'+e(candidates[0]||"")+'</textarea>'+
+      '<button type="button" id="receiptProductCropUse" class="secondary" style="width:100%">確認した商品名を候補欄へ移す</button>'+
+      '<details class="details"><summary>今回の拡大OCR原文を確認</summary><textarea rows="8" readonly>'+e(raw.map(function(r){return r.label+"\n"+(r.text||"(空)")}).join("\n\n"))+'</textarea></details>'+
+      '<div class="small">商品名は自動確定しません。レシートと照合し、必要なら修正してから反映してください。元の金額・日付・店名は変更しません。</div>';
+    var use=document.getElementById("receiptProductCropUse");
+    if(use)use.onclick=function(){
+      var inp=document.getElementById("receiptProductCropCandidate"),text=String(inp&&inp.value||"").trim();
+      if(!text||receiptBrokenTotalLabel(text)||receiptNonMerchandiseLabel(text)){alert("正しい商品名を確認して入力してください。");return}
+      var area=document.getElementById("receiptItems"),review=document.querySelector('.receipt-product-review-name[data-index="0"]');
+      if(review){review.value=text;review.dispatchEvent(new Event("input",{bubbles:true}));review.dataset.cropRequiresConfirmation="1";var check=document.querySelector('.receipt-product-review-confirm[data-index="0"]');if(check)check.checked=false}
+      else if(area){area.value=text}
+      var d=document.getElementById("receiptProductCropResultStatus");if(d)d.textContent="商品候補へ移しました。原本と照合し、確認チェックを入れてから支出入力へ反映してください。";
+    };
+  }catch(err){result.textContent="再読み取りに失敗しました。画像の明細をもう少し大きく囲むか、商品名を手入力してください。"}
+  finally{ocrPassLabel="";if(worker)try{await worker.terminate()}catch(_e){};busy=false;setBusy(false,"");if(start)start.disabled=false}
+}
+function productCropPanelHTML(p){
+  if(!pendingReceipt||!pendingReceipt.source||!(p&&p.productReadFailed))return"";
+  return '<details id="receiptProductCropDetails" class="receipt-item-summary" style="margin-top:12px">'+
+    '<summary style="font-weight:700;cursor:pointer">商品名の部分だけを再読み取り</summary>'+
+    '<p class="small">緑の枠に<strong>商品名と価格の行だけ</strong>を入れてください。合計・楽天ペイ・クーポンは入れないでください。</p>'+
+    '<canvas id="receiptProductCropPreview" style="display:block;width:100%;height:auto;max-height:360px;object-fit:contain;background:#fff;border-radius:8px"></canvas>'+
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px">'+
+    '<label class="small">枠の上端<input id="receiptProductCropTop" type="range" min="0" max="94" step="1" value="18"></label>'+
+    '<label class="small">枠の下端<input id="receiptProductCropBottom" type="range" min="6" max="100" step="1" value="42"></label></div>'+
+    '<button type="button" id="receiptProductCropRead" class="secondary" style="width:100%;margin-top:8px">選んだ明細を3方式で拡大OCR</button>'+
+    '<div id="receiptProductCropResult" style="margin-top:10px"></div><div id="receiptProductCropResultStatus" class="small" role="status"></div>'+
+  '</details>';
+}
+function bindProductCropPanel(){
+  var details=document.getElementById("receiptProductCropDetails");if(!details)return;
+  details.addEventListener("toggle",function(){if(details.open)drawProductCropPreview()});
+  ["receiptProductCropTop","receiptProductCropBottom"].forEach(function(id){var x=document.getElementById(id);if(x)x.addEventListener("input",drawProductCropPreview)});
+  var go=document.getElementById("receiptProductCropRead");if(go)go.onclick=recheckProductCrop;
+}
 function renderResult(p,errorText){
   var panel=document.getElementById("receiptOCRPanel");if(!panel)return;
   var cat=p.categoryCandidate,pay=p.paymentCandidate||"",items=(p.items||[]).join("\n"),rows=p.itemRows||[],splitRows=p.splitRows||[],meta=p.ocrMeta||null,reviewModels=receiptReviewModels(rows);
@@ -2702,7 +2799,7 @@ function renderResult(p,errorText){
       categoryFieldHtml+
       '<label class="full">内容<input id="receiptDetail" value="'+e(p.detail||"")+'"></label>'+
       itemsEditorHtml+
-    '</div>'+reviewHtml+rowHtml+splitHtml+
+    '</div>'+reviewHtml+productCropPanelHTML(p)+rowHtml+splitHtml+
     '<details class="details receipt-raw"><summary>OCR原文を確認</summary><textarea id="receiptRawText" rows="10">'+e(p.debugText||p.rawText||"")+'</textarea></details>'+learnedDictionaryManagerHTML(p.shop||"")+
     '<div class="receipt-result-actions"><button type="button" id="receiptRetakeBtn" class="secondary">撮り直す</button><button type="button" id="receiptCopyDiagBtn" class="secondary">診断情報をコピー</button><button type="button" id="receiptApplyBtn" class="primary">支出入力へ反映</button></div>'+
   '</div>';
@@ -2759,6 +2856,7 @@ function renderResult(p,errorText){
     [].slice.call(document.querySelectorAll(".receipt-product-review-confirm")).forEach(function(x){x.checked=true});
     confirmAll.textContent="✓ 表示中の候補を確認済みにしました";
   };
+  bindProductCropPanel();
   bindLearnedDictionaryManager(p.shop||"");
   document.getElementById("receiptRetakeBtn").onclick=function(){var x=document.getElementById("receiptCameraInput");if(x)x.click()};
   var copyDiag=document.getElementById("receiptCopyDiagBtn");if(copyDiag)copyDiag.onclick=function(){copyReceiptDiagnostic(p,copyDiag)};
@@ -2775,7 +2873,7 @@ function applyResult(){
   var reviewLearning=[],unresolvedReview=[];
   [].slice.call(document.querySelectorAll(".receipt-product-review-name")).forEach(function(inp){
     var idx=Number(inp.getAttribute("data-index")||0),value=String(inp.value||"").trim(),initial=String(inp.getAttribute("data-initial")||"").trim(),alias=String(inp.getAttribute("data-alias")||initial),price=Number(inp.getAttribute("data-price")||0);
-    var checked=!!(document.querySelector('.receipt-product-review-confirm[data-index="'+idx+'"]')||{}).checked,edited=!!value&&value!==initial,verified=edited||checked;
+    var checked=!!(document.querySelector('.receipt-product-review-confirm[data-index="'+idx+'"]')||{}).checked,edited=!!value&&value!==initial,verified=inp.dataset.cropRequiresConfirmation==="1"?checked:(edited||checked);
     while(items.length<=idx)items.push("");
     items[idx]=value;
     if(!value||value==="商品名要確認"||receiptNonMerchandiseLabel(value)||!verified)unresolvedReview.push(idx);
@@ -4112,8 +4210,8 @@ function receiptTests(){
     ["receipt malformed subtotal glyphs excluded from product text v3.71.3",receiptBrokenTotalLabel("計 て ¥290")&&receiptBrokenTotalLabel("計 て")&&isGarbageProductName("計 て")&&!itemRowsFromText("計 て ¥290",1).length],
     ["receipt First Kitchen corrupted total stays review only v3.71.3",pFkAccountingNoise.amount===290&&pFkAccountingNoise.itemRows.length===1&&/フレーバーポテトL/.test(pFkAccountingNoise.itemRows[0].name)&&pFkAccountingNoise.itemRows[0].lowConfidence===true&&!pFkAccountingNoise.itemRows[0].autoConfirmed&&!pFkAccountingNoise.itemSetComplete],
     ["receipt First Kitchen different 290yen product not guessed v3.71.3",!fkOtherProduct.items.some(function(x){return /フレーバーポテト/.test(x)})],
-    ["receipt v3.71.4 Android OCR malformed item recovers review-only potato hint",fkAndroidDamaged.amount===290&&fkAndroidDamaged.itemRows.length===1&&/フレーバーポテトL/.test(fkAndroidDamaged.itemRows[0].name)&&fkAndroidDamaged.itemRows[0].lowConfidence===true&&!fkAndroidDamaged.itemRows[0].autoConfirmed&&!fkAndroidDamaged.itemSetComplete],
-    ["receipt v3.71.4 must not guess 290-yen potato absent evidence",!fkNoFingerprint.items.some(function(x){return /フレーバーポテト/.test(x)})],
+    ["receipt v3.71.5 Android OCR malformed item recovers review-only potato hint",fkAndroidDamaged.amount===290&&fkAndroidDamaged.itemRows.length===1&&/フレーバーポテトL/.test(fkAndroidDamaged.itemRows[0].name)&&fkAndroidDamaged.itemRows[0].lowConfidence===true&&!fkAndroidDamaged.itemRows[0].autoConfirmed&&!fkAndroidDamaged.itemSetComplete],
+    ["receipt v3.71.5 must not guess 290-yen potato absent evidence",!fkNoFingerprint.items.some(function(x){return /フレーバーポテト/.test(x)})],
     ["receipt First Kitchen correct branch/category/payment test",pFkRegression.shop==="ファーストキッチン 田無店"&&pFkRegression.paymentCandidate==="rakutenpay"&&pFkRegression.categoryCandidate&&pFkRegression.categoryCandidate.subName==="外食"],
     ["receipt First Kitchen one-item amount and coupon exclusion test",pFkRegression.amount===290&&pFkRegression.itemSetComplete===true&&pFkRegression.itemRows.length===1&&pFkRegression.itemSum===290&&!pFkRegression.items.some(function(x){return /会員|クーポン|100円/.test(x)})],
     ["receipt noisy First Kitchen retains one provisional nonconfirmable row test",pFkNoisy.amount===290&&pFkNoisy.itemRows.length<=1&&!pFkNoisy.itemSetComplete&&pFkNoisy.itemRows.every(function(x){return x.lowConfidence===true})],
@@ -4332,6 +4430,9 @@ function receiptTests(){
     ["receipt payment negative test",paymentNegative],
     ["receipt header long-number cleanup test",headerClean==="LDC サイダー 1.5L"],
     ["receipt capacity preserve test",normalizeProductName("LDC サイダー 1.5L")==="LDC サイダー 1.5L"],
+    ["receipt v3.71.5 product crop no automatic confirmation test",typeof recheckProductCrop==="function"&&typeof bindProductCropPanel==="function"&&typeof drawProductCropPreview==="function"],
+    ["receipt v3.71.5 product crop excludes accounting text test",productFocusedCandidateLines("小計 ¥290\n楽天ペイ ¥290\n会員ID 0031897\nK-フレーバーポテトL ¥290").every(function(x){return !/(?:小計|楽天ペイ|会員|0031897)/.test(x)})],
+    ["receipt v3.71.5 product crop keeps merchandise candidate test",productFocusedCandidateLines("小計 ¥290\nK-フレーバーポテトL ¥290").some(function(x){return /フレーバーポテト/.test(x)})],
     ["receipt image input test",captureHTML().indexOf('accept="image/*"')>=0&&captureHTML().indexOf('capture="environment"')>=0],
     ["receipt crop confirmation test",captureHTML().indexOf("範囲確認")>=0&&typeof detectReceiptBounds==="function"&&typeof readConfirmedReceipt==="function"],
     ["receipt OCR parser test",!!p&&typeof p==="object"&&!!p3],
@@ -4364,7 +4465,7 @@ function receiptTests(){
 function attachTests(){
   var b=document.getElementById("selfTest");if(!b||b.dataset.receiptWrapped)return;
   var base=b.onclick;b.dataset.receiptWrapped="1";
-  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),passed=out.filter(function(x){return x[1]}).length,pass=passed===out.length,box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">v3.71.3 レシート機能テスト '+passed+'/'+out.length+' 件すべて合格しました。</div>':'<div class="errorbox">v3.71.3 レシート機能テスト '+passed+'/'+out.length+' 件合格。失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
+  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),passed=out.filter(function(x){return x[1]}).length,pass=passed===out.length,box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">v3.71.5 レシート機能テスト '+passed+'/'+out.length+' 件すべて合格しました。</div>':'<div class="errorbox">v3.71.5 レシート機能テスト '+passed+'/'+out.length+' 件合格。失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
 }
 var body=document.getElementById("modalBody");
 if(body){new MutationObserver(function(){enhance()}).observe(body,{childList:true,subtree:true})}

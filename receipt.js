@@ -2186,10 +2186,19 @@ function recoverSingleItemRow(texts,subtotal,amount){
   if(!best||best.score<18)return null;
   return{name:best.name,rawName:best.name,unitPrice:subtotal,qty:1,total:subtotal,quality:best.score+30,sourceIndex:best.index,sourcePriority:5,recovered:true};
 }
+function receiptIsPromotionalCoupon(line){
+  // A voucher printed for a *future* purchase is not a discount applied in
+  // the current sale.  In particular "クーポンをGET! €2%" was read as a ¥2
+  // discount, silently hiding the correct 290-yen product candidate.
+  var s=normalize(String(line||""));
+  return /(?:ク[ーｰ]?ポン|クーボン)[^\n]{0,18}(?:を\s*(?:GET|ゲット)|番号|コード|発行|配布|進呈|プレゼント|引換|取得|特典)|アンケート|クーポンをGET|(?:次回|次のご来店|次のお買い物)[^\n]{0,18}ク[ーｰ]?ポン|レシート発行日から/i.test(s);
+}
 function discountAmountFromLine(line){
   var s=ocrMoneyClean(String(line||""));
-  // "割引前合計 818" / "値引前合計 818" describes merchandise before discount.
-  // It must never be interpreted as an 818-yen discount.
+  // Promotional survey coupons and coupon serial numbers are never sale
+  // discounts, even when OCR puts digits directly beside "クーポン".
+  if(receiptIsPromotionalCoupon(s))return 0;
+  // "割引前合計 818" / "値引前合計 818" is the merchandise amount.
   if(/(?:値引|割引)\s*前\s*(?:合\s*計|小\s*計)/i.test(s))return 0;
   var m=s.match(/(?:値引|割引|クーポン)[^0-9\n]{0,12}(?:¥|￥|\\|Y)?\s*[-−ー]?\s*([0-9]{1,7})/i);
   if(!m)return 0;
@@ -2363,6 +2372,7 @@ function parseReceiptText(input,baseDate){
   initialRows=removeDerivedChangeRows(initialRows,receiptAllText,amount);
   var explicitPreDiscountRaw=Number(amountInfo.preDiscountTotal||receiptPreDiscountTotal(receiptAllText)||0);
   var directDiscount=receiptDiscountAmount(receiptAllText);
+  var ignoredPromotionalCoupons=receiptAllText.split("\n").filter(function(line){return receiptIsPromotionalCoupon(line)}).length;
   var structuralDiscount=explicitPreDiscountRaw>0&&amountInfo.subtotal>0&&explicitPreDiscountRaw>amountInfo.subtotal?explicitPreDiscountRaw-amountInfo.subtotal:0;
   // Prefer an explicitly printed discount. A derived discount is only used when it is
   // itself plausible and no direct discount was found.
@@ -2526,7 +2536,7 @@ function parseReceiptText(input,baseDate){
   var candidateSource=focusConsensus&&focusConsensus.accepted?"ocr":dictionaryAutoConfirmed?"learned":dictionaryInference&&dictionaryInference.name?(dictionaryInference.source||"verified_sample"):focusConsensus&&focusConsensus.candidateName?"ocr":"";
   var candidateList=dictionaryInference&&dictionaryInference.name?[dictionaryInference.name].concat(dictionaryInference.alternatives||[]):focusConsensus&&focusConsensus.candidates||[];
   candidateList=candidateList.filter(function(x,i,a){return x&&a.indexOf(x)===i}).slice(0,3);
-  var diagnosticStages={dateSource:dateSource,hasSubtotal:Number(amountInfo.subtotal||0)>0,reviewTarget:reviewTarget,initialRows:initialRows.length,chosenRows:itemChoice.rows.length,finalRows:rows.length,merchantHint:finalMerchantHint,fkShop:fkDiagnostic.shopOk,fkAmount:fkDiagnostic.amountOk,fkPayment:fkDiagnostic.paid,fkProduct:fkDiagnostic.strong,fkFlavor:fkDiagnostic.flavor,fkCount:fkDiagnostic.countOk,productPasses:fkDiagnostic.productPasses};
+  var diagnosticStages={dateSource:dateSource,hasSubtotal:Number(amountInfo.subtotal||0)>0,reviewTarget:reviewTarget,initialRows:initialRows.length,chosenRows:itemChoice.rows.length,finalRows:rows.length,merchantHint:finalMerchantHint,promoCouponIgnored:ignoredPromotionalCoupons,recognizedDiscount:receiptWideDiscount,fkShop:fkDiagnostic.shopOk,fkAmount:fkDiagnostic.amountOk,fkPayment:fkDiagnostic.paid,fkProduct:fkDiagnostic.strong,fkFlavor:fkDiagnostic.flavor,fkCount:fkDiagnostic.countOk,productPasses:fkDiagnostic.productPasses};
   return{rawText:raw,debugText:debugText,date:date,dateSource:dateSource,diagnosticStages:diagnosticStages,reviewTarget:reviewTarget,shop:shop,verifiedBasketRecovered:!!(verifiedBasket&&verifiedBasket.rows&&verifiedBasket.rows.length),amount:amount,amountConfidence:amountInfo.confidence,amountScore:amountInfo.score,subtotal:amountInfo.subtotal,preDiscountTotal:explicitPreDiscount,preDiscountOCR:explicitPreDiscountRaw,preDiscountSource:preDiscountDecision.source,preDiscountConflict:!!preDiscountDecision.conflict,discount:receiptWideDiscount,accountingStructureValid:accountingStructureValid,tax:amountInfo.tax,taxIncluded:!!amountInfo.taxIncluded,taxBuckets:amountInfo.taxBuckets||[],subtotalTaxMatch:subtotalTaxMatch,paymentCandidate:payment,categoryCandidate:cat,items:items,itemRows:rows,splitRows:splitRows,itemSum:itemSum,merchandiseTarget:merchandiseTarget,itemSetComplete:itemSetComplete,expectedItemCount:expectedItemCount,actualItemCount:actualItemCount,itemQuantityMatch:itemQuantityMatch,autoConfirmedItemCount:autoConfirmedItemCount,itemSubtotalMatch:!!(amountInfo.subtotal&&itemSum===amountInfo.subtotal),itemPreDiscountMatch:!!(amountInfo.subtotal&&receiptWideDiscount>0&&itemSum===amountInfo.subtotal+receiptWideDiscount),gapRecovered:!!gapRecovery.recovered,gapRecoveredAmount:Number(gapRecovery.gap||0),gapRecoveredName:gapRecovery.recoveredName||"",learnedGapRecovered:!!learnedGapRecovery.recovered,learnedGapRecoveredAmount:Number(learnedGapRecovery.gap||0),learnedGapRecoveredName:learnedGapRecovery.recoveredName||"",productConfidenceLevel:productConfidence.level,highConfidenceItemCount:productConfidence.high,mediumConfidenceItemCount:productConfidence.medium,requiresProductReview:productConfidence.requiresReview,productReviewRecommended:productConfidence.reviewRecommended,detail:detailValue,productReadFailed:productReadFailed,productLowConfidence:productLowConfidence,lowConfidenceItemCount:lowConfidenceItemCount,productCandidateStatus:candidateStatus,productCandidateSource:candidateSource,productCandidateAutoConfirmed:dictionaryAutoConfirmed,productCandidates:candidateList,productCandidateReason:dictionaryAutoConfirmed?"learned_auto_confirmed":dictionaryInference&&dictionaryInference.name?"merchant_dictionary":focusConsensus&&focusConsensus.rejectionReason||"",tendered:receiptTenderedAmount(receiptAllText,amount),ocrMeta:obj&&obj.meta||null};
 }
 function summarizeProductConfidence(rows){
@@ -2546,7 +2556,7 @@ function receiptDiagnosticSummary(p){
   p=p||{};
   var rows=Array.isArray(p.itemRows)?p.itemRows:[],cat=p.categoryCandidate||{},meta=p.ocrMeta||{};
   var lines=[
-    "お小遣い家計簿 "+(typeof VERSION==="string"?VERSION:"v3.71.8")+" レシート診断（OCR r3.71.8）",
+    "お小遣い家計簿 "+(typeof VERSION==="string"?VERSION:"v3.71.9")+" レシート診断（OCR r3.71.9）",
     "日付: "+String(p.date||"未判定（手動確認）")+" / 根拠: "+String(p.dateSource||"missing"),
     "店名: "+String(p.shop||"未判定"),
     "合計: "+String(Number(p.amount||0))+"円",
@@ -2557,6 +2567,7 @@ function receiptDiagnosticSummary(p){
     "商品合計: "+String(Number(p.itemSum||0))+"円 / 商品明細: "+(p.itemSetComplete?"一致":"未一致"),
     "商品構成: "+receiptCountText(rows.length,Number(p.actualItemCount||0))+(Number(p.expectedItemCount||0)?(" / レシート "+String(Number(p.expectedItemCount))+"点"):""),
     "抽出経路: "+(function(){var d=p.diagnosticStages||{};return "初期候補 "+Number(d.initialRows||0)+" / 絞込 "+Number(d.chosenRows||0)+" / 最終 "+Number(d.finalRows||rows.length)+" / 店舗候補 "+String(d.merchantHint||"未判定");})(),
+    "割引照合: 当日割引 "+String(Number((p.diagnosticStages||{}).recognizedDiscount||0))+"円 / 除外した販促行 "+String(Number((p.diagnosticStages||{}).promoCouponIgnored||0))+"件",
     "候補根拠: "+(function(){var d=p.diagnosticStages||{};return "店舗="+!!d.fkShop+",金額="+!!d.fkAmount+",決済="+!!d.fkPayment+",商品="+!!d.fkProduct+",味="+!!d.fkFlavor+",点数="+!!d.fkCount+",明細OCR="+Number(d.productPasses||0);})(),
     "支払方法: "+String(p.paymentCandidate||"未判定"),
     "カテゴリ: "+String(cat.groupName||"未判定")+(cat.subName?(" ＞ "+cat.subName):""),
@@ -4315,13 +4326,19 @@ function receiptTests(){
   var fkWrongProduct=parseReceiptText({text:"First Kitchen\n田無店\n2026年10月10日(土)\nハンバーガー ¥290\n合計 ¥290\n楽天ペイ ¥290",itemText:"ハンバーガー ¥290",whole:"First Kitchen\n田無店\nハンバーガー ¥290\n合計 ¥290\n楽天ペイ ¥290",meta:{passes:4}},"2026-10-11");
   var fkDateMissing=parseReceiptText({text:"First Kitchen\n田無店\n合計 ¥290\n楽天ペイ ¥290",meta:{passes:2}},"2026-10-11");
 
+  var fkPromoSurveyReceipt={text:"First Kitchen\n田無店\n2026年10月10日\n(内消費税等 ¥21)\n楽天ペー ¥290\n<楽天ペイ>\n会員ID 0000000\nアンケート\nクーポンをGET! €2%\nポテトS ¥100\nクーポン番号 9999",whole:"First Kitchen\n田無店\n楽天ペー ¥290",itemText:"<TAKE OUT>\nK-7b-A\"-8\"7HL290\n集がしター-衣油味\n小計 E",paymentText:"<楽天ペイ>\n支払 ¥290",sections:{top:"First Kitchen\n田無店",middle:"K-7b-A\"-8\"7HL290\n集がしター-衣油味",bottom:"楽天ペー ¥290\n(内消費税等 ¥21)"},diagnostics:fkDamagedPasses,meta:{passes:21}};
+  var pFkPromoSurvey=parseReceiptText(fkPromoSurveyReceipt,"2026-10-11");
   return[
+    ["receipt v3.71.9 promotional coupon GET and serial are NOT applied discounts",receiptDiscountAmount("クーポンをGET! €2%\nクーポン番号 9999\n次回クーポン特典 ¥100")===0&&pFkPromoSurvey.discount===0],
+    ["receipt v3.71.9 promotional coupon no longer blocks item review",pFkPromoSurvey.amount===290&&pFkPromoSurvey.itemRows.length===1&&/フレーバーポテトL/.test(pFkPromoSurvey.itemRows[0].name)&&pFkPromoSurvey.itemRows[0].lowConfidence===true&&pFkPromoSurvey.itemSetComplete===false],
+    ["receipt v3.71.9 ignored promotional discount diagnostic",pFkPromoSurvey.diagnosticStages.recognizedDiscount===0&&pFkPromoSurvey.diagnosticStages.promoCouponIgnored>0&&/除外した販促行/.test(receiptDiagnosticSummary(pFkPromoSurvey))],
+    ["receipt v3.71.9 legitimate coupon discount still detected",receiptDiscountAmount("商品A ¥1090\nクーポン割引 ¥-250\n合計 ¥840")===250],
     ["receipt v3.71.8 Android source-pass rescue requires human review",fkActualNoSubtotal.amount===290&&fkActualNoSubtotal.itemRows.length===1&&fkActualNoSubtotal.itemRows[0].lowConfidence===true&&fkActualNoSubtotal.itemRows[0].provisionalAmount===true&&!fkActualNoSubtotal.itemSetComplete],
     ["receipt v3.71.8 no subtotal keeps only reference amount",fkActualNoSubtotal.subtotal===0&&fkActualNoSubtotal.reviewTarget===290&&!fkActualNoSubtotal.accountingStructureValid],
     ["receipt v3.71.8 misprinted date from product OCR",fkActualNoSubtotal.date==="2026-10-10"&&fkActualNoSubtotal.dateSource==="product_pass"],
     ["receipt v3.71.8 missing date never defaults today",fkDateMissing.date===""&&fkDateMissing.dateSource==="missing"],
     ["receipt v3.71.8 different product never guessed as potato",!fkWrongProduct.items.some(function(x){return /フレーバーポテト/.test(x)})],
-    ["receipt v3.71.8 diagnostic includes build and safe stage hints",/v3.71.8 レシート診断/.test(receiptDiagnosticSummary(fkActualNoSubtotal))&&/抽出経路/.test(receiptDiagnosticSummary(fkActualNoSubtotal))&&!/(?:カード番号|取引ID|会員ID)\s*[:：]/.test(receiptDiagnosticSummary(fkActualNoSubtotal))],
+    ["receipt v3.71.8 diagnostic includes build and safe stage hints",/v3.71.9 レシート診断/.test(receiptDiagnosticSummary(fkActualNoSubtotal))&&/抽出経路/.test(receiptDiagnosticSummary(fkActualNoSubtotal))&&!/(?:カード番号|取引ID|会員ID)\s*[:：]/.test(receiptDiagnosticSummary(fkActualNoSubtotal))],
     ["receipt malformed subtotal glyphs excluded from product text v3.71.3",receiptBrokenTotalLabel("計 て ¥290")&&receiptBrokenTotalLabel("計 て")&&isGarbageProductName("計 て")&&!itemRowsFromText("計 て ¥290",1).length],
     ["receipt First Kitchen corrupted total stays review only v3.71.3",pFkAccountingNoise.amount===290&&pFkAccountingNoise.itemRows.length===1&&/フレーバーポテトL/.test(pFkAccountingNoise.itemRows[0].name)&&pFkAccountingNoise.itemRows[0].lowConfidence===true&&!pFkAccountingNoise.itemRows[0].autoConfirmed&&!pFkAccountingNoise.itemSetComplete],
     ["receipt First Kitchen different 290yen product not guessed v3.71.3",!fkOtherProduct.items.some(function(x){return /フレーバーポテト/.test(x)})],
@@ -4586,7 +4603,7 @@ function receiptTests(){
 function attachTests(){
   var b=document.getElementById("selfTest");if(!b||b.dataset.receiptWrapped)return;
   var base=b.onclick;b.dataset.receiptWrapped="1";
-  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),passed=out.filter(function(x){return x[1]}).length,pass=passed===out.length,box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">v3.71.8 レシート機能テスト '+passed+'/'+out.length+' 件すべて合格しました。</div>':'<div class="errorbox">v3.71.8 レシート機能テスト '+passed+'/'+out.length+' 件合格。失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
+  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),passed=out.filter(function(x){return x[1]}).length,pass=passed===out.length,box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">v3.71.9 レシート機能テスト '+passed+'/'+out.length+' 件すべて合格しました。</div>':'<div class="errorbox">v3.71.9 レシート機能テスト '+passed+'/'+out.length+' 件合格。失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
 }
 var body=document.getElementById("modalBody");
 if(body){new MutationObserver(function(){enhance()}).observe(body,{childList:true,subtree:true})}

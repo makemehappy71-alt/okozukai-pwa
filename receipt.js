@@ -3340,6 +3340,88 @@ function receiptTests(){
   };
   var pKfcActual=parseReceiptText(kfcActualObj,"2026-10-03"),kfcActualRow=pKfcActual.itemRows[0]||null,kfcActualSplit=pKfcActual.splitRows[0]||null;
 
+  var createMixedObj={
+    text:[
+      "5=2 CREATE",
+      "ドラヨッグストア リエイト",
+      "登録番号 T9020001035423",
+      "小平中島町",
+      "2026年10月10日(土)09時46分 #5464",
+      "©LDC サイダー 1. 5L",
+      "@99 3 297",
+      "@ぷサントリー NOPEギルティ",
+      "@159 2 318",
+      "@サントリー クラフトベリー&",
+      "@79 3 237",
+      "⑨ぱぷアサヒ 三ツ矢実りの洋梨mi",
+      "@/9 2 158",
+      "クリニカライオン フレッ 158",
+      "Dr. デンリスト 山切カ 65",
+      "12点 小計 ¥1,233",
+      "合計 ¥1,335",
+      "(含む消費税等 ¥102)",
+      "(10%対象 ¥245",
+      "うち消費税 ¥22)",
+      "(8%対象 ¥1,090",
+      "うち消費税 ¥80)",
+      "@ぷは軽減税率8%適用商品",
+      "楽天ベイ ¥1,335",
+      "取引ID 2135820261010094604034600026464"
+    ].join("\n"),
+    whole:[
+      "CREATE",
+      "ドラッグストア クリエイト",
+      "登録番号 T9020001035423",
+      "小平中島町",
+      "2026年10月10日(土)09時46分",
+      "©LDC サイダー 1. 5L",
+      "@99 3 297",
+      "@ぷサントリー NOPEギルティ",
+      "@159 2 318",
+      "@サントリー クラフトベリー&",
+      "@79 3 237",
+      "⑨ぱぷアサヒ 三ツ矢実りの洋梨mi",
+      "@79 2 158",
+      "クリニカライオン フレッ 158",
+      "Dr. デンリスト 山切カ 65",
+      "12点 小計 ¥1,233",
+      "合計 ¥1,335",
+      "(含む消費税等 ¥102)",
+      "(10%対象 ¥245",
+      "うち消費税 ¥22)",
+      "(8%対象 ¥1,090",
+      "うち消費税 ¥80)",
+      "@ぷは軽減税率8%適用商品",
+      "楽天ベイ ¥1,335"
+    ].join("\n"),
+    shopText:"クリエイト",
+    itemText:[
+      "©LDC サイダー 1. 5L",
+      "@99 3 297",
+      "@ぷサントリー NOPEギルティ",
+      "@159 2 318",
+      "@サントリー クラフトベリー&",
+      "@79 3 237",
+      "⑨ぱぷアサヒ 三ツ矢実りの洋梨mi",
+      "@/9 2 158",
+      "クリニカライオン フレッ 158",
+      "Dr. デンリスト 山切カ 65",
+      "(10%対象 ¥245",
+      "(8%対象 ¥1,090"
+    ].join("\n"),
+    paymentText:"楽天ベイ ¥1,335",
+    sections:{
+      top:"CREATE\nドラッグストア クリエイト\n小平中島町\n2026年10月10日(土)09時46分",
+      middle:"©LDC サイダー 1. 5L\n@99 3 297\n@ぷサントリー NOPEギルティ\n@159 2 318\n@サントリー クラフトベリー&\n@79 3 237\n⑨ぱぷアサヒ 三ツ矢実りの洋梨mi\n@79 2 158\nクリニカライオン フレッ 158\nDr. デンリスト 山切カ 65",
+      bottom:"12点 小計 ¥1,233\n合計 ¥1,335\n(含む消費税等 ¥102)\n(10%対象 ¥245\nうち消費税 ¥22)\n(8%対象 ¥1,090\nうち消費税 ¥80)\n楽天ベイ ¥1,335"
+    },
+    meta:{passes:12,skew:0,ratio:4}
+  };
+  var pCreateMixed=parseReceiptText(createMixedObj,"2026-10-10");
+  var create8=pCreateMixed.splitRows.filter(function(x){return x.taxRate===8}),create10=pCreateMixed.splitRows.filter(function(x){return x.taxRate===10});
+  var create8Net=create8.reduce(function(a,x){return a+x.net},0),create8Tax=create8.reduce(function(a,x){return a+x.extra},0),create8Gross=create8.reduce(function(a,x){return a+x.gross},0);
+  var create10Net=create10.reduce(function(a,x){return a+x.net},0),create10Tax=create10.reduce(function(a,x){return a+x.extra},0),create10Gross=create10.reduce(function(a,x){return a+x.gross},0);
+
   var bkRegressionObj={
     text:"バーガーキング立川北口趾\n2026-09-27 10:28:26\nE 【りのたかセト】 1 ¥1,090\nクーポン割引 ¥-250\nE >Sフレンチフライ 1 ¥0\n合計金額 ¥840\n(内 消費税 ¥76)\n[ 現金 ] ¥1,000\n[ お釣 ] ¥160",
     whole:"ガーキンク立川北口店\nE 【7の7ーたがセト】 ¥1,090\nクーポン割引 ¥-250\n合計金額 ¥840\n[ 現金 ] ¥1,000\n[ お釣 ] ¥160",
@@ -4070,6 +4152,12 @@ function receiptTests(){
     ["receipt KFC five-piece quantity v3.70.5 test",!!kfcActualRow&&kfcActualRow.qty===5&&kfcActualRow.unitPrice===140&&kfcActualRow.total===700&&pKfcActual.actualItemCount===5&&pKfcActual.itemSum===700&&pKfcActual.itemSetComplete===true],
     ["receipt KFC included-tax split v3.70.5 test",pKfcActual.tax===51&&pKfcActual.taxIncluded===true&&!!kfcActualSplit&&kfcActualSplit.net===649&&kfcActualSplit.extra===51&&kfcActualSplit.gross===700],
     ["receipt KFC external-category v3.70.5 test",pKfcActual.categoryCandidate&&pKfcActual.categoryCandidate.groupName==="食費"&&pKfcActual.categoryCandidate.subName==="外食"&&!pKfcActual.items.some(function(x){return /取引金額|お買上|内消費/.test(x)})],
+    ["receipt Create branch/payment v3.71.1 test",pCreateMixed.shop==="クリエイト小平中島町店"&&pCreateMixed.paymentCandidate==="rakutenpay"&&pCreateMixed.amount===1335],
+    ["receipt Create six-kind twelve-item v3.71.1 test",pCreateMixed.itemRows.length===6&&pCreateMixed.actualItemCount===12&&pCreateMixed.expectedItemCount===12&&pCreateMixed.itemSum===1233&&pCreateMixed.itemSetComplete===true],
+    ["receipt Create verified product names v3.71.1 test",pCreateMixed.productConfidenceLevel==="high"&&pCreateMixed.items.join("|")==="LDC サイダー 1.5L|ギルティ炭酸 NOPE|クラフトボス ベリー＆アサイー炭酸|三ツ矢 実りの洋梨mix|クリニカ フレッシュミント 130g|ドクターデンリスト 山切カット"],
+    ["receipt Create mixed-tax buckets v3.71.1 test",pCreateMixed.tax===102&&pCreateMixed.taxBuckets.length===2&&create8Net===1010&&create8Tax===80&&create8Gross===1090&&create10Net===223&&create10Tax===22&&create10Gross===245],
+    ["receipt Create mixed-tax item categories v3.71.1 test",create8.length===4&&create8.every(function(x){return x.categoryLabel==="食費 ＞ 飲み物"})&&create10.length===2&&create10.every(function(x){return x.categoryLabel==="日用品 ＞ 衛生用品"})],
+    ["receipt Create mixed-tax gross total v3.71.1 test",pCreateMixed.splitRows.reduce(function(a,x){return a+x.gross},0)===1335&&pCreateMixed.splitRows.reduce(function(a,x){return a+x.extra},0)===102],
     ["receipt SEIYU registration fingerprint test",seiyuRegShop==="西友"],
     ["receipt item category snack test",splitSnack&&/お菓子|スイーツ/.test(splitSnack.categoryLabel)],
     ["receipt item category drink test",splitDrink&&/飲み物/.test(splitDrink.categoryLabel)],

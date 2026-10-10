@@ -402,3 +402,8 @@ body.modal-open:has(#txForm) .modal{
 .receipt-product-photo-actions button {display:block;min-width:0;white-space:normal;text-align:center;}
 #receiptProductResetPhoto[hidden]{display:none!important}
 #receiptProductCropPhotoStatus{display:block!important;min-width:0;}
+
+/* v3.71.10: independent accounting verification is not inferred from a provisional sum. */
+.receipt-balance-review{margin:10px 0 12px;padding:12px 14px;border:1px solid var(--border,#444);border-radius:12px;line-height:1.55;overflow-wrap:anywhere;font-size:.92rem}
+.receipt-balance-review strong{font-size:.96rem;display:block}
+.receipt-balance-review .receipt-balance-note{font-size:.88rem;opacity:.85;margin-top:4px}

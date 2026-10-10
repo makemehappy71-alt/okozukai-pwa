@@ -2552,11 +2552,36 @@ function summarizeProductConfidence(rows){
   var overall=!list.length?"unresolved":low?"low":medium?"medium":"high";
   return{level:overall,total:list.length,high:high,medium:medium,low:low,autoConfirmed:autoConfirmed,requiresReview:low>0,reviewRecommended:medium>0};
 }
+// Keep arithmetic agreement distinct from independent item-price verification.
+// Candidate prices inferred from the payment amount are provisional and must
+// never satisfy the strict itemSetComplete / auto-registration gate.
+function receiptBalanceComparison(p){
+  p=p||{};
+  var rows=Array.isArray(p.itemRows)?p.itemRows:[],amount=Number(p.amount||0),sum=Number(p.itemSum||0),discount=Number(p.discount||0);
+  var hasRows=rows.length>0,known=Number.isFinite(amount)&&amount>0,provisional=rows.some(function(r){return !!(r&&r.provisionalAmount)});
+  var plainComparable=known&&hasRows&&discount===0,numberMatches=plainComparable&&sum===amount;
+  var independentlyVerified=p.itemSetComplete===true&&!provisional;
+  var label;
+  if(independentlyVerified)label="明細を独立照合済み";
+  else if(!known)label="支払金額未確認（比較不可）";
+  else if(!hasRows)label="商品候補なし（照合未完了）";
+  else if(discount!==0)label="割引のため単純な金額比較は保留（独立照合未完了）";
+  else if(numberMatches)label="数値上は一致（商品単価・会計の独立照合は未完了）";
+  else label="数値は未一致（商品・会計の確認が必要）";
+  var itemStatus=p.productConfidenceLevel==="low"?"要確認（自動確定なし）":p.productConfidenceLevel==="medium"?"確認推奨":p.productConfidenceLevel==="high"?"高信頼":"未判定";
+  return{amount:amount,sum:sum,hasRows:hasRows,known:known,provisional:provisional,numberMatches:numberMatches,independentlyVerified:independentlyVerified,label:label,itemStatus:itemStatus};
+}
+function receiptBalanceDisplay(p){
+  var r=receiptBalanceComparison(p);
+  var fmt=function(n){return "¥"+Math.round(n).toLocaleString("ja-JP")};
+  return "商品候補合計 "+fmt(r.sum)+" / 支払額 "+(r.known?fmt(r.amount):"未判定")+"："+r.label;
+}
 function receiptDiagnosticSummary(p){
   p=p||{};
   var rows=Array.isArray(p.itemRows)?p.itemRows:[],cat=p.categoryCandidate||{},meta=p.ocrMeta||{};
+  var balance=receiptBalanceComparison(p);
   var lines=[
-    "お小遣い家計簿 "+(typeof VERSION==="string"?VERSION:"v3.71.9")+" レシート診断（OCR r3.71.9）",
+    "お小遣い家計簿 "+(typeof VERSION==="string"?VERSION:"v3.71.10")+" レシート診断（OCR r3.71.10）",
     "日付: "+String(p.date||"未判定（手動確認）")+" / 根拠: "+String(p.dateSource||"missing"),
     "店名: "+String(p.shop||"未判定"),
     "合計: "+String(Number(p.amount||0))+"円",
@@ -2564,7 +2589,9 @@ function receiptDiagnosticSummary(p){
     "小計: "+String(Number(p.subtotal||0))+"円 / 税: "+String(Number(p.tax||0))+"円"+(p.reviewTarget?" / 会計参考上限: "+String(p.reviewTarget)+"円（未照合）":""),
     "会計構造: "+(p.accountingStructureValid?"一致":"未確認"),
     "商品信頼度: "+String(p.productConfidenceLevel||"未判定"),
-    "商品合計: "+String(Number(p.itemSum||0))+"円 / 商品明細: "+(p.itemSetComplete?"一致":"未一致"),
+    "商品候補合計: "+String(balance.sum)+"円 / 支払額: "+String(balance.amount)+"円 / 数値比較: "+(balance.numberMatches?"一致（未検証）":balance.independentlyVerified?"独立照合済み":balance.label),
+    "明細・会計の独立照合: "+(balance.independentlyVerified?"完了":"未完了")+(balance.provisional?"（商品単価は支払額から仮置き）":""),
+    "商品名の確認状態: "+balance.itemStatus,
     "商品構成: "+receiptCountText(rows.length,Number(p.actualItemCount||0))+(Number(p.expectedItemCount||0)?(" / レシート "+String(Number(p.expectedItemCount))+"点"):""),
     "抽出経路: "+(function(){var d=p.diagnosticStages||{};return "初期候補 "+Number(d.initialRows||0)+" / 絞込 "+Number(d.chosenRows||0)+" / 最終 "+Number(d.finalRows||rows.length)+" / 店舗候補 "+String(d.merchantHint||"未判定");})(),
     "割引照合: 当日割引 "+String(Number((p.diagnosticStages||{}).recognizedDiscount||0))+"円 / 除外した販促行 "+String(Number((p.diagnosticStages||{}).promoCouponIgnored||0))+"件",
@@ -2813,11 +2840,12 @@ function renderResult(p,errorText){
   var panel=document.getElementById("receiptOCRPanel");if(!panel)return;
   var cat=p.categoryCandidate,pay=p.paymentCandidate||"",items=(p.items||[]).join("\n"),rows=p.itemRows||[],splitRows=p.splitRows||[],meta=p.ocrMeta||null,reviewModels=receiptReviewModels(rows);
   var compactProducts=shouldCompactReceiptProducts(p,reviewModels),countText=receiptCountText(rows.length,Number(p.actualItemCount||0)),receiptReady=receiptIsReady(p,reviewModels,errorText);
+  var balance=receiptBalanceComparison(p);
   var preview=previewUrl?'<img class="receipt-preview" src="'+e(previewUrl)+'" alt="撮影したレシートのプレビュー">':"";
   var metaHtml=meta?'<div class="receipt-ocr-meta">分割OCR '+e(meta.passes||"")+"回"+(meta.fastPath?" / 高速構造解析":"")+(Math.abs(Number(meta.skew||0))>=.3?" / 傾き補正 "+e(Number(meta.skew).toFixed(1))+"°":"")+(meta.productAnchor?" / 商品価格座標 "+e(yen(meta.productAnchor.value)):"")+'</div>':"";
   if(p.amountConfidence==="high")metaHtml+='<div class="receipt-ocr-meta">金額判定：高信頼'+(p.subtotalTaxMatch?(p.taxIncluded?" / 税込小計＝合計":" / 小計＋税一致"):"")+(p.itemSubtotalMatch?" / 商品合計＝小計":p.itemPreDiscountMatch?" / 商品合計−割引＝小計":"")+'</div>';
   if(p.accountingStructureValid)metaHtml+='<div class="receipt-ocr-meta">会計構造：'+e(yen(p.preDiscountTotal))+" − 割引 "+e(yen(p.discount))+" ＝ "+e(yen(p.subtotal))+(p.taxIncluded?(" / 内税 "+e(yen(p.tax))+" / 合計 "+e(yen(p.amount))):(" / ＋税 "+e(yen(p.tax))+" ＝ "+e(yen(p.amount))))+(p.preDiscountConflict?" / 割引前合計OCRを補正":"")+'</div>';
-  if(p.itemSetComplete)metaHtml+='<div class="receipt-ocr-meta">商品明細：金額一致'+(countText?(" / "+e(countText)):"")+(p.expectedItemCount?(p.itemQuantityMatch?" 一致":"（レシート "+e(p.expectedItemCount)+"点）"):"")+'</div>';
+  if(p.itemSetComplete)metaHtml+='<div class="receipt-ocr-meta">商品明細：独立照合済み'+(countText?(" / "+e(countText)):"")+(p.expectedItemCount?(p.itemQuantityMatch?" 点数一致":"（レシート "+e(p.expectedItemCount)+"点）"):"")+'</div>';
   if(p.productConfidenceLevel==="low")metaHtml+='<div class="receipt-ocr-meta">商品名判定：要確認 '+e(p.lowConfidenceItemCount||1)+"件 / 金額は保持"+'</div>';
   else if(p.productConfidenceLevel==="medium")metaHtml+='<div class="receipt-ocr-meta">商品名判定：候補 '+e(p.mediumConfidenceItemCount||1)+"件 / 確認推奨"+'</div>';
   else if(p.productConfidenceLevel==="high")metaHtml+='<div class="receipt-ocr-meta">商品名判定：高信頼'+(p.autoConfirmedItemCount?(" / 学習・辞書 "+e(p.autoConfirmedItemCount)+"件"):"")+'</div>';
@@ -2826,11 +2854,12 @@ function renderResult(p,errorText){
   if(p.learnedGapRecovered)metaHtml+='<div class="receipt-ocr-meta">学習補正：'+e(p.learnedGapRecoveredName||"")+" "+e(yen(p.learnedGapRecoveredAmount||0))+'</div>';
   var readySummaryHtml=receiptReady?'<div class="receipt-ready-summary"><strong>✓ 読み取り成功</strong><span>'+e(yen(p.amount||0))+(countText?(" / "+e(countText)):"")+'</span></div>':"";
   var metaDetailsHtml=metaHtml?'<details class="receipt-technical-details"><summary>解析詳細</summary><div class="receipt-technical-body">'+metaHtml+'</div></details>':"";
+  var balanceHtml='<div class="receipt-balance-review" role="status"><strong>'+e(receiptBalanceDisplay(p))+'</strong>'+(balance.hasRows?'<div class="receipt-balance-note">商品名：'+e(balance.itemStatus)+(balance.provisional?' / 商品単価は仮置き':'')+'</div>':'')+'</div>';
   var confidenceWarn=(!Number(p.amount||0)?'<div class="warning">合計金額を特定できませんでした。金額一致とは扱わず、手入力が必要です。</div>':"")+(p.amountConfidence==="low"?'<div class="warning">金額候補の信頼度が低いため、合計金額を確認してください。</div>':"");
   if(!p.date)confidenceWarn+='<div class="warning">レシートの日付を読み取れませんでした。登録前に必ず購入日を入力してください。</div>';
-  if(p.reviewTarget&&!p.itemSetComplete)confidenceWarn+='<div class="warning">小計が判読できません。支払合計 '+e(yen(p.reviewTarget))+' は参考上限であり、商品明細の一致は未確認です。</div>';
+  if(p.reviewTarget&&!p.itemSetComplete)confidenceWarn+='<div class="warning">小計が判読できません。'+(balance.numberMatches?'商品候補と支払額は数値上のみ一致しますが、商品単価・会計構造の独立照合は未完了です。':'支払額 '+e(yen(p.reviewTarget))+' は参考上限です。商品明細の確認が必要です。')+'</div>';
   if(!p.itemSetComplete&&p.merchandiseTarget){
-    confidenceWarn+='<div class="warning">商品明細が会計と一致していません。商品合計 '+e(yen(p.itemSum||0))+' / 目標 '+e(yen(p.merchandiseTarget||0))+'。不足商品の確認が必要です。</div>';
+    confidenceWarn+='<div class="warning">'+(balance.numberMatches?'商品候補の数値合計は支払額と一致していますが、単価は未確認です。':'商品明細が会計と照合できていません。商品合計 '+e(yen(p.itemSum||0))+' / 目標 '+e(yen(p.merchandiseTarget||0))+'。不足商品の確認が必要です。')+'</div>';
   }else if(p.productLowConfidence){
     confidenceWarn+='<div class="warning">'+(p.itemSetComplete?'金額・数量は会計と一致していますが、':'商品名と会計金額を独立に照合できていません。')+'商品名 '+e(p.lowConfidenceItemCount||1)+'件を確認してください。</div>';
     if(p.gapRecovered)confidenceWarn+='<div class="warning">不足していた '+e(yen(p.gapRecoveredAmount||0))+' の商品は会計構造から回収済みです。</div>';
@@ -2888,7 +2917,7 @@ function renderResult(p,errorText){
     :'<label>カテゴリ候補'+categorySelectHtml+'</label>';
   panel.innerHTML='<div class="receipt-result-card">'+preview+
     '<div class="receipt-result-title"><strong>レシート読み取り結果</strong><span class="small">'+(receiptReady?"内容を確認して支出入力へ反映できます。":"確認・修正してから支出入力へ反映してください。")+'</span></div>'+
-    readySummaryHtml+metaDetailsHtml+
+    readySummaryHtml+metaDetailsHtml+balanceHtml+
     (errorText?'<div class="warning">'+e(errorText)+' 手入力で補完できます。</div>':"")+confidenceWarn+
     '<div class="form-grid receipt-result-grid">'+
       '<label>日付<input id="receiptDate" type="date" max="'+dstr(now())+'" value="'+e(p.date||"")+'"'+(!p.date?' required':'')+'></label>'+
@@ -4329,16 +4358,22 @@ function receiptTests(){
   var fkPromoSurveyReceipt={text:"First Kitchen\n田無店\n2026年10月10日\n(内消費税等 ¥21)\n楽天ペー ¥290\n<楽天ペイ>\n会員ID 0000000\nアンケート\nクーポンをGET! €2%\nポテトS ¥100\nクーポン番号 9999",whole:"First Kitchen\n田無店\n楽天ペー ¥290",itemText:"<TAKE OUT>\nK-7b-A\"-8\"7HL290\n集がしター-衣油味\n小計 E",paymentText:"<楽天ペイ>\n支払 ¥290",sections:{top:"First Kitchen\n田無店",middle:"K-7b-A\"-8\"7HL290\n集がしター-衣油味",bottom:"楽天ペー ¥290\n(内消費税等 ¥21)"},diagnostics:fkDamagedPasses,meta:{passes:21}};
   var pFkPromoSurvey=parseReceiptText(fkPromoSurveyReceipt,"2026-10-11");
   return[
-    ["receipt v3.71.9 promotional coupon GET and serial are NOT applied discounts",receiptDiscountAmount("クーポンをGET! €2%\nクーポン番号 9999\n次回クーポン特典 ¥100")===0&&pFkPromoSurvey.discount===0],
-    ["receipt v3.71.9 promotional coupon no longer blocks item review",pFkPromoSurvey.amount===290&&pFkPromoSurvey.itemRows.length===1&&/フレーバーポテトL/.test(pFkPromoSurvey.itemRows[0].name)&&pFkPromoSurvey.itemRows[0].lowConfidence===true&&pFkPromoSurvey.itemSetComplete===false],
-    ["receipt v3.71.9 ignored promotional discount diagnostic",pFkPromoSurvey.diagnosticStages.recognizedDiscount===0&&pFkPromoSurvey.diagnosticStages.promoCouponIgnored>0&&/除外した販促行/.test(receiptDiagnosticSummary(pFkPromoSurvey))],
-    ["receipt v3.71.9 legitimate coupon discount still detected",receiptDiscountAmount("商品A ¥1090\nクーポン割引 ¥-250\n合計 ¥840")===250],
+    ["receipt v3.71.10 provisional 290 yen shows numeric match, not independent reconciliation",receiptBalanceComparison(pFkPromoSurvey).numberMatches===true&&receiptBalanceComparison(pFkPromoSurvey).independentlyVerified===false&&!pFkPromoSurvey.itemSetComplete],
+    ["receipt v3.71.10 diagnostic separates item, amount and reconciliation",/商品候補合計: 290円 \/ 支払額: 290円 \/ 数値比較: 一致（未検証）/.test(receiptDiagnosticSummary(pFkPromoSurvey))&&/明細・会計の独立照合: 未完了（商品単価は支払額から仮置き）/.test(receiptDiagnosticSummary(pFkPromoSurvey))&&/商品名の確認状態: 要確認/.test(receiptDiagnosticSummary(pFkPromoSurvey))],
+    ["receipt v3.71.10 no products never marked numeric matched",!receiptBalanceComparison({amount:290,itemSum:0,itemRows:[]}).numberMatches],
+    ["receipt v3.71.10 real discount cannot count as simple numeric match",!receiptBalanceComparison({amount:290,itemSum:300,discount:10,itemRows:[{name:"商品A",total:300}],itemSetComplete:false}).numberMatches],
+    ["receipt v3.71.10 verified item rows retain independent match",receiptBalanceComparison({amount:290,itemSum:290,discount:0,itemRows:[{name:"A",total:290}],itemSetComplete:true,productConfidenceLevel:"high"}).independentlyVerified],
+    ["receipt v3.71.10 displayed review remains non-success and no learning",receiptBalanceDisplay(pFkPromoSurvey).includes("数値上は一致")&&receiptBalanceComparison(pFkPromoSurvey).provisional===true&&pFkPromoSurvey.itemRows.every(function(x){return x.lowConfidence&&x.candidateOnly&&!x.autoConfirmed})],
+    ["receipt v3.71.10 promotional coupon GET and serial are NOT applied discounts",receiptDiscountAmount("クーポンをGET! €2%\nクーポン番号 9999\n次回クーポン特典 ¥100")===0&&pFkPromoSurvey.discount===0],
+    ["receipt v3.71.10 promotional coupon no longer blocks item review",pFkPromoSurvey.amount===290&&pFkPromoSurvey.itemRows.length===1&&/フレーバーポテトL/.test(pFkPromoSurvey.itemRows[0].name)&&pFkPromoSurvey.itemRows[0].lowConfidence===true&&pFkPromoSurvey.itemSetComplete===false],
+    ["receipt v3.71.10 ignored promotional discount diagnostic",pFkPromoSurvey.diagnosticStages.recognizedDiscount===0&&pFkPromoSurvey.diagnosticStages.promoCouponIgnored>0&&/除外した販促行/.test(receiptDiagnosticSummary(pFkPromoSurvey))],
+    ["receipt v3.71.10 legitimate coupon discount still detected",receiptDiscountAmount("商品A ¥1090\nクーポン割引 ¥-250\n合計 ¥840")===250],
     ["receipt v3.71.8 Android source-pass rescue requires human review",fkActualNoSubtotal.amount===290&&fkActualNoSubtotal.itemRows.length===1&&fkActualNoSubtotal.itemRows[0].lowConfidence===true&&fkActualNoSubtotal.itemRows[0].provisionalAmount===true&&!fkActualNoSubtotal.itemSetComplete],
     ["receipt v3.71.8 no subtotal keeps only reference amount",fkActualNoSubtotal.subtotal===0&&fkActualNoSubtotal.reviewTarget===290&&!fkActualNoSubtotal.accountingStructureValid],
     ["receipt v3.71.8 misprinted date from product OCR",fkActualNoSubtotal.date==="2026-10-10"&&fkActualNoSubtotal.dateSource==="product_pass"],
     ["receipt v3.71.8 missing date never defaults today",fkDateMissing.date===""&&fkDateMissing.dateSource==="missing"],
     ["receipt v3.71.8 different product never guessed as potato",!fkWrongProduct.items.some(function(x){return /フレーバーポテト/.test(x)})],
-    ["receipt v3.71.8 diagnostic includes build and safe stage hints",/v3.71.9 レシート診断/.test(receiptDiagnosticSummary(fkActualNoSubtotal))&&/抽出経路/.test(receiptDiagnosticSummary(fkActualNoSubtotal))&&!/(?:カード番号|取引ID|会員ID)\s*[:：]/.test(receiptDiagnosticSummary(fkActualNoSubtotal))],
+    ["receipt v3.71.8 diagnostic includes build and safe stage hints",/v3.71.10 レシート診断/.test(receiptDiagnosticSummary(fkActualNoSubtotal))&&/抽出経路/.test(receiptDiagnosticSummary(fkActualNoSubtotal))&&!/(?:カード番号|取引ID|会員ID)\s*[:：]/.test(receiptDiagnosticSummary(fkActualNoSubtotal))],
     ["receipt malformed subtotal glyphs excluded from product text v3.71.3",receiptBrokenTotalLabel("計 て ¥290")&&receiptBrokenTotalLabel("計 て")&&isGarbageProductName("計 て")&&!itemRowsFromText("計 て ¥290",1).length],
     ["receipt First Kitchen corrupted total stays review only v3.71.3",pFkAccountingNoise.amount===290&&pFkAccountingNoise.itemRows.length===1&&/フレーバーポテトL/.test(pFkAccountingNoise.itemRows[0].name)&&pFkAccountingNoise.itemRows[0].lowConfidence===true&&!pFkAccountingNoise.itemRows[0].autoConfirmed&&!pFkAccountingNoise.itemSetComplete],
     ["receipt First Kitchen different 290yen product not guessed v3.71.3",!fkOtherProduct.items.some(function(x){return /フレーバーポテト/.test(x)})],
@@ -4603,7 +4638,7 @@ function receiptTests(){
 function attachTests(){
   var b=document.getElementById("selfTest");if(!b||b.dataset.receiptWrapped)return;
   var base=b.onclick;b.dataset.receiptWrapped="1";
-  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),passed=out.filter(function(x){return x[1]}).length,pass=passed===out.length,box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">v3.71.9 レシート機能テスト '+passed+'/'+out.length+' 件すべて合格しました。</div>':'<div class="errorbox">v3.71.9 レシート機能テスト '+passed+'/'+out.length+' 件合格。失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
+  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),passed=out.filter(function(x){return x[1]}).length,pass=passed===out.length,box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">v3.71.10 レシート機能テスト '+passed+'/'+out.length+' 件すべて合格しました。</div>':'<div class="errorbox">v3.71.10 レシート機能テスト '+passed+'/'+out.length+' 件合格。失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
 }
 var body=document.getElementById("modalBody");
 if(body){new MutationObserver(function(){enhance()}).observe(body,{childList:true,subtree:true})}

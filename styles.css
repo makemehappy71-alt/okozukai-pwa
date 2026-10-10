@@ -386,3 +386,19 @@ body.modal-open:has(#txForm) .modal{
     white-space:normal;
   }
 }
+
+/* V3.71.7: OCR result must be one vertical column on phone.
+   The generic .receipt-item-summary > div rule otherwise forces all controls
+   into a single flex row and compresses their Japanese text vertically. */
+#receiptProductCropDetails > #receiptProductCropResult {
+  display:block;min-width:0;width:100%;border:0;padding:0;margin-top:12px;
+}
+#receiptProductCropResult > textarea,
+#receiptProductCropResult > button,
+#receiptProductCropResult > details {display:block;width:100%;min-width:0;max-width:100%;margin:10px 0;white-space:normal;writing-mode:horizontal-tb;}
+#receiptProductCropResult textarea {display:block;width:100%;min-width:0;max-width:100%;overflow-wrap:anywhere;}
+#receiptProductCropDetails {min-width:0;max-width:100%;overflow-wrap:anywhere;}
+.receipt-product-photo-actions {display:grid!important;grid-template-columns:1fr;gap:8px;border:0!important;margin:10px 0;padding:0!important;min-width:0;}
+.receipt-product-photo-actions button {display:block;min-width:0;white-space:normal;text-align:center;}
+#receiptProductResetPhoto[hidden]{display:none!important}
+#receiptProductCropPhotoStatus{display:block!important;min-width:0;}

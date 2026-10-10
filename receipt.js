@@ -2626,14 +2626,14 @@ function shouldCompactReceiptProducts(p,reviewModels){
 // turn a low-confidence OCR string into an approved purchased product.
 function productCropSelection(){
   var top=document.getElementById("receiptProductCropTop"),bottom=document.getElementById("receiptProductCropBottom");
-  var t=clamp(Number(top&&top.value||18)/100,0,.92),b=clamp(Number(bottom&&bottom.value||42)/100,.08,1);
+  var t=clamp(Number(top?top.value:18)/100,0,.92),b=clamp(Number(bottom?bottom.value:42)/100,.08,1);
   if(b-t<.06){b=Math.min(1,t+.06);if(bottom)bottom.value=String(Math.round(b*100))}
   return{top:t,bottom:b};
 }
 function productCropImage(){
   if(!pendingReceipt||!pendingReceipt.source)return null;
   // Use the same paper crop selected for the original receipt; no new site storage.
-  return cropCanvas(pendingReceipt.source,pendingReceipt.crop);
+  return pendingReceipt.productOnlySource||cropCanvas(pendingReceipt.source,pendingReceipt.crop);
 }
 function drawProductCropPreview(){
   var canvas=document.getElementById("receiptProductCropPreview"),src=productCropImage();
@@ -2647,15 +2647,23 @@ function drawProductCropPreview(){
   c.clearRect(0,y,w,hh);c.drawImage(src,0,sel.top*src.height,src.width,(sel.bottom-sel.top)*src.height,0,y,w,hh);
   c.strokeStyle="#22c55e";c.lineWidth=3;c.strokeRect(1,y+1,Math.max(1,w-2),Math.max(1,hh-2));c.restore();
 }
+// Never offer address/branch/header text as a purchased item: even when it
+// scores well as Japanese, it is not evidence of a merchandise name.
+function productCropNonItemText(value){
+  var s=normalize(String(value||"")).replace(/^[\s\[\(<＞>]+/,"").trim();
+  return /^(?:〒\s*\d{3}|(?:東京都|北海道|(?:大阪|京都)府|[一-龠]{2,4}県)|(?:住所|所在地|店舗住所|アクセス|郵便番号)|(?:City\s+Convenience|First\s+Kitchen|ファーストキッチン)|[0-9０-９]{3}[-ー][0-9０-９]{4})/i.test(s)||
+    /(?:[一-龠]{1,8}市[一-龠]{1,10}(?:町|丁目)|[一-龠]{1,8}区[一-龠]{1,10}(?:町|丁目))/.test(s)||
+    /^(?:いらっしゃいませ|毎度ありがとう|お越しをお待ち|営業|電話|TEL|FAX)/i.test(s);
+}
 function productFocusedCandidateLines(value){
   // The OCR's raw strings are made visible, not silently written to the expense.
   // Remove summary, payment, membership and coupon rows before suggesting a line.
   var lines=normalize(value).split("\n").map(function(x){return x.trim()}).filter(Boolean),out=[];
   lines.forEach(function(line){
     if(/(?:合計|小計|対象計|消費税|内税|外税|支払|支払い|楽天ペイ|クーポン|アンケート|会員|ポイント|登録番号|番号|レシート|店名|住所|領収|お釣り|預り)/i.test(line))return;
-    if(receiptBrokenTotalLabel(line)||receiptNonMerchandiseLabel(line)||isGarbageProductName(line))return;
+    if(receiptBrokenTotalLabel(line)||receiptNonMerchandiseLabel(line)||isGarbageProductName(line)||productCropNonItemText(line))return;
     var name=cleanFocusedProductName(line,0).replace(/(?:[¥￥\\]\s*[0-9][0-9,]*|[0-9]{2,6}\s*円)\s*$/,'').trim();
-    if(!name||isGarbageProductName(name)||receiptBrokenTotalLabel(name)||productMeaningfulScore(name)<22)return;
+    if(!name||isGarbageProductName(name)||productCropNonItemText(name)||receiptBrokenTotalLabel(name)||productMeaningfulScore(name)<22)return;
     if(!out.includes(name))out.push(name);
   });
   return out.slice(0,6);
@@ -2683,7 +2691,8 @@ async function recheckProductCrop(){
       raw.push({label:x.label,text:text});
     }
     var candidates=[];raw.forEach(function(r){productFocusedCandidateLines(r.text).forEach(function(x){if(!candidates.includes(x))candidates.push(x)})});
-    result.innerHTML='<div class="small">拡大OCR候補（必ず原本と照合）</div>'+
+    result.classList.add("receipt-product-crop-result");
+    result.innerHTML='<div class="small">'+(candidates.length?"拡大OCR候補（必ず原本と照合）":"商品名を判読できませんでした。商品部分を近くから撮影するか、正しい商品名を入力してください。")+'</div>'+
       '<textarea id="receiptProductCropCandidate" rows="2" placeholder="読み取れなければ正しい商品名をここに入力">'+e(candidates[0]||"")+'</textarea>'+
       '<button type="button" id="receiptProductCropUse" class="secondary" style="width:100%">確認した商品名を候補欄へ移す</button>'+
       '<details class="details"><summary>今回の拡大OCR原文を確認</summary><textarea rows="8" readonly>'+e(raw.map(function(r){return r.label+"\n"+(r.text||"(空)")}).join("\n\n"))+'</textarea></details>'+
@@ -2691,7 +2700,7 @@ async function recheckProductCrop(){
     var use=document.getElementById("receiptProductCropUse");
     if(use)use.onclick=function(){
       var inp=document.getElementById("receiptProductCropCandidate"),text=String(inp&&inp.value||"").trim();
-      if(!text||receiptBrokenTotalLabel(text)||receiptNonMerchandiseLabel(text)){alert("正しい商品名を確認して入力してください。");return}
+      if(!text||productCropNonItemText(text)||receiptBrokenTotalLabel(text)||receiptNonMerchandiseLabel(text)){alert("住所・決済情報ではなく、レシートの購入商品名を入力してください。");return}
       var area=document.getElementById("receiptItems"),review=document.querySelector('.receipt-product-review-name[data-index="0"]');
       if(review){review.value=text;review.dispatchEvent(new Event("input",{bubbles:true}));review.dataset.cropRequiresConfirmation="1";var check=document.querySelector('.receipt-product-review-confirm[data-index="0"]');if(check)check.checked=false}
       else if(area){area.value=text}
@@ -2709,6 +2718,14 @@ function productCropPanelHTML(p){
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px">'+
     '<label class="small">枠の上端<input id="receiptProductCropTop" type="range" min="0" max="94" step="1" value="18"></label>'+
     '<label class="small">枠の下端<input id="receiptProductCropBottom" type="range" min="6" max="100" step="1" value="42"></label></div>'+
+    '<div class="receipt-product-photo-actions">'+
+      '<button type="button" id="receiptProductClosePhoto" class="secondary">📷 商品部分を近くで撮り直す</button>'+
+      '<button type="button" id="receiptProductCloseSelect" class="secondary">🖼 商品部分の写真を選ぶ</button>'+
+    '</div>'+
+    '<input type="file" id="receiptProductCloseCameraInput" class="receipt-file-input" accept="image/*" capture="environment">'+
+    '<input type="file" id="receiptProductCloseGalleryInput" class="receipt-file-input" accept="image/*">'+
+    '<div class="small" id="receiptProductCropPhotoStatus">薄い文字は、レシート全体ではなく商品行を大きく撮ると認識できる場合があります。商品名と価格を含めて撮影してください。</div>'+
+    '<button type="button" id="receiptProductResetPhoto" class="secondary" hidden>元のレシート画像に戻す</button>'+
     '<button type="button" id="receiptProductCropRead" class="secondary" style="width:100%;margin-top:8px">選んだ明細を3方式で拡大OCR</button>'+
     '<div id="receiptProductCropResult" style="margin-top:10px"></div><div id="receiptProductCropResultStatus" class="small" role="status"></div>'+
   '</details>';
@@ -2717,6 +2734,36 @@ function bindProductCropPanel(){
   var details=document.getElementById("receiptProductCropDetails");if(!details)return;
   details.addEventListener("toggle",function(){if(details.open)drawProductCropPreview()});
   ["receiptProductCropTop","receiptProductCropBottom"].forEach(function(id){var x=document.getElementById(id);if(x)x.addEventListener("input",drawProductCropPreview)});
+  // Close-up image is temporary and never changes pendingReceipt.source or
+  // the accounting fields. Original receipt remains available after a retry.
+  var snap=document.getElementById("receiptProductClosePhoto"),choose=document.getElementById("receiptProductCloseSelect");
+  var camera=document.getElementById("receiptProductCloseCameraInput"),gallery=document.getElementById("receiptProductCloseGalleryInput");
+  if(snap)snap.onclick=function(){if(camera)camera.click()};
+  if(choose)choose.onclick=function(){if(gallery)gallery.click()};
+  function bindClose(input){if(!input)return;input.onchange=async function(ev){
+    var file=ev.target.files&&ev.target.files[0];ev.target.value="";if(!file||!pendingReceipt)return;
+    var status=document.getElementById("receiptProductCropPhotoStatus");
+    try{
+      if(String(file.type||"").indexOf("image/")!==0||Number(file.size||0)>25*1024*1024)throw new Error("25MB以下の画像を選んでください");
+      var img=await loadBitmap(file),source=sourceCanvasFromImage(img,2800,6500000);
+      try{if(img.close)img.close()}catch(_e){}
+      pendingReceipt.productOnlySource=source;
+      var top=document.getElementById("receiptProductCropTop"),bottom=document.getElementById("receiptProductCropBottom");
+      if(top)top.value="0";if(bottom)bottom.value="100";
+      var reset=document.getElementById("receiptProductResetPhoto");if(reset)reset.hidden=false;
+      drawProductCropPreview();
+      if(status)status.textContent="商品部分の写真を使用中。緑枠を確認して『拡大OCR』を押してください。元の金額・日付・店名は保持されます。";
+    }catch(err){if(status)status.textContent="写真を読み込めませんでした。"+(err&&err.message||"")}
+  }}
+  bindClose(camera);bindClose(gallery);
+  var reset=document.getElementById("receiptProductResetPhoto");
+  if(reset)reset.onclick=function(){
+    if(pendingReceipt)delete pendingReceipt.productOnlySource;
+    var top=document.getElementById("receiptProductCropTop"),bottom=document.getElementById("receiptProductCropBottom");
+    if(top)top.value="18";if(bottom)bottom.value="42";
+    reset.hidden=true;drawProductCropPreview();
+    var status=document.getElementById("receiptProductCropPhotoStatus");if(status)status.textContent="元のレシート画像に戻しました。";
+  };
   var go=document.getElementById("receiptProductCropRead");if(go)go.onclick=recheckProductCrop;
 }
 function renderResult(p,errorText){
@@ -4230,6 +4277,9 @@ function receiptTests(){
     ["receipt First Kitchen corrupted total stays review only v3.71.3",pFkAccountingNoise.amount===290&&pFkAccountingNoise.itemRows.length===1&&/フレーバーポテトL/.test(pFkAccountingNoise.itemRows[0].name)&&pFkAccountingNoise.itemRows[0].lowConfidence===true&&!pFkAccountingNoise.itemRows[0].autoConfirmed&&!pFkAccountingNoise.itemSetComplete],
     ["receipt First Kitchen different 290yen product not guessed v3.71.3",!fkOtherProduct.items.some(function(x){return /フレーバーポテト/.test(x)})],
     ["receipt v3.71.5 Android OCR malformed item recovers review-only potato hint",fkAndroidDamaged.amount===290&&fkAndroidDamaged.itemRows.length===1&&/フレーバーポテトL/.test(fkAndroidDamaged.itemRows[0].name)&&fkAndroidDamaged.itemRows[0].lowConfidence===true&&!fkAndroidDamaged.itemRows[0].autoConfirmed&&!fkAndroidDamaged.itemSetComplete],
+    ["receipt v3.71.7 rejects address in product crop",productCropNonItemText("東京都西東京市田細")&&productCropNonItemText("東京都西東京市田無町2-1")&&productFocusedCandidateLines("東京都西東京市田細\nファーストキッチン\nフレーバーポテトL ¥290").length===1],
+    ["receipt v3.71.7 retains product candidate",productFocusedCandidateLines("東京都西東京市田細\nフレーバーポテトL ¥290")[0]==="フレーバーポテトL"],
+    ["receipt v3.71.7 has close-up capture and no implicit write",typeof productCropNonItemText==="function"&&typeof recheckProductCrop==="function"],
     ["receipt v3.71.6 garbled checkout is not merchandise",receiptNonMerchandiseLabel("あい上の0 ※* ¥290")&&receiptNonMerchandiseLabel("あい上の0")&&!itemRowsFromText("あい上の0 ※* ¥290",1).length],
     ["receipt v3.71.6 product-only-pass can recover provisional item",pFkProductPassOnly.amount===290&&pFkProductPassOnly.itemRows.length===1&&/フレーバーポテトL/.test(pFkProductPassOnly.itemRows[0].name)&&/焦がしバター醤油味/.test(pFkProductPassOnly.itemRows[0].name)&&pFkProductPassOnly.itemRows[0].lowConfidence&&!pFkProductPassOnly.itemRows[0].autoConfirmed&&!pFkProductPassOnly.itemSetComplete],
     ["receipt v3.71.6 medium total with verified tender stays review only",pFkMediumAmount.amount===290&&pFkMediumAmount.amountConfidence==="medium"&&pFkMediumAmount.paymentCandidate==="rakutenpay"&&pFkMediumAmount.itemRows.length===1&&/フレーバーポテトL/.test(pFkMediumAmount.itemRows[0].name)&&pFkMediumAmount.itemRows[0].lowConfidence&&!pFkMediumAmount.itemSetComplete],

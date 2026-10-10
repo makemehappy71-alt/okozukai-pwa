@@ -755,6 +755,7 @@ function merchantShopKey(shop){
   if(/マクドナルド|mcdonald/.test(s))return"mcdonalds";
   if(/モスバーガー|mosburger/.test(s))return"mosburger";
   if(/ケンタッキー|kfc/.test(s))return"kfc";
+  if(/クリエイト|create/.test(s))return"create";
   if(/ダイソー|daiso/.test(s))return"daiso";
   if(/ヤオコー|yaoko/.test(s))return"yaoko";
   if(/seria|セリア/.test(s))return"seria";
@@ -856,6 +857,16 @@ function merchantProductDictionary(shop){
       aliases:["カーネルクリスピー 1ピース半額","クリスピー 1ピース半額","クリル 1 2半額","クリル* 1半額","クリスルト^ ーー半額","リス 1ヒースス半額","SxYzE\" 1 2半額"],
       priceHints:[700],unitPriceHints:[140],qtyHints:[5],source:"verified_sample"
     });
+  }
+  if(key==="create"){
+    builtIn.push(
+      {name:"LDC サイダー 1.5L",aliases:["LDC サイダー 1.5L","LDC サイダー 1. 5L","LDC サイダー 1, 5L","©LDC サイダー 1. 5L","ぱふぷしDC サイダー 1 5L"],priceHints:[297],unitPriceHints:[99],qtyHints:[3],source:"verified_sample"},
+      {name:"ギルティ炭酸 NOPE",aliases:["ギルティ炭酸 NOPE","サントリー NOPEギルティ","ぷサントリー NOPEギルティ","サントリー NOPEF)=4","NOPEギルティ"],priceHints:[318],unitPriceHints:[159],qtyHints:[2],source:"verified_sample"},
+      {name:"クラフトボス ベリー＆アサイー炭酸",aliases:["クラフトボス ベリー＆アサイー炭酸","サントリー クラフトベリー&","クラフトベリー&","サントリー クラフトベリー"],priceHints:[237],unitPriceHints:[79],qtyHints:[3],source:"verified_sample"},
+      {name:"三ツ矢 実りの洋梨mix",aliases:["三ツ矢 実りの洋梨mix","アサヒ 三ツ矢実りの洋梨mi","三ツ矢実りの洋梨mi","アサヒ 三ツ矢実りの洋梨mix"],priceHints:[158],unitPriceHints:[79],qtyHints:[2],source:"verified_sample"},
+      {name:"クリニカ フレッシュミント 130g",aliases:["クリニカ フレッシュミント 130g","クリニカライオン フレッ","クリニカ フレッシュミント"],priceHints:[158],unitPriceHints:[158],qtyHints:[1],source:"verified_sample"},
+      {name:"ドクターデンリスト 山切カット",aliases:["ドクターデンリスト 山切カット","Dr. デンリスト 山切カ","Dr. デンリスト 山切カー","Dr. デンリスト 山切力"],priceHints:[65],unitPriceHints:[65],qtyHints:[1],source:"verified_sample"}
+    );
   }
   if(key==="daiso"){
     builtIn.push(
@@ -1731,6 +1742,11 @@ function normalizeKnownShopName(shop){
     var seriaRest=s.replace(/^seria/i,"").replace(/^ららぼーと/,"ららぽーと");
     return"Seria"+(seriaRest?" "+seriaRest:"");
   }
+  if(/^クリエイト/.test(s)){
+    var createRest=s.replace(/^クリエイト/,"");
+    if(/小平中島町/.test(createRest))createRest="小平中島町店";
+    return"クリエイト"+createRest;
+  }
   if(/^kfc/i.test(s)){
     var kfcRest=s.replace(/^kfc/i,"").replace(/^[._\-]+/,"");
     if(/[LI1]?COPA東大和店/i.test(kfcRest))kfcRest="LICOPA東大和店";
@@ -1795,6 +1811,8 @@ function bestShopFromSources(sources){
     var guBranch=/立川立飛店/.test(guCompact)?"ららぽーと立川立飛店":"";
     candidates.push({name:"GU"+(guBranch?" "+guBranch:""),score:guBranch?205:160});
   }
+  var createCompact=joined.replace(/[\s　._\-]/g,""),hasCreate=/CREATE|クリエイト|ドラッグストア\s*クリエイト/i.test(joined)||/T?9020001035423/i.test(createCompact);
+  if(hasCreate){var createBranch=/小平中島町/.test(createCompact)?"小平中島町店":"";candidates.push({name:"クリエイト"+createBranch,score:createBranch?222:168});}
   var kfcCompact=joined.replace(/[\s　._\-]/g,""),hasKfc=/(?:^|[^A-Za-z])KFC(?:[^A-Za-z]|$)|ケンタッキー/i.test(joined)||/T?3010001244022/i.test(kfcCompact);
   if(hasKfc){var kfcBranch=/[LI1]?COPA東大和店/i.test(kfcCompact)?"LICOPA東大和店":"";candidates.push({name:"KFC"+(kfcBranch?" "+kfcBranch:""),score:kfcBranch?218:172});}
   var yaokoCompact=joined.replace(/[\s　\-]/g,""),hasYaoko=/ヤオコー|\bYAOKO\b/i.test(joined)||/T?4030001055722/i.test(yaokoCompact);
@@ -1850,7 +1868,7 @@ function shopFromText(text,knownOnly){
     var guBranch2=/立川立飛店/.test(guJoinedCompact)?"ららぽーと立川立飛店":"";
     return normalizeKnownShopName("GU"+(guBranch2?" "+guBranch2:""));
   }
-  if(/CREATE|クリエイト|ドラッグストア\s*クリエイト/i.test(joined))return"クリエイト";
+  if(/CREATE|クリエイト|ドラッグストア\s*クリエイト/i.test(joined))return /小平中島町/.test(joined.replace(/[\s　]/g,""))?"クリエイト小平中島町店":"クリエイト";
   if(/オーケー|Everyday\s*Low\s*Price/i.test(joined)){
     for(var oi=0;oi<lines.length;oi++){
       var ol=(lines[oi].normalize?lines[oi].normalize("NFKC"):lines[oi]).replace(/\s+/g,"");
@@ -1917,8 +1935,10 @@ function itemCategorySuggestion(name,shop){
   var n=normalizeProductName(name);
   var snack=/クリスプ|チップス|スナック|ポテト|クッキー|ビスケット|クラッカー|チョコ|グミ|キャンディ|飴|せんべい|煎餅|菓子|プレッツェル|コーンスナック/i;
   var coffee=/コーヒー|coffee|カフェラテ|cafe latte/i;
-  var drink=/サイダー|紅茶|スポーツドリンク|ラブズスポーツ|飲料|ジュース|コーラ|炭酸|緑茶|麦茶|ウーロン茶|午後の紅茶|ミネラルウォーター|お茶|オーレ|ミルク|ウォーター|水\b|スターバックス|ホワイトモカ|モカ/i;
+  var drink=/サイダー|紅茶|スポーツドリンク|ラブズスポーツ|飲料|ジュース|コーラ|炭酸|緑茶|麦茶|ウーロン茶|午後の紅茶|ミネラルウォーター|お茶|オーレ|ミルク|ウォーター|水\b|スターバックス|ホワイトモカ|モカ|NOPE|ギルティ炭酸|クラフトボス|ベリー[＆&]アサイー|三ツ矢|洋梨mix/i;
+  var oral=/クリニカ|デンリスト|歯\s*磨|ハミガキ|歯ブラシ|デンタル/i;
   if(/シャトレーゼ|chateraise/i.test(String(shop||"")))return findCategoryPair("食費","スイーツ")||findCategoryPair("食費","お菓子");
+  if(oral.test(n))return findCategoryPair("日用品","衛生用品")||findCategoryPair("日用品","ドラッグストア")||findCategoryPair("日用品","生活用品");
   if(/パンケーキ|どらやき|どら焼き|フィナンシェ|もちパイ|ケーキ|菓子/i.test(n))return findCategoryPair("食費","スイーツ")||findCategoryPair("食費","お菓子");
   if(snack.test(n))return findCategoryPair("食費","お菓子")||findCategoryPair("食費","スイーツ");
   if(coffee.test(n))return findCategoryPair("食費","コーヒー")||findCategoryPair("食費","飲み物");
@@ -2384,7 +2404,8 @@ function receiptShortMerchantName(shop){
     seiyu:"西友",
     seveneleven:"セブン‐イレブン",
     seria:"Seria",
-    gu:"GU"
+    gu:"GU",
+    create:"クリエイト"
   };
   if(map[key])return map[key];
   var s=normalize(shop).replace(/\s+/g," ").trim();

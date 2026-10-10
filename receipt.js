@@ -863,7 +863,7 @@ function merchantProductDictionary(shop){
       {name:"LDC サイダー 1.5L",aliases:["LDC サイダー 1.5L","LDC サイダー 1. 5L","LDC サイダー 1, 5L","©LDC サイダー 1. 5L","ぱふぷしDC サイダー 1 5L"],priceHints:[297],unitPriceHints:[99],qtyHints:[3],source:"verified_sample"},
       {name:"ギルティ炭酸 NOPE",aliases:["ギルティ炭酸 NOPE","サントリー NOPEギルティ","ぷサントリー NOPEギルティ","サントリー NOPEF)=4","NOPEギルティ"],priceHints:[318],unitPriceHints:[159],qtyHints:[2],source:"verified_sample"},
       {name:"クラフトボス ベリー＆アサイー炭酸",aliases:["クラフトボス ベリー＆アサイー炭酸","サントリー クラフトベリー&","クラフトベリー&","サントリー クラフトベリー"],priceHints:[237],unitPriceHints:[79],qtyHints:[3],source:"verified_sample"},
-      {name:"三ツ矢 実りの洋梨mix",aliases:["三ツ矢 実りの洋梨mix","アサヒ 三ツ矢実りの洋梨mi","三ツ矢実りの洋梨mi","アサヒ 三ツ矢実りの洋梨mix"],priceHints:[158],unitPriceHints:[79],qtyHints:[2],source:"verified_sample"},
+      {name:"三ツ矢 実りの洋梨mix",aliases:["三ツ矢 実りの洋梨mix","アサヒ 三ツ矢実りの洋梨mi","三ツ矢実りの洋梨mi","アサヒ 三ツ矢実りの洋梨mix","⑧アサヒ 三ツ矢実りの洋梨mi","⑨ぱぷアサヒ 三ツ矢実りの洋梨mi"],priceHints:[158],unitPriceHints:[79],qtyHints:[2],source:"verified_sample"},
       {name:"クリニカ フレッシュミント 130g",aliases:["クリニカ フレッシュミント 130g","クリニカライオン フレッ","クリニカ フレッシュミント"],priceHints:[158],unitPriceHints:[158],qtyHints:[1],source:"verified_sample"},
       {name:"ドクターデンリスト 山切カット",aliases:["ドクターデンリスト 山切カット","Dr. デンリスト 山切カ","Dr. デンリスト 山切カー","Dr. デンリスト 山切力"],priceHints:[65],unitPriceHints:[65],qtyHints:[1],source:"verified_sample"}
     );

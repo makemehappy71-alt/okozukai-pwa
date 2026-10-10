@@ -1,0 +1,43 @@
+name: Export v3.71.1 package
+on:
+  push:
+    branches:
+      - export-v3.71.1-files
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build standalone HTML
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          root=Path(".")
+          html=(root/"index.html").read_text(encoding="utf-8")
+          css=(root/"styles.css").read_text(encoding="utf-8")
+          app=(root/"app.js").read_text(encoding="utf-8")
+          receipt=(root/"receipt.js").read_text(encoding="utf-8")
+          html=html.replace('<link rel="stylesheet" href="./styles.css?v=328711">', '<style>\n'+css+'\n</style>')
+          html=html.replace('<script src="./app.js?v=328711"></script><script src="./receipt.js?v=328711"></script>', '<script>\n'+app+'\n</script><script>\n'+receipt+'\n</script>')
+          html=html.replace('<link rel="manifest" href="./manifest.webmanifest">','')
+          html=html.replace('<link rel="icon" href="./icon.svg" type="image/svg+xml">','')
+          html=html.replace('<link rel="apple-touch-icon" href="./icon-192.png">','')
+          Path("お小遣い家計簿_V3.71.1_単体版.html").write_text(html,encoding="utf-8")
+          PY
+      - name: Build PWA ZIP
+        shell: bash
+        run: |
+          mkdir -p dist/pwa
+          cp index.html styles.css app.js receipt.js manifest.webmanifest sw.js icon.svg icon-192.png icon-512.png .nojekyll dist/pwa/
+          (cd dist/pwa && zip -q -r ../../お小遣い家計簿_V3.71.1_PWA.zip .)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: okozukai-v3.71.1-files
+          path: |
+            お小遣い家計簿_V3.71.1_単体版.html
+            お小遣い家計簿_V3.71.1_PWA.zip
+          if-no-files-found: error

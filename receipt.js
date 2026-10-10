@@ -564,6 +564,10 @@ function receiptBrokenTotalLabel(line){
 function receiptNonMerchandiseLabel(line){
   var s=normalize(String(line||""));
   if(receiptBrokenTotalLabel(s))return true;
+  // Some mobile OCR reads an accounting label as "あい上の0 ※* ¥290".
+  // It is not merchandise. Let independent product-only OCR fragments be
+  // considered instead of allowing this false row to take the entire total.
+  if(/^(?:あい|おい|買い|お買い?)上(?:げ)?の[0０Oo](?:\s|$)/i.test(s))return true;
   return /(?:会員\s*[Ii1ＩlL]\s*[DdＤ0oＯ]?|会員番号|メンバー\s*ID|ポイント|クーポン|アンケート|進呈|取引(?:番号|No|ID)|カード番号|登録番号|レシート番号|店舗番号|端末|認証番号|担当者?|店員|マネージャー|レジ番号|ご来店|ご利用|またのお越し|支\s*払|会\s*計|合\s*計|総\s*計|小\s*計|対象\s*計|[0-9０-９]+\s*[%％]\s*対象|対象(?:商品|金額)|消費税|領収証?|税込|税率|軽減税率|釣銭|お釣り|お預り|現金|楽天\s*(?:ペイ|ペー|ベイ|Pay)|paypay|\bdポイント\b|\bTAKE\s*OUT\b|受取番号|クレジット|\bQR\b)/i.test(s);
 }
 function classifyReceiptLine(line){
@@ -2410,7 +2414,10 @@ function parseReceiptText(input,baseDate){
   // but the user's confirmation is still REQUIRED: OCR has not verified the name.
   var fkFlavorHint=/(?:焦がし|集がし|バター|衣油味|醤油味)/.test(fkEvidence);
   var fkStrongHint=/K[-‐－][^\n]{0,38}(?:L\s*290|7H290|7HL290)/i.test(fkEvidence)||/フレーバー.{0,12}ポテト/i.test(fkEvidence);
-  if(firstKitchenSale&&Number(amount)===290&&amountInfo.confidence==="high"&&!receiptWideDiscount&&fkProductHint&&(countHint===0||countHint===1)&&fkStrongHint){
+  // OCR can return a medium-confidence paid total when the printed subtotal
+  // is garbled. Only allow a REVIEW-ONLY hint when the tender is also known.
+  var fkReviewableAmount=amountInfo.confidence==="high"||(amountInfo.confidence==="medium"&&payment==="rakutenpay");
+  if(firstKitchenSale&&Number(amount)===290&&fkReviewableAmount&&!receiptWideDiscount&&fkProductHint&&(countHint===0||countHint===1)&&fkStrongHint){
     // Replace a malformed accounting candidate or an unverified name only.
     // A different, independently verified merchandise item must not be changed.
     // A malformed product row such as "あい上の0" can survive the basic
@@ -2453,7 +2460,7 @@ function parseReceiptText(input,baseDate){
   // Under severe OCR damage an untrusted merchandise row may disappear at
   // final validation rather than during item selection. Retain only a
   // review-only product hint and never claim independent subtotal matching.
-  if(!rows.length&&firstKitchenSale&&Number(amount)===290&&amountInfo.confidence==="high"&&!receiptWideDiscount&&fkStrongHint&&fkFlavorHint&&(countHint===0||countHint===1)){
+  if(!rows.length&&firstKitchenSale&&Number(amount)===290&&fkReviewableAmount&&!receiptWideDiscount&&fkStrongHint&&fkFlavorHint&&(countHint===0||countHint===1)){
     rows=[{name:"フレーバーポテトL（焦がしバター醤油味）",rawName:"フレーバーポテトL（焦がしバター醤油味）",unitPrice:290,qty:1,total:290,quality:0,sourceIndex:0,sourcePriority:1,lowConfidence:true,candidateOnly:true,candidateSource:"merchant_receipt_hint",nameConfidence:"low",provisionalAmount:true}];
   }
   // A verified exact basket also reconciles restaurant receipts with no
@@ -4194,6 +4201,18 @@ function receiptTests(){
     sections:{top:"First Kitchen\n田無店",middle:"K-7b-A\"-8\"7HL290\n集がしター-衣油味",bottom:"合計 ¥290\n楽天ペー ¥290"}
   },"2026-10-10");
   var fkNoFingerprint=parseReceiptText({text:"First Kitchen\n田無店\nあい上の0 ※* ¥290\n合計 ¥290\n楽天ペイ ¥290",sections:{top:"First Kitchen\n田無店",middle:"あい上の0 ※* ¥290",bottom:"合計 ¥290\n楽天ペイ ¥290"}},"2026-10-10");
+  // Reproduction: Android's product-only OCR contains the evidence while
+  // the whole/section-middle OCR is unusable. Checkout gibberish must not
+  // consume the only item slot and hide the review-only merchant hint.
+  var fkSoloPassText="First Kitchen\n田無店\nあい上の0 ※* ¥290\n計 て ¥290\n合計 ¥290\n楽天ペイ ¥290";
+  var pFkProductPassOnly=parseReceiptText({text:fkSoloPassText,whole:fkSoloPassText,
+    itemText:'K--1"-5"51L290\nK-7b-A"-8"7HL290\n集がしター-衣油味\nあい上の0 ※* ¥290\n計 て ¥290',
+    sections:{top:"First Kitchen\n田無店",middle:"",bottom:"合計 ¥290\n楽天ペイ ¥290"}},"2026-10-10");
+
+  var fkMediumText="City Convenience Restaurant\ns る\nLod\nFirst Kitchen\nコッラースト キリデコ\n< トキツチララ\n東京都西東京市田無町2琵\nッ 1階\n1 7 4 (|\nS\nwEH,\n准ありがとうご活商訂時\n6F10H510R1(1) 12:48\n| IU1\n| ホラトLZ90 Hek ¥29()\n#0 UN9- SHHR Ho7hL ※* ¥0\n£ ] ¥290\n=s ¥290\n%対象計 ¥290\n消費税等 ¥21)\n※:軽滅税率(8%)対象商品\n楽天ペー ¥290\n<楽天ペイ>\n広#ム ¥290\n<dポイント>\nカード番号 [マスク]\n進呈ポイント 1P\nポイント残高 1P\ndボイントレシート# 0000000\n会員ID 0000000\n登録番号:T0000000000000\nまたのお越しをお待ちしています\nアンケート\nクーポンをGET!\nポテトa ¥100\n(プレーン) (税込)\n店舗:6027 端末:0278\n担当者:0001 マネージャー";
+  var pFkMediumAmount=parseReceiptText({text:fkMediumText,whole:"City Convenience Restaurant\ns る\nLod\nFirst Kitchen\nコッラースト キリデコ\n< トキツチララ\n東京都西東京市田無町2琵\nッ 1階\n1 7 4 (|\nS\nwEH,\n准ありがとうご活商訂時\n6F10H510R1(1) 12:48\n| IU1\n| ホラトLZ90 Hek ¥29()\n#0 UN9- SHHR Ho7hL ※* ¥0\n£ ] ¥290\n=s ¥290\n%対象計 ¥290\n消費税等 ¥21)\n楽天ペー ¥290\n<楽天ペイ>\n広#ム ¥290\n<dポイント>\n会員ID 0000000",
+    itemText:"ASY B AL LEA _& § 1\n77—2Z hEUS\n田無店\n東京都西東京市田\n72%1/K .\nいらっしやいま時時\n毎度ありがとうご誠只\n2026年10月10昌(主導\n<TAKE OUT>\nK--1\"-5\"51L290\n00 UN9- SE0R\nにすす 県 | LEA _& 8 | i:\n田無店 3\n20265E10A108(£)\nCTAKE OUT>\nK-7b-N\"-8\"7H290\n05 U)\"5- SHER §7 :\nコァラースト ギキリギテコ\n鶴 収 証\nあい上の0 ※* ¥290\n置いリリラフ :1E S おず 直し ※* ¥0\nお | ¥290\nき1 ¥290\ngin ¥21)\nいらっしゃいま者計\n2026%F10A10A(E)\n<TAKE OUT>\nK-7b-A\"-8\"7HL290\n集がしター-衣油味\n小計 E\n=&t+ 3 ge\n68%対象計 3\n(内消費税等\n<楽天ペイ>\n計 て ¥290\n<楽: たイッ\n支払 ¥290\n<*dポイント>\nカート番号 XXXXXXXXXXX9900\n会員1D 0000000\nアンケート\nクーポンをGET!\nポテト ¥100\n取引番号: ¥340557",
+    sections:{top:"First Kitchen\n田無店",middle:"",bottom:""}},"2026-10-10");
   var fkRegressionText=[
     "City Convenience Restaurant","First Kitchen","田無店","2026年10月10日(土) 12:48",
     "K-フレーバーポテトL290 ¥290","焦がしバター醤油味 ¥0","小計 1 ¥290",
@@ -4211,6 +4230,9 @@ function receiptTests(){
     ["receipt First Kitchen corrupted total stays review only v3.71.3",pFkAccountingNoise.amount===290&&pFkAccountingNoise.itemRows.length===1&&/フレーバーポテトL/.test(pFkAccountingNoise.itemRows[0].name)&&pFkAccountingNoise.itemRows[0].lowConfidence===true&&!pFkAccountingNoise.itemRows[0].autoConfirmed&&!pFkAccountingNoise.itemSetComplete],
     ["receipt First Kitchen different 290yen product not guessed v3.71.3",!fkOtherProduct.items.some(function(x){return /フレーバーポテト/.test(x)})],
     ["receipt v3.71.5 Android OCR malformed item recovers review-only potato hint",fkAndroidDamaged.amount===290&&fkAndroidDamaged.itemRows.length===1&&/フレーバーポテトL/.test(fkAndroidDamaged.itemRows[0].name)&&fkAndroidDamaged.itemRows[0].lowConfidence===true&&!fkAndroidDamaged.itemRows[0].autoConfirmed&&!fkAndroidDamaged.itemSetComplete],
+    ["receipt v3.71.6 garbled checkout is not merchandise",receiptNonMerchandiseLabel("あい上の0 ※* ¥290")&&receiptNonMerchandiseLabel("あい上の0")&&!itemRowsFromText("あい上の0 ※* ¥290",1).length],
+    ["receipt v3.71.6 product-only-pass can recover provisional item",pFkProductPassOnly.amount===290&&pFkProductPassOnly.itemRows.length===1&&/フレーバーポテトL/.test(pFkProductPassOnly.itemRows[0].name)&&/焦がしバター醤油味/.test(pFkProductPassOnly.itemRows[0].name)&&pFkProductPassOnly.itemRows[0].lowConfidence&&!pFkProductPassOnly.itemRows[0].autoConfirmed&&!pFkProductPassOnly.itemSetComplete],
+    ["receipt v3.71.6 medium total with verified tender stays review only",pFkMediumAmount.amount===290&&pFkMediumAmount.amountConfidence==="medium"&&pFkMediumAmount.paymentCandidate==="rakutenpay"&&pFkMediumAmount.itemRows.length===1&&/フレーバーポテトL/.test(pFkMediumAmount.itemRows[0].name)&&pFkMediumAmount.itemRows[0].lowConfidence&&!pFkMediumAmount.itemSetComplete],
     ["receipt v3.71.5 must not guess 290-yen potato absent evidence",!fkNoFingerprint.items.some(function(x){return /フレーバーポテト/.test(x)})],
     ["receipt First Kitchen correct branch/category/payment test",pFkRegression.shop==="ファーストキッチン 田無店"&&pFkRegression.paymentCandidate==="rakutenpay"&&pFkRegression.categoryCandidate&&pFkRegression.categoryCandidate.subName==="外食"],
     ["receipt First Kitchen one-item amount and coupon exclusion test",pFkRegression.amount===290&&pFkRegression.itemSetComplete===true&&pFkRegression.itemRows.length===1&&pFkRegression.itemSum===290&&!pFkRegression.items.some(function(x){return /会員|クーポン|100円/.test(x)})],
@@ -4431,7 +4453,7 @@ function receiptTests(){
     ["receipt header long-number cleanup test",headerClean==="LDC サイダー 1.5L"],
     ["receipt capacity preserve test",normalizeProductName("LDC サイダー 1.5L")==="LDC サイダー 1.5L"],
     ["receipt v3.71.5 product crop no automatic confirmation test",typeof recheckProductCrop==="function"&&typeof bindProductCropPanel==="function"&&typeof drawProductCropPreview==="function"],
-    ["receipt v3.71.5 product crop excludes accounting text test",productFocusedCandidateLines("小計 ¥290\n楽天ペイ ¥290\n会員ID 0031897\nK-フレーバーポテトL ¥290").every(function(x){return !/(?:小計|楽天ペイ|会員|0031897)/.test(x)})],
+    ["receipt v3.71.5 product crop excludes accounting text test",productFocusedCandidateLines("小計 ¥290\n楽天ペイ ¥290\n会員ID 0000000\nK-フレーバーポテトL ¥290").every(function(x){return !/(?:小計|楽天ペイ|会員|0000000)/.test(x)})],
     ["receipt v3.71.5 product crop keeps merchandise candidate test",productFocusedCandidateLines("小計 ¥290\nK-フレーバーポテトL ¥290").some(function(x){return /フレーバーポテト/.test(x)})],
     ["receipt image input test",captureHTML().indexOf('accept="image/*"')>=0&&captureHTML().indexOf('capture="environment"')>=0],
     ["receipt crop confirmation test",captureHTML().indexOf("範囲確認")>=0&&typeof detectReceiptBounds==="function"&&typeof readConfirmedReceipt==="function"],

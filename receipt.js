@@ -553,8 +553,17 @@ function isReceiptHeaderLine(line){
 }
 // Receipt metadata and coupon offers are not merchandise, even if the OCR
 // accidentally attaches the actual payment amount or an ID to their text.
+// OCR occasionally turns a subtotal line into "計 て ¥290".
+// Reject only a very short accounting-shaped label; never use it as a
+// purchasable product, even when its number matches the paid total.
+function receiptBrokenTotalLabel(line){
+  var s=normalize(String(line||""));
+  s=ocrMoneyClean(s).replace(/\s*(?:¥|￥|\\|Y)\s*[0-9]{1,7}(?:\s*円)?\s*$/i,"").trim();
+  return /^(?:(?:小|合|総)\s*)?計(?:\s*[てで])?$/.test(s);
+}
 function receiptNonMerchandiseLabel(line){
   var s=normalize(String(line||""));
+  if(receiptBrokenTotalLabel(s))return true;
   return /(?:会員\s*[Ii1ＩlL]\s*[DdＤ0oＯ]?|会員番号|メンバー\s*ID|ポイント|クーポン|アンケート|進呈|取引(?:番号|No|ID)|カード番号|登録番号|レシート番号|店舗番号|端末|認証番号|担当者?|店員|マネージャー|レジ番号|ご来店|ご利用|またのお越し|支\s*払|会\s*計|合\s*計|総\s*計|小\s*計|対象\s*計|[0-9０-９]+\s*[%％]\s*対象|対象(?:商品|金額)|消費税|領収証?|税込|税率|軽減税率|釣銭|お釣り|お預り|現金|楽天\s*(?:ペイ|ペー|ベイ|Pay)|paypay|\bdポイント\b|\bTAKE\s*OUT\b|受取番号|クレジット|\bQR\b)/i.test(s);
 }
 function classifyReceiptLine(line){
@@ -583,7 +592,7 @@ function productSourceText(text){
     var pl=String(srcLines[pi]||"");
     if(/(?:[<＜]\s*dポイント|アンケート|クーポンをGET|クーポン番号|またのお越し|会員\s*[Ii1ＩlL]\s*[DdＤ0oＯ]?|認証番号)/i.test(pl))break;
     // All lines after a verified subtotal/total/payment belong to accounting.
-    if(/(?:^|\s)(?:小\s*計|合\s*計|総\s*合\s*計)(?:\s|[:：]|¥|￥|\d)|消費税|軽減税率|楽天\s*(?:ペイ|ペー|ベイ)|お支払(?:い)?額/i.test(pl))break;
+    if(receiptBrokenTotalLabel(pl)||/(?:^|\s)(?:小\s*計|合\s*計|総\s*合\s*計)(?:\s|[:：]|¥|￥|\d)|消費税|軽減税率|楽天\s*(?:ペイ|ペー|ベイ)|お支払(?:い)?額/i.test(pl))break;
     cleaned.push(pl);
   }
   return cleaned.join("\n").split("\n").map(function(line){
@@ -2331,7 +2340,7 @@ function parseReceiptText(input,baseDate){
       discounted.name="商品名要確認";discounted.lowConfidence=true;discounted.candidateOnly=false;discounted.candidateSource="";
     }
   }
-  initialRows=initialRows.filter(function(x){return !isChangeCueText(String(x.name||""));});
+  initialRows=initialRows.filter(function(x){return !isChangeCueText(String(x.name||""))&&!receiptBrokenTotalLabel(String(x.name||""))&&!receiptBrokenTotalLabel(String(x.rawName||""));});
   // Structural change detection: if tender - total equals a parsed row, it is change even when OCR mangles its label.
   initialRows=removeDerivedChangeRows(initialRows,receiptAllText,amount);
   var explicitPreDiscountRaw=Number(amountInfo.preDiscountTotal||receiptPreDiscountTotal(receiptAllText)||0);
@@ -2395,8 +2404,21 @@ function parseReceiptText(input,baseDate){
   // A missing actual product-price OCR means this provisional row is NEVER
   // treated as independently reconciled and always requires user correction.
   var countHint=receiptItemCountFromText(receiptAllText);
-  var firstKitchenSale=/ファーストキッチン|First\s*Kitchen/i.test(shop),fkProductHint=/(?:K[-‐－][^\n]{0,38}(?:L\s*290|7H290|7HL290)|フレーバー.{0,12}ポテト)/i.test([itemText,middle,whole,raw].join("\n"));
-  if(!rows.length&&countHint===1&&Number(amount)>0&&amountInfo.confidence==="high"&&!receiptWideDiscount&&firstKitchenSale&&fkProductHint){
+  var firstKitchenSale=merchantShopKey(shop)==="firstkitchen",fkEvidence=[itemText,middle,whole,raw].filter(Boolean).join("\n");
+  var fkProductHint=/(?:K[-‐－][^\n]{0,38}(?:L\s*290|7H290|7HL290)|フレーバー.{0,12}ポテト)/i.test(fkEvidence);
+  // An exact known-receipt fingerprint can offer the plausible product name,
+  // but the user's confirmation is still REQUIRED: OCR has not verified the name.
+  var fkFlavorHint=/(?:焦がし|集がし|バター|衣油味|醤油味)/.test(fkEvidence);
+  var fkStrongHint=/K[-‐－][^\n]{0,38}(?:L\s*290|7H290|7HL290)/i.test(fkEvidence)||/フレーバー.{0,12}ポテト/i.test(fkEvidence);
+  if(firstKitchenSale&&Number(amount)===290&&amountInfo.confidence==="high"&&!receiptWideDiscount&&fkProductHint&&(countHint===0||countHint===1)&&fkStrongHint){
+    // Replace a malformed accounting candidate or an unverified name only.
+    // A different, independently verified merchandise item must not be changed.
+    var badSingle=rows.length===1&&(receiptBrokenTotalLabel(rows[0].name)||receiptBrokenTotalLabel(rows[0].rawName)||isGarbageProductName(rows[0].name));
+    if(!rows.length||badSingle){
+      var fkName="フレーバーポテトL"+(fkFlavorHint?"（焦がしバター醤油味）":"");
+      rows=[{name:fkName,rawName:fkName,unitPrice:290,qty:1,total:290,quality:0,sourceIndex:0,sourcePriority:1,lowConfidence:true,candidateOnly:true,candidateSource:"merchant_receipt_hint",nameConfidence:"low",provisionalAmount:true}];
+    }
+  }else if(!rows.length&&countHint===1&&Number(amount)>0&&amountInfo.confidence==="high"&&!receiptWideDiscount&&firstKitchenSale&&fkProductHint){
     rows=[{name:"商品名要確認",rawName:"商品名要確認",unitPrice:Number(amount),qty:1,total:Number(amount),quality:0,sourceIndex:0,sourcePriority:1,lowConfidence:true,candidateOnly:true,candidateSource:"single_item_count_provisional",nameConfidence:"low",provisionalAmount:true}];
   }
   rows=applyFocusedNamesToRows(shop,rows,obj&&obj.meta||null);
@@ -2407,11 +2429,14 @@ function parseReceiptText(input,baseDate){
     if(!m||Number(row.total||0)!==290)return;
     row.name="フレーバーポテトL";
     if(/焦がし.{0,7}バター.{0,7}醤油/i.test(receiptAllText))row.name+="（焦がしバター醤油味）";
+    // Merchant hints are provisional: they must not be promoted to an
+    // independently verified item just because the name matches the shop.
+    if(row.provisionalAmount){row.nameConfidence="low";row.lowConfidence=true;row.candidateOnly=true;return;}
     row.nameConfidence="medium";row.lowConfidence=false;row.candidateOnly=true;
   });
   rows=applyMerchantVerifiedQuantityHints(shop,rows,verifiedBasketEvidence);
   // Final guard: payment/change lines must never survive into visible product candidates.
-  rows=rows.filter(function(x){return !isChangeCueText(String(x.name||""))&&!isQuantityDescriptorName(String(x.name||""));});
+  rows=rows.filter(function(x){return !isChangeCueText(String(x.name||""))&&!isQuantityDescriptorName(String(x.name||""))&&!receiptBrokenTotalLabel(String(x.name||""))&&!receiptBrokenTotalLabel(String(x.rawName||""));});
   rows=removeDerivedChangeRows(rows,receiptAllText,amount);
   // Never expose a product set whose sum exceeds the confirmed receipt total.
   if(amount>0&&rows.reduce(function(a,x){return a+Number(x.total||0)},0)>amount)rows=[];
@@ -2470,7 +2495,7 @@ function receiptDiagnosticSummary(p){
   p=p||{};
   var rows=Array.isArray(p.itemRows)?p.itemRows:[],cat=p.categoryCandidate||{},meta=p.ocrMeta||{};
   var lines=[
-    "お小遣い家計簿 v3.71.2 レシート診断",
+    "お小遣い家計簿 v3.71.3 レシート診断",
     "日付: "+String(p.date||"未判定"),
     "店名: "+String(p.shop||"未判定"),
     "合計: "+String(Number(p.amount||0))+"円",
@@ -4044,6 +4069,10 @@ function receiptTests(){
   var codeNoYenParsed=itemRowsFromText(productSourceText("オーバーサイズシャツ\n2200083271771 1 1,990"),4);
   var fuzzyCodeMatch=merchantProductCodeMatch("GU ららぽーと立川立飛店","2200083271777",1990);
   var fuzzyCodeWrongPrice=merchantProductCodeMatch("GU ららぽーと立川立飛店","2200083271777",2990);
+  // V3.71.3 actual-device: OCR turned the subtotal into "計 て ¥290".
+  var fkAccountingNoise=["First Kitchen","田無店","2026年10月10日(土) 12:48","K-7b-A\"-8\"7HL290","集がしター衣油味","計 て ¥290","合計 ¥290","楽天ペイ ¥290","会員ID 0031897","アンケート クーポンをGET!","ポテトS ¥100"].join("\n");
+  var pFkAccountingNoise=parseReceiptText({text:fkAccountingNoise,whole:fkAccountingNoise,itemText:"K-7b-A\"-8\"7HL290\n集がしター衣油味\n計 て ¥290\n合計 ¥290",sections:{top:"First Kitchen\n田無店",middle:"K-7b-A\"-8\"7HL290\n集がしター衣油味\n計 て ¥290",bottom:"合計 ¥290\n楽天ペイ ¥290"}},"2026-10-10");
+  var fkOtherProduct=parseReceiptText({text:"First Kitchen\n田無店\n2026年10月10日(土)\nハンバーガー ¥290\n小計 1 ¥290\n合計 ¥290\n楽天ペイ ¥290",sections:{top:"First Kitchen\n田無店",middle:"ハンバーガー ¥290",bottom:"小計 1 ¥290\n合計 ¥290\n楽天ペイ ¥290"}},"2026-10-10");
   var fkRegressionText=[
     "City Convenience Restaurant","First Kitchen","田無店","2026年10月10日(土) 12:48",
     "K-フレーバーポテトL290 ¥290","焦がしバター醤油味 ¥0","小計 1 ¥290",
@@ -4057,6 +4086,9 @@ function receiptTests(){
   var pFkNoisy=parseReceiptText({text:fkNoisyText,whole:fkNoisyText,itemText:"K-7b-A\"-8\"7HL290\n小計 1 ¥290\n合計 ¥290\n<dポイント>\nポテト ¥100",paymentText:"<楽天ペイ>\n支払 ¥290",sections:{top:"First Kitchen\n田無店",middle:"K-7b-A\"-8\"7HL290",bottom:"楽天ペー ¥290\n会員ID 0031897"}},"2026-10-10");
   var pFkNoTotal=parseReceiptText("First Kitchen\n田無店\n会員ID 0031897\nアンケート クーポンをGET!\nポテト ¥100","2026-10-10");
   return[
+    ["receipt malformed subtotal glyphs excluded from product text v3.71.3",receiptBrokenTotalLabel("計 て ¥290")&&receiptBrokenTotalLabel("計 て")&&isGarbageProductName("計 て")&&!itemRowsFromText("計 て ¥290",1).length],
+    ["receipt First Kitchen corrupted total stays review only v3.71.3",pFkAccountingNoise.amount===290&&pFkAccountingNoise.itemRows.length===1&&/フレーバーポテトL/.test(pFkAccountingNoise.itemRows[0].name)&&pFkAccountingNoise.itemRows[0].lowConfidence===true&&!pFkAccountingNoise.itemRows[0].autoConfirmed&&!pFkAccountingNoise.itemSetComplete],
+    ["receipt First Kitchen different 290yen product not guessed v3.71.3",!fkOtherProduct.items.some(function(x){return /フレーバーポテト/.test(x)})],
     ["receipt First Kitchen correct branch/category/payment test",pFkRegression.shop==="ファーストキッチン 田無店"&&pFkRegression.paymentCandidate==="rakutenpay"&&pFkRegression.categoryCandidate&&pFkRegression.categoryCandidate.subName==="外食"],
     ["receipt First Kitchen one-item amount and coupon exclusion test",pFkRegression.amount===290&&pFkRegression.itemSetComplete===true&&pFkRegression.itemRows.length===1&&pFkRegression.itemSum===290&&!pFkRegression.items.some(function(x){return /会員|クーポン|100円/.test(x)})],
     ["receipt noisy First Kitchen retains one provisional nonconfirmable row test",pFkNoisy.amount===290&&pFkNoisy.itemRows.length<=1&&!pFkNoisy.itemSetComplete&&pFkNoisy.itemRows.every(function(x){return x.lowConfidence===true})],
@@ -4236,12 +4268,12 @@ function receiptTests(){
     ["receipt KFC five-piece quantity v3.70.5 test",!!kfcActualRow&&kfcActualRow.qty===5&&kfcActualRow.unitPrice===140&&kfcActualRow.total===700&&pKfcActual.actualItemCount===5&&pKfcActual.itemSum===700&&pKfcActual.itemSetComplete===true],
     ["receipt KFC included-tax split v3.70.5 test",pKfcActual.tax===51&&pKfcActual.taxIncluded===true&&!!kfcActualSplit&&kfcActualSplit.net===649&&kfcActualSplit.extra===51&&kfcActualSplit.gross===700],
     ["receipt KFC external-category v3.70.5 test",pKfcActual.categoryCandidate&&pKfcActual.categoryCandidate.groupName==="食費"&&pKfcActual.categoryCandidate.subName==="外食"&&!pKfcActual.items.some(function(x){return /取引金額|お買上|内消費/.test(x)})],
-    ["receipt Create branch/payment v3.71.2 test",pCreateMixed.shop==="クリエイト小平中島町店"&&pCreateMixed.paymentCandidate==="rakutenpay"&&pCreateMixed.amount===1335],
-    ["receipt Create six-kind twelve-item v3.71.2 test",pCreateMixed.itemRows.length===6&&pCreateMixed.actualItemCount===12&&pCreateMixed.expectedItemCount===12&&pCreateMixed.itemSum===1233&&pCreateMixed.itemSetComplete===true],
-    ["receipt Create verified product names v3.71.2 test",pCreateMixed.productConfidenceLevel==="high"&&pCreateMixed.items.slice().sort().join("|")===["LDC サイダー 1.5L","ギルティ炭酸 NOPE","クラフトボス ベリー＆アサイー炭酸","三ツ矢 実りの洋梨mix","クリニカ フレッシュミント 130g","ドクターデンリスト 山切カット"].sort().join("|")],
-    ["receipt Create mixed-tax buckets v3.71.2 test",pCreateMixed.tax===102&&pCreateMixed.taxBuckets.length===2&&create8Net===1010&&create8Tax===80&&create8Gross===1090&&create10Net===223&&create10Tax===22&&create10Gross===245],
-    ["receipt Create mixed-tax item categories v3.71.2 test",create8.length===4&&create8.every(function(x){return x.categoryLabel==="食費 ＞ 飲み物"})&&create10.length===2&&create10.every(function(x){return x.categoryLabel==="日用品 ＞ 衛生用品"})],
-    ["receipt Create mixed-tax gross total v3.71.2 test",pCreateMixed.splitRows.reduce(function(a,x){return a+x.gross},0)===1335&&pCreateMixed.splitRows.reduce(function(a,x){return a+x.extra},0)===102],
+    ["receipt Create branch/payment v3.71.3 test",pCreateMixed.shop==="クリエイト小平中島町店"&&pCreateMixed.paymentCandidate==="rakutenpay"&&pCreateMixed.amount===1335],
+    ["receipt Create six-kind twelve-item v3.71.3 test",pCreateMixed.itemRows.length===6&&pCreateMixed.actualItemCount===12&&pCreateMixed.expectedItemCount===12&&pCreateMixed.itemSum===1233&&pCreateMixed.itemSetComplete===true],
+    ["receipt Create verified product names v3.71.3 test",pCreateMixed.productConfidenceLevel==="high"&&pCreateMixed.items.slice().sort().join("|")===["LDC サイダー 1.5L","ギルティ炭酸 NOPE","クラフトボス ベリー＆アサイー炭酸","三ツ矢 実りの洋梨mix","クリニカ フレッシュミント 130g","ドクターデンリスト 山切カット"].sort().join("|")],
+    ["receipt Create mixed-tax buckets v3.71.3 test",pCreateMixed.tax===102&&pCreateMixed.taxBuckets.length===2&&create8Net===1010&&create8Tax===80&&create8Gross===1090&&create10Net===223&&create10Tax===22&&create10Gross===245],
+    ["receipt Create mixed-tax item categories v3.71.3 test",create8.length===4&&create8.every(function(x){return x.categoryLabel==="食費 ＞ 飲み物"})&&create10.length===2&&create10.every(function(x){return x.categoryLabel==="日用品 ＞ 衛生用品"})],
+    ["receipt Create mixed-tax gross total v3.71.3 test",pCreateMixed.splitRows.reduce(function(a,x){return a+x.gross},0)===1335&&pCreateMixed.splitRows.reduce(function(a,x){return a+x.extra},0)===102],
     ["receipt SEIYU registration fingerprint test",seiyuRegShop==="西友"],
     ["receipt item category snack test",splitSnack&&/お菓子|スイーツ/.test(splitSnack.categoryLabel)],
     ["receipt item category drink test",splitDrink&&/飲み物/.test(splitDrink.categoryLabel)],
@@ -4307,7 +4339,7 @@ function receiptTests(){
 function attachTests(){
   var b=document.getElementById("selfTest");if(!b||b.dataset.receiptWrapped)return;
   var base=b.onclick;b.dataset.receiptWrapped="1";
-  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),passed=out.filter(function(x){return x[1]}).length,pass=passed===out.length,box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">v3.71.2 レシート機能テスト '+passed+'/'+out.length+' 件すべて合格しました。</div>':'<div class="errorbox">v3.71.2 レシート機能テスト '+passed+'/'+out.length+' 件合格。失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
+  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),passed=out.filter(function(x){return x[1]}).length,pass=passed===out.length,box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">v3.71.3 レシート機能テスト '+passed+'/'+out.length+' 件すべて合格しました。</div>':'<div class="errorbox">v3.71.3 レシート機能テスト '+passed+'/'+out.length+' 件合格。失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
 }
 var body=document.getElementById("modalBody");
 if(body){new MutationObserver(function(){enhance()}).observe(body,{childList:true,subtree:true})}

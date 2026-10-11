@@ -919,6 +919,15 @@ function merchantProductDictionary(shop){
       {name:"泡ポンプボトル モノトーン380ml",aliases:["泡ポンプボトル モノトーン380ml","泡ポンプボトルモノトーン380ml","泡ポンプボトルモ小-7380ml","泡ポンプボトルモt修-y380ml","泡ポンプボトルtモ條-ツ380ml","泡ポンプボトルモト-y380ml","泡ポンプボ に 7380m|"],priceHints:[100],source:"verified_sample"}
     );
   }
+  // Exact-JAN examples from user-verified receipts.  These are suggestions,
+  // never permission to auto-confirm a product from its price alone.
+  if(/^ドン[・\s]?キホーテ/.test(key)){
+    builtIn.push({
+      name:"超ド級サイズ ポテトハニー",
+      aliases:["超ド級サイズ ポテトハニ","ド級サイズ ポテトハニ","超ド下級サイズ ボテトハー"],
+      priceHints:[218],productCodes:["4901335118872"],source:"verified_sample"
+    });
+  }
   if(key==="gu"){
     builtIn.push({
       name:"オーバーサイズシャツ",
@@ -1250,6 +1259,73 @@ function applyLearnedNamesToRows(shop,rows){
     return x;
   });
 }
+// Associate a JAN on its own printed line with the NEXT purchased-product line.
+// On discount-store receipts the price may be unreadable in one OCR pass while
+// a separate pass preserves the JAN and natural merchandise name.  In particular
+// two ¥218 items must not be linked by price alone.
+function receiptJanMerchandiseEvidence(sources){
+  var result=[],seen={};
+  (sources||[]).forEach(function(src){
+    var lines=normalize(src||"").split("\n").map(function(x){return String(x||"").trim()}).filter(Boolean);
+    for(var i=0;i<lines.length;i++){
+      var codeMatch=lines[i].match(/(?:^|[^0-9])([0-9]{13})\s*JAN(?:$|[^A-Za-z])/i);
+      if(!codeMatch||!ean13ChecksumValid(codeMatch[1]))continue;
+      var code=codeMatch[1];
+      for(var j=i+1;j<=Math.min(i+2,lines.length-1);j++){
+        var line=lines[j];
+        if(/[0-9]{10,13}\s*JAN|(?:小\s*計|合\s*計|税額|税率|お?預り|お?釣り|お買上)/i.test(line))break;
+        var cleaned=normalizeProductName(line.replace(/^[*※x×\s]+/i,"").replace(/\s*(?:¥|￥)\s*[0-9,]{2,7}\s*$/,""));
+        if(!cleaned||cleaned.length<5||isGarbageProductName(cleaned)||receiptNonMerchandiseLabel(cleaned)||productMeaningfulScore(cleaned)<22)continue;
+        var key=code+"|"+cleaned;
+        if(!seen[key]){result.push({code:code,name:cleaned});seen[key]=1}
+        break;
+      }
+    }
+  });
+  return result;
+}
+function applyVerifiedJanNameHints(shop,rows,sources){
+  var list=(rows||[]).map(function(row){return Object.assign({},row)}),pairs=receiptJanMerchandiseEvidence(sources),applied=0;
+  if(!list.length||!pairs.length)return{rows:list,pairs:pairs.length,applied:0};
+  var entries=merchantProductDictionary(shop).filter(function(e){return e&&e.source==="verified_sample"&&Array.isArray(e.productCodes)&&e.productCodes.length});
+  var candidates=[];
+  list.forEach(function(row,ri){
+    var price=Number(row&&row.total||0),raw=String(row&&row.rawName||row&&row.name||""),code=normalizeProductCodeToken(row&&row.productCode);
+    entries.forEach(function(entry){
+      if((entry.priceHints||[]).indexOf(price)<0)return;
+      (entry.productCodes||[]).forEach(function(expected){
+        expected=normalizeProductCodeToken(expected);
+        // If the row already has a distinct valid JAN, never override it.
+        if(code&&code!==expected)return;
+        pairs.filter(function(pair){return pair.code===expected}).forEach(function(pair){
+          var similarity=Math.max(productSimilarity(raw,pair.name),productSimilarity(String(row.name||""),pair.name));
+          // Require a discriminating shared product stem, not merely the same amount.
+          // A known "カラムーチョ" row and an unrelated same-price product are protected.
+          var stemOk= /超.?ド級.*サイズ|ド級サイズ/.test(raw)&&/ド級サイズ|ド下級サイズ/.test(pair.name)&&/ポテト/.test(pair.name)&&!/カラムーチョ/.test(raw);
+          if(!stemOk||similarity<.20)return;
+          candidates.push({ri:ri,entry:entry,code:expected,sourceName:pair.name,sim:similarity});
+        });
+      });
+    });
+  });
+  // A code must identify exactly one selected merchandise row. Never propagate
+  // one corrected name to multiple equal-price products or a competing JAN.
+  var byCode={};candidates.forEach(function(x){var k=x.code;byCode[k]=byCode[k]||[];byCode[k].push(x)});
+  Object.keys(byCode).forEach(function(code){
+    var options=byCode[code],uniqueRows=[...new Set(options.map(function(x){return x.ri}))];
+    if(uniqueRows.length!==1)return;
+    options.sort(function(a,b){return b.sim-a.sim});
+    var hit=options[0],r=list[hit.ri];
+    if(r.name!==hit.entry.name){
+      r.name=hit.entry.name;r.productCode=code;
+      r.lowConfidence=true;r.candidateOnly=true;r.autoConfirmed=false;
+      r.candidateSource="jan_ocr_review";r.nameConfidence="low";
+      r.nameAlternatives=[hit.entry.name,hit.sourceName].filter(function(x,i,a){return a.indexOf(x)===i});
+      applied++;
+    }
+  });
+  return{rows:list,pairs:pairs.length,applied:applied};
+}
 function applyMerchantVerifiedQuantityHints(shop,rows,receiptText){
   var dict=merchantProductDictionary(shop).filter(function(x){return x&&x.source==="verified_sample"&&Array.isArray(x.qtyHints)&&Array.isArray(x.unitPriceHints)}),text=normalize(receiptText||"");
   if(!dict.length||!text)return(rows||[]).slice();
@@ -1274,7 +1350,7 @@ function applyMerchantDictionaryCandidatesToRows(shop,rows){
   if(!dict.length)return(rows||[]).slice();
   return(rows||[]).map(function(row){
     var x=Object.assign({},row);
-    if(x.autoConfirmed)return x;
+    if(x.autoConfirmed||x.candidateSource==="jan_ocr_review")return x;
     var price=Number(x.originalTotal||x.total||0),codeMatch=merchantProductCodeMatch(shop,x.productCode,price),codeHit=codeMatch&&codeMatch.entry,observed=[{text:x.rawName||x.name},{text:x.name}];
     if(codeHit&&(!codeHit.priceHints||!codeHit.priceHints.length||codeHit.priceHints.indexOf(price)>=0)){
       x.name=codeHit.name;x.lowConfidence=true;x.candidateOnly=true;x.candidateSource=codeHit.source||"verified_sample";x.dictionarySuggested=true;x.codeMatched=true;x.nameConfidence="medium";x.nameAlternatives=[codeHit.name];x.quality=Math.max(75,Number(x.quality||0));
@@ -1330,6 +1406,10 @@ function recoverSingleLearnedDictionaryGap(shop,receiptText,currentRows,target,e
 }
 function autoConfirmVerifiedSampleRows(shop,rows,context){
   context=context||{};
+  // Donki examples correct badly OCR'd product text, but a verified JAN from
+  // a previous receipt is NOT user confirmation of this particular purchase.
+  // Keep all such suggestions review-only; explicit user learning has its own path.
+  if(/^ドン[・\s]?キホーテ/.test(merchantShopKey(shop)))return(rows||[]).slice();
   var target=Number(context.merchandiseTarget||0),sum=Number(context.itemSum||0),expected=Number(context.expectedItemCount||0),actual=Number(context.actualItemCount||0);
   var trusted=!!merchantShopKey(shop)&&context.accountingStructureValid===true&&context.amountConfidence==="high"&&target>0&&sum===target&&(!expected||actual===expected);
   if(!trusted)return(rows||[]).slice();
@@ -2484,6 +2564,16 @@ function parseReceiptText(input,baseDate){
   }
   rows=applyFocusedNamesToRows(shop,rows,obj&&obj.meta||null);
   rows=applyLearnedNamesToRows(shop,rows);
+  // Strong adjacent-JAN evidence is applied before broad fuzzy dictionary hints.
+  // A confirmed same-price product must never be overwritten by another row.
+  var janNameSources=[purchaseItem,purchaseMiddle,purchaseWhole,purchaseRaw,obj&&obj.itemText||"",middle,whole,raw];
+  // A stronger JAN+name pair can survive in a labeled OCR pass even when the
+  // aggregated itemText dropped the readable product line.
+  if(obj&&Array.isArray(obj.diagnostics))obj.diagnostics.forEach(function(d){
+    if(/^商品(?:上段|中段|下段|全域)/.test(String(d&&d.label||"")))janNameSources.push(String(d&&d.text||""));
+  });
+  var janNameReview=applyVerifiedJanNameHints(shop,rows,janNameSources);
+  rows=janNameReview.rows;
   rows=applyMerchantDictionaryCandidatesToRows(shop,rows);
   if(merchantShopKey(shop)==="firstkitchen")rows.forEach(function(row){
     var m=String(row.name||"").match(/^(?:K[-‐－])?フレーバー?ポテトL\s*(290)?$/i);
@@ -2549,7 +2639,7 @@ function parseReceiptText(input,baseDate){
   var candidateSource=focusConsensus&&focusConsensus.accepted?"ocr":dictionaryAutoConfirmed?"learned":dictionaryInference&&dictionaryInference.name?(dictionaryInference.source||"verified_sample"):focusConsensus&&focusConsensus.candidateName?"ocr":"";
   var candidateList=dictionaryInference&&dictionaryInference.name?[dictionaryInference.name].concat(dictionaryInference.alternatives||[]):focusConsensus&&focusConsensus.candidates||[];
   candidateList=candidateList.filter(function(x,i,a){return x&&a.indexOf(x)===i}).slice(0,3);
-  var diagnosticStages={dateSource:dateSource,hasSubtotal:Number(amountInfo.subtotal||0)>0,reviewTarget:reviewTarget,initialRows:initialRows.length,chosenRows:itemChoice.rows.length,finalRows:rows.length,merchantHint:finalMerchantHint,promoCouponIgnored:ignoredPromotionalCoupons,recognizedDiscount:receiptWideDiscount,fkShop:fkDiagnostic.shopOk,fkAmount:fkDiagnostic.amountOk,fkPayment:fkDiagnostic.paid,fkProduct:fkDiagnostic.strong,fkFlavor:fkDiagnostic.flavor,fkCount:fkDiagnostic.countOk,productPasses:fkDiagnostic.productPasses};
+  var diagnosticStages={dateSource:dateSource,hasSubtotal:Number(amountInfo.subtotal||0)>0,reviewTarget:reviewTarget,initialRows:initialRows.length,chosenRows:itemChoice.rows.length,finalRows:rows.length,merchantHint:finalMerchantHint,promoCouponIgnored:ignoredPromotionalCoupons,recognizedDiscount:receiptWideDiscount,fkShop:fkDiagnostic.shopOk,fkAmount:fkDiagnostic.amountOk,fkPayment:fkDiagnostic.paid,fkProduct:fkDiagnostic.strong,fkFlavor:fkDiagnostic.flavor,fkCount:fkDiagnostic.countOk,productPasses:fkDiagnostic.productPasses,janPairs:janNameReview.pairs,janNameRepairs:janNameReview.applied};
   return{rawText:raw,debugText:debugText,date:date,dateSource:dateSource,diagnosticStages:diagnosticStages,reviewTarget:reviewTarget,shop:shop,verifiedBasketRecovered:!!(verifiedBasket&&verifiedBasket.rows&&verifiedBasket.rows.length),amount:amount,amountConfidence:amountInfo.confidence,amountScore:amountInfo.score,subtotal:amountInfo.subtotal,preDiscountTotal:explicitPreDiscount,preDiscountOCR:explicitPreDiscountRaw,preDiscountSource:preDiscountDecision.source,preDiscountConflict:!!preDiscountDecision.conflict,discount:receiptWideDiscount,accountingStructureValid:accountingStructureValid,tax:amountInfo.tax,taxIncluded:!!amountInfo.taxIncluded,taxBuckets:amountInfo.taxBuckets||[],subtotalTaxMatch:subtotalTaxMatch,paymentCandidate:payment,categoryCandidate:cat,items:items,itemRows:rows,splitRows:splitRows,itemSum:itemSum,merchandiseTarget:merchandiseTarget,itemSetComplete:itemSetComplete,expectedItemCount:expectedItemCount,actualItemCount:actualItemCount,itemQuantityMatch:itemQuantityMatch,autoConfirmedItemCount:autoConfirmedItemCount,itemSubtotalMatch:!!(amountInfo.subtotal&&itemSum===amountInfo.subtotal),itemPreDiscountMatch:!!(amountInfo.subtotal&&receiptWideDiscount>0&&itemSum===amountInfo.subtotal+receiptWideDiscount),gapRecovered:!!gapRecovery.recovered,gapRecoveredAmount:Number(gapRecovery.gap||0),gapRecoveredName:gapRecovery.recoveredName||"",learnedGapRecovered:!!learnedGapRecovery.recovered,learnedGapRecoveredAmount:Number(learnedGapRecovery.gap||0),learnedGapRecoveredName:learnedGapRecovery.recoveredName||"",productConfidenceLevel:productConfidence.level,highConfidenceItemCount:productConfidence.high,mediumConfidenceItemCount:productConfidence.medium,requiresProductReview:productConfidence.requiresReview,productReviewRecommended:productConfidence.reviewRecommended,detail:detailValue,productReadFailed:productReadFailed,productLowConfidence:productLowConfidence,lowConfidenceItemCount:lowConfidenceItemCount,productCandidateStatus:candidateStatus,productCandidateSource:candidateSource,productCandidateAutoConfirmed:dictionaryAutoConfirmed,productCandidates:candidateList,productCandidateReason:dictionaryAutoConfirmed?"learned_auto_confirmed":dictionaryInference&&dictionaryInference.name?"merchant_dictionary":focusConsensus&&focusConsensus.rejectionReason||"",tendered:receiptTenderedAmount(receiptAllText,amount),ocrMeta:obj&&obj.meta||null};
 }
 function summarizeProductConfidence(rows){
@@ -2594,7 +2684,7 @@ function receiptDiagnosticSummary(p){
   var rows=Array.isArray(p.itemRows)?p.itemRows:[],cat=p.categoryCandidate||{},meta=p.ocrMeta||{};
   var balance=receiptBalanceComparison(p);
   var lines=[
-    "お小遣い家計簿 "+(typeof VERSION==="string"?VERSION:"v3.71.11")+" レシート診断（OCR r3.71.11）",
+    "お小遣い家計簿 "+(typeof VERSION==="string"?VERSION:"v3.71.12")+" レシート診断（OCR r3.71.12）",
     "日付: "+String(p.date||"未判定（手動確認）")+" / 根拠: "+String(p.dateSource||"missing"),
     "店名: "+String(p.shop||"未判定"),
     "合計: "+String(Number(p.amount||0))+"円",
@@ -2608,7 +2698,9 @@ function receiptDiagnosticSummary(p){
     "商品構成: "+receiptCountText(rows.length,Number(p.actualItemCount||0))+(Number(p.expectedItemCount||0)?(" / レシート "+String(Number(p.expectedItemCount))+"点"):""),
     "抽出経路: "+(function(){var d=p.diagnosticStages||{};return "初期候補 "+Number(d.initialRows||0)+" / 絞込 "+Number(d.chosenRows||0)+" / 最終 "+Number(d.finalRows||rows.length)+" / 店舗候補 "+String(d.merchantHint||"未判定");})(),
     "割引照合: 当日割引 "+String(Number((p.diagnosticStages||{}).recognizedDiscount||0))+"円 / 除外した販促行 "+String(Number((p.diagnosticStages||{}).promoCouponIgnored||0))+"件",
-    "候補根拠: "+(function(){var d=p.diagnosticStages||{};return "店舗="+!!d.fkShop+",金額="+!!d.fkAmount+",決済="+!!d.fkPayment+",商品="+!!d.fkProduct+",味="+!!d.fkFlavor+",点数="+!!d.fkCount+",明細OCR="+Number(d.productPasses||0);})(),
+    (merchantShopKey(p.shop)==="firstkitchen"?
+      "店舗専用根拠（ファーストキッチン）: "+(function(){var d=p.diagnosticStages||{};return "店舗="+!!d.fkShop+",金額="+!!d.fkAmount+",決済="+!!d.fkPayment+",商品="+!!d.fkProduct+",味="+!!d.fkFlavor+",点数="+!!d.fkCount+",明細OCR="+Number(d.productPasses||0);})():
+      "商品抽出根拠: "+(function(){var d=p.diagnosticStages||{};return "OCR候補="+Number(d.initialRows||0)+"件 / 明細採用="+Number(d.finalRows||rows.length)+"件 / JAN商品行="+Number(d.janPairs||0)+"件 / 商品名補正="+Number(d.janNameRepairs||0)+"件 / 会計照合="+(p.accountingStructureValid?"一致":"未確認");})()),
     "支払方法: "+String(p.paymentCandidate||"未判定"),
     "カテゴリ: "+String(cat.groupName||"未判定")+(cat.subName?(" ＞ "+cat.subName):""),
     "学習差額復元: "+(p.learnedGapRecovered?("あり / "+String(p.learnedGapRecoveredName||"")+" / "+String(Number(p.learnedGapRecoveredAmount||0))+"円"):"なし"),
@@ -4402,7 +4494,29 @@ function receiptTests(){
      "超ド級カラムーチョ ホッ ¥218","4901335118872JAN","超ド級サイズ ポテトハニ ¥218",
      "小計 ¥436","8%対象額 ¥436","8%税額 ¥34","合計 ¥470","お預り ¥1,000","お釣り ¥530","お買上点数 2点","※majica、UCSカード払で以下ポイントが獲得できます"].join("\n");
   var donkiClean=parseReceiptText(donkiCleanText,"2026-10-11");
+  var donkiDistortedText=donkiCleanText.replace("超ド級サイズ ポテトハニ ¥218","超ド級サイズ R7 bnZ ¥218");
+  var donkiDistorted=parseReceiptText({text:donkiDistortedText,whole:donkiDistortedText,
+    itemText:donkiDistortedText,diagnostics:[{label:"商品中段グレー",text:"4901335118872JAN\n超ド級サイズ ポテトハニ ¥218"}]},"2026-10-11");
+  var donkiWrongPrice=applyVerifiedJanNameHints("ドン・キホーテ田無駅前店",[
+    {name:"超ド級サイズ R7 bnZ",rawName:"超ド級サイズ R7 bnZ",total:300}], [donkiCleanText]);
+  var donkiOtherShop=applyVerifiedJanNameHints("他のスーパー",[
+    {name:"超ド級サイズ R7 bnZ",rawName:"超ド級サイズ R7 bnZ",total:218}], [donkiCleanText]);
+  var donkiAmbiguous=applyVerifiedJanNameHints("ドン・キホーテ田無駅前店",[
+    {name:"超ド級サイズ R7 bnZ",rawName:"超ド級サイズ R7 bnZ",total:218},
+    {name:"超ド級サイズ R7 bnZ",rawName:"超ド級サイズ R7 bnZ",total:218}], [donkiCleanText]);
   return[
+    ["receipt v3.71.12 Donki JAN next-line item evidence",receiptJanMerchandiseEvidence([donkiCleanText]).some(function(x){return x.code==="4901335118872"&&/ポテトハニ/.test(x.name)})],
+    ["receipt v3.71.12 Donki second name corrected as review-only",donkiDistorted.itemRows.some(function(x){return x.name==="超ド級サイズ ポテトハニー"&&x.lowConfidence===true&&!x.autoConfirmed&&x.candidateOnly===true})],
+    ["receipt v3.71.12 Donki first snack not overwritten",donkiDistorted.itemRows.some(function(x){return /カラムーチョ/.test(x.name)})],
+    ["receipt v3.71.12 Donki amount and category unchanged",donkiDistorted.amount===470&&donkiDistorted.subtotal===436&&donkiDistorted.tax===34&&donkiDistorted.paymentCandidate==="wallet"],
+    ["receipt v3.71.12 correction recorded without any JAN code in diagnosis",donkiDistorted.diagnosticStages.janNameRepairs===1&&/商品名補正=1件/.test(receiptDiagnosticSummary(donkiDistorted))&&!/4901335118872/.test(receiptDiagnosticSummary(donkiDistorted))],
+    ["receipt v3.71.12 wrong JAN checksum does not repair",applyVerifiedJanNameHints("ドン・キホーテ田無駅前店",[{name:"超ド級サイズ R7 bnZ",rawName:"超ド級サイズ R7 bnZ",total:218}],["4901335118873JAN\n超ド級サイズ ポテトハニ ¥218"]).applied===0],
+    ["receipt v3.71.12 same-price first snack stays intact",applyVerifiedJanNameHints("ドン・キホーテ田無駅前店",[{name:"超ド級カラムーチョ ホッ",rawName:"超ド級カラムーチョ ホッ",total:218}],[donkiCleanText]).applied===0],
+    ["receipt v3.71.12 Donki wrong price not replaced",donkiWrongPrice.applied===0&&donkiWrongPrice.rows[0].name!=="超ド級サイズ ポテトハニー"],
+    ["receipt v3.71.12 Donki other merchant not replaced",donkiOtherShop.applied===0],
+    ["receipt v3.71.12 Donki same-price ambiguous JAN not broadcast",donkiAmbiguous.applied===0],
+    ["receipt v3.71.12 Donki diagnostics not fake false merchant clues",!/候補根拠: 店舗=false/.test(receiptDiagnosticSummary(donkiDistorted))&&/商品抽出根拠:/.test(receiptDiagnosticSummary(donkiDistorted))],
+    ["receipt v3.71.12 no bank state changed",state.transactions.length===before],
     ["receipt v3.71.11 crop fallback does not trim the currency column", typeof detectReceiptBounds==="function"&&/金額行・全幅カラー/.test(buildOCRBundle.toString())],
     ["receipt v3.71.11 rate-only tax label never means 8 yen",taxAmountFromLine("8%税額")===0&&taxAmountFromLine("8%対象額")===0&&analyzeAmount("8%税額\nお買上点数 2点","").tax===0],
     ["receipt v3.71.11 tax amount after 8% rate is still 34 yen",taxAmountFromLine("8%税額 ¥34")===34],
@@ -4693,7 +4807,7 @@ function receiptTests(){
 function attachTests(){
   var b=document.getElementById("selfTest");if(!b||b.dataset.receiptWrapped)return;
   var base=b.onclick;b.dataset.receiptWrapped="1";
-  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),passed=out.filter(function(x){return x[1]}).length,pass=passed===out.length,box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">v3.71.11 レシート機能テスト '+passed+'/'+out.length+' 件すべて合格しました。</div>':'<div class="errorbox">v3.71.11 レシート機能テスト '+passed+'/'+out.length+' 件合格。失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
+  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),passed=out.filter(function(x){return x[1]}).length,pass=passed===out.length,box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">v3.71.12 レシート機能テスト '+passed+'/'+out.length+' 件すべて合格しました。</div>':'<div class="errorbox">v3.71.12 レシート機能テスト '+passed+'/'+out.length+' 件合格。失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
 }
 var body=document.getElementById("modalBody");
 if(body){new MutationObserver(function(){enhance()}).observe(body,{childList:true,subtree:true})}

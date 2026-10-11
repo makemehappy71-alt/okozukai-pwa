@@ -563,11 +563,15 @@ function isReceiptHeaderLine(line){
 function receiptBrokenTotalLabel(line){
   var s=normalize(String(line||""));
   s=ocrMoneyClean(s).replace(/\s*(?:¥|￥|\\|Y)\s*[0-9]{1,7}(?:\s*円)?\s*$/i,"").trim();
-  return /^(?:(?:小|合|総)\s*)?計(?:\s*[てで])?$/.test(s);
+  // Mobile OCR regularly reads 「小計」 as 「ト計」 or 「卜計」.
+  // An item-count subtotal such as 「ト計 5点 ¥635」 is an accounting row,
+  // never a 635-yen product. Keep this check anchored to the whole line.
+  return /^(?:(?:小|合|総)\s*)?計(?:\s*[てで])?$/.test(s)||/^(?:ト|卜)\s*計(?:\s*[てで])?(?:\s*[0-9]{1,3}\s*(?:点|品))?$/.test(s);
 }
 function receiptNonMerchandiseLabel(line){
   var s=normalize(String(line||""));
   if(receiptBrokenTotalLabel(s))return true;
+  if(/^(?:ト|卜)\s*計\s*[0-9]{1,3}\s*(?:点|品)\s*(?:¥|￥|\\)?\s*[0-9]{1,7}\s*$/i.test(ocrMoneyClean(s)))return true;
   // Tax-base summaries are not products even when OCR drops 小計 and retains ¥635.
   if(/(?:税\s*抜\s*(?:金\s*額\s*)?対\s*象|税\s*抜\s*対\s*象\s*額|課\s*税\s*対\s*象\s*額|非\s*課\s*税\s*対\s*象)/i.test(s))return true;
   // Some mobile OCR reads an accounting label as "あい上の0 ※* ¥290".
@@ -1810,7 +1814,10 @@ function itemRowsFromText(text,sourcePriority){
   function productQtyPriceMatch(s){return ocrMoneyClean(s).match(/^(.{2,58}?[ぁ-んァ-ヶー一-龠A-Za-z][^¥￥]*?)[\s,、]+([0-9]{1,3})\s+(?:¥|￥)\s*([0-9]{1,7})\s*(?:円)?\s*(?:外|内|軽|[A-Z※*%])?\s*$/i)}
   function discountTotal(s){var x=ocrMoneyClean(s);if(!/値下|値引|割引|特価|sale/i.test(x))return 0;var nums=[],re=/(?:¥|￥)?\s*([0-9]{1,7})/g,m;while((m=re.exec(x)))nums.push(Number(m[1]||0));return nums.length?nums[nums.length-1]:0;}
   for(var i=0;i<lines.length;i++){
-    var line=ocrMoneyClean(lines[i]);if(bad.test(line))continue;
+    // E.g. 「リプトンアップルティ _\129C」: underscore is OCR noise
+    // before an intact 129-yen price. Do not rewrite monetary digits.
+    var line=ocrMoneyClean(lines[i]).replace(/[＿_]\s*(?=[¥￥])/g," ");
+    if(bad.test(line)||receiptBrokenTotalLabel(line))continue;
     var prev=i>0?ocrMoneyClean(lines[i-1]):"",next=i+1<lines.length?ocrMoneyClean(lines[i+1]):"",next2=i+2<lines.length?ocrMoneyClean(lines[i+2]):"";
     var qtySummary=quantitySummary(line);
     if(qtySummary&&prev&&!bad.test(prev)&&!isReceiptHeaderLine(prev)&&validName(cleanName(prev),qtySummary.total,prev)){
@@ -2481,7 +2488,27 @@ function parseReceiptText(input,baseDate){
     var discoveredDate=dateFromText(ocrDateSources[dateIx].text,baseDate||defaultDate(),true);
     if(discoveredDate){date=discoveredDate;dateSource=ocrDateSources[dateIx].name;break;}
   }
+  // Prefer corroborated tax values that survive in independent item/middle
+  // passes even when the merged/full pass misreads ¥50 as ¥60. Payment and
+  // subtotal still must reconcile; no tax is invented from the gap alone.
   var amountInfo=analyzeAmount(purchaseRaw||raw,[purchaseBottom,purchasePayment].filter(Boolean).join("\n")),amount=amountInfo.amount;
+  // Only revisit tax when the normal OCR disagrees with a separately read paid
+  // total. Reading every item crop on every receipt can change valid totals.
+  // Here we accept a different tax only if a labelled tax row in another OCR
+  // section independently reconciles the SAME printed subtotal and paid total.
+  var taxReviewSource="primary";
+  if(amountInfo.subtotal>0&&amount>amountInfo.subtotal&&
+     (amountInfo.taxIncluded||amountInfo.subtotal+Number(amountInfo.tax||0)!==amount)){
+    var supplement=[purchaseBottom,purchasePayment,purchaseMiddle,purchaseItem,purchaseWhole].filter(Boolean).join("\n");
+    if(supplement){
+      var recon=analyzeAmount(purchaseRaw||raw,supplement);
+      if(recon.amount===amount&&recon.subtotal===amountInfo.subtotal&&
+         !recon.taxIncluded&&recon.tax>0&&recon.subtotal+recon.tax===amount){
+        amountInfo.tax=recon.tax;amountInfo.taxIncluded=false;
+        taxReviewSource="cross_pass_reconciled";
+      }
+    }
+  }
   var payment=verifiedMerchantPaymentFromText(shop,[purchasePayment,purchaseRaw,purchaseWhole,purchaseBottom].filter(Boolean).join("\n"))||paymentFromText(purchasePayment)||paymentFromText(purchaseRaw)||paymentFromSources(bottom,raw,whole);
 
   // Product extraction is deliberately separate from payment/header parsing.
@@ -2687,7 +2714,7 @@ function parseReceiptText(input,baseDate){
   var candidateSource=focusConsensus&&focusConsensus.accepted?"ocr":dictionaryAutoConfirmed?"learned":dictionaryInference&&dictionaryInference.name?(dictionaryInference.source||"verified_sample"):focusConsensus&&focusConsensus.candidateName?"ocr":"";
   var candidateList=dictionaryInference&&dictionaryInference.name?[dictionaryInference.name].concat(dictionaryInference.alternatives||[]):focusConsensus&&focusConsensus.candidates||[];
   candidateList=candidateList.filter(function(x,i,a){return x&&a.indexOf(x)===i}).slice(0,3);
-  var diagnosticStages={dateSource:dateSource,hasSubtotal:Number(amountInfo.subtotal||0)>0,reviewTarget:reviewTarget,initialRows:initialRows.length,chosenRows:itemChoice.rows.length,finalRows:rows.length,merchantHint:finalMerchantHint,promoCouponIgnored:ignoredPromotionalCoupons,recognizedDiscount:receiptWideDiscount,fkShop:fkDiagnostic.shopOk,fkAmount:fkDiagnostic.amountOk,fkPayment:fkDiagnostic.paid,fkProduct:fkDiagnostic.strong,fkFlavor:fkDiagnostic.flavor,fkCount:fkDiagnostic.countOk,productPasses:fkDiagnostic.productPasses,janPairs:janNameReview.pairs,janNameRepairs:janNameReview.applied};
+  var diagnosticStages={taxReviewSource:taxReviewSource,dateSource:dateSource,hasSubtotal:Number(amountInfo.subtotal||0)>0,reviewTarget:reviewTarget,initialRows:initialRows.length,chosenRows:itemChoice.rows.length,finalRows:rows.length,merchantHint:finalMerchantHint,promoCouponIgnored:ignoredPromotionalCoupons,recognizedDiscount:receiptWideDiscount,fkShop:fkDiagnostic.shopOk,fkAmount:fkDiagnostic.amountOk,fkPayment:fkDiagnostic.paid,fkProduct:fkDiagnostic.strong,fkFlavor:fkDiagnostic.flavor,fkCount:fkDiagnostic.countOk,productPasses:fkDiagnostic.productPasses,janPairs:janNameReview.pairs,janNameRepairs:janNameReview.applied};
   return{rawText:raw,debugText:debugText,date:date,dateSource:dateSource,diagnosticStages:diagnosticStages,reviewTarget:reviewTarget,shop:shop,verifiedBasketRecovered:!!(verifiedBasket&&verifiedBasket.rows&&verifiedBasket.rows.length),amount:amount,amountConfidence:amountInfo.confidence,amountScore:amountInfo.score,subtotal:amountInfo.subtotal,preDiscountTotal:explicitPreDiscount,preDiscountOCR:explicitPreDiscountRaw,preDiscountSource:preDiscountDecision.source,preDiscountConflict:!!preDiscountDecision.conflict,discount:receiptWideDiscount,accountingStructureValid:accountingStructureValid,tax:amountInfo.tax,taxIncluded:!!amountInfo.taxIncluded,taxBuckets:amountInfo.taxBuckets||[],subtotalTaxMatch:subtotalTaxMatch,paymentCandidate:payment,categoryCandidate:cat,items:items,itemRows:rows,splitRows:splitRows,itemSum:itemSum,merchandiseTarget:merchandiseTarget,itemSetComplete:itemSetComplete,expectedItemCount:expectedItemCount,actualItemCount:actualItemCount,itemQuantityMatch:itemQuantityMatch,autoConfirmedItemCount:autoConfirmedItemCount,itemSubtotalMatch:!!(amountInfo.subtotal&&itemSum===amountInfo.subtotal),itemPreDiscountMatch:!!(amountInfo.subtotal&&receiptWideDiscount>0&&itemSum===amountInfo.subtotal+receiptWideDiscount),gapRecovered:!!gapRecovery.recovered,gapRecoveredAmount:Number(gapRecovery.gap||0),gapRecoveredName:gapRecovery.recoveredName||"",learnedGapRecovered:!!learnedGapRecovery.recovered,learnedGapRecoveredAmount:Number(learnedGapRecovery.gap||0),learnedGapRecoveredName:learnedGapRecovery.recoveredName||"",productConfidenceLevel:productConfidence.level,highConfidenceItemCount:productConfidence.high,mediumConfidenceItemCount:productConfidence.medium,requiresProductReview:productConfidence.requiresReview,productReviewRecommended:productConfidence.reviewRecommended,detail:detailValue,productReadFailed:productReadFailed,productLowConfidence:productLowConfidence,lowConfidenceItemCount:lowConfidenceItemCount,productCandidateStatus:candidateStatus,productCandidateSource:candidateSource,productCandidateAutoConfirmed:dictionaryAutoConfirmed,productCandidates:candidateList,productCandidateReason:dictionaryAutoConfirmed?"learned_auto_confirmed":dictionaryInference&&dictionaryInference.name?"merchant_dictionary":focusConsensus&&focusConsensus.rejectionReason||"",tendered:receiptTenderedAmount(receiptAllText,amount),ocrMeta:obj&&obj.meta||null};
 }
 function summarizeProductConfidence(rows){
@@ -2732,12 +2759,12 @@ function receiptDiagnosticSummary(p){
   var rows=Array.isArray(p.itemRows)?p.itemRows:[],cat=p.categoryCandidate||{},meta=p.ocrMeta||{};
   var balance=receiptBalanceComparison(p);
   var lines=[
-    "お小遣い家計簿 "+(typeof VERSION==="string"?VERSION:"v3.71.13")+" レシート診断（OCR r3.71.13）",
+    "お小遣い家計簿 "+(typeof VERSION==="string"?VERSION:"v3.71.14")+" レシート診断（OCR r3.71.14）",
     "日付: "+String(p.date||"未判定（手動確認）")+" / 根拠: "+String(p.dateSource||"missing"),
     "店名: "+String(p.shop||"未判定"),
     "合計: "+String(Number(p.amount||0))+"円",
     "金額信頼度: "+String(p.amountConfidence||"未判定"),
-    "小計: "+String(Number(p.subtotal||0))+"円 / 税: "+String(Number(p.tax||0))+"円"+(p.reviewTarget?" / 会計参考上限: "+String(p.reviewTarget)+"円（未照合）":""),
+    "小計: "+String(Number(p.subtotal||0))+"円 / 税: "+String(Number(p.tax||0))+"円"+(p.reviewTarget?" / 会計参考上限: "+String(p.reviewTarget)+"円（未照合）":"")+(p.diagnosticStages&&p.diagnosticStages.taxReviewSource==="cross_pass_reconciled"?" / 税額根拠: 分割OCR再照合":""),
     "会計構造: "+(p.accountingStructureValid?"一致":"未確認"),
     "商品信頼度: "+String(p.productConfidenceLevel||"未判定"),
     "商品候補合計: "+String(balance.sum)+"円 / 支払額: "+String(balance.amount)+"円 / 数値比較: "+(balance.numberMatches?"一致（未検証）":balance.independentlyVerified?"独立照合済み":balance.label),
@@ -3556,7 +3583,7 @@ function enhance(){
   bindBox();
 }
 function receiptTests(){
-  // V3.71.13: supermarket external-tax receipt with four kinds, five units.
+  // V3.71.14: supermarket external-tax receipt with four kinds, five units.
   // Product names and sums are from real OCR passes; 60 is a misread tax in one pass.
   var seiyuOctText=["東大和","2026年10月10日 (土) 13:38",
     "※90 リプトンアップルティ ¥129C","※91 TR マルゲリータタ ¥199C",
@@ -3567,6 +3594,29 @@ function receiptTests(){
     "※01 午後紅茶クリームミル ¥129C","※01 MOメロンソーダ","¥89 x 2 ¥178C","小計 5点 ¥635"].join("\n");
   var pSeiyuOct=parseReceiptText({text:seiyuOctText,shopText:"西友",itemText:seiyuOctItem,
     sections:{middle:seiyuOctItem+"\n税抜金額対象\n8% 5点 ¥635\n消費税額\n8% 5点 ¥50\n合計 ¥685\n楽天ペイ ¥685",bottom:"消費税額\n8% 5点 ¥50\n合計 ¥685\n楽天ペイ ¥685"},paymentText:"楽天ペイ ¥685",meta:{passes:22}},"2026-10-10");
+  // V3.71.14: actual Android OCR failure from the 2026-10-10 SEIYU receipt.
+  // In V3.71.13, 「ト計 5点 ¥635」 becomes a bogus 635-yen product and the
+  // merged OCR prefers a mistaken ¥60 tax. The separate middle pass has ¥50.
+  var seiyuDeviceWhole=["東大和","2026年10月10日 (土) 13:38",
+    "※90 リプトンアップルティ _\\129C","※91 TR マルゲリータタ ¥199C",
+    "※01 午後紅茶クリームミル ¥129C","※01 MOメロンソーダ",
+    "\\89 x 2 ¥178C","ト計 5点 \\635","税抜金額対象",
+    "87 5点 ¥635","消費税額","8Y, 5点 ¥60","楽天ベイ ¥685"].join("\n");
+  var seiyuDeviceItems=["※90 リプトンアップルティ _\\129C",
+    "※91 TR マルゲリータ ¥199C","※01 午後紅茶クリームミル ¥129C",
+    "※01 MOメロンソーダ","¥89 x 2 ¥178C","小計 5点 ¥635"].join("\n");
+  var seiyuDeviceMiddle=["※91 TR マルゲリータタ ¥199C",
+    "※01 午後紅茶クリームミル ¥129C","※01 MOメロンソーダ",
+    "¥89 x Z ¥178C","小計 5点 ¥635","税抜金額対象",
+    "8% 5点 ¥635","消費税額","8Y 5点 ¥50","楽天ベイ ¥685"].join("\n");
+  var seiyuDevice=parseReceiptText({text:seiyuDeviceWhole+"\n"+seiyuDeviceItems,whole:seiyuDeviceWhole,
+    shopText:"西友",itemText:seiyuDeviceItems,
+    paymentText:"楽天ベイ ¥685",sections:{top:"東大和",middle:seiyuDeviceMiddle,
+      bottom:"消費税額\n8Y 5点 ¥60\n楽天ペイ ¥685"},meta:{passes:22}},"2026-10-10");
+  var seiyuDeviceNoTax=parseReceiptText({text:seiyuDeviceWhole+"\n"+seiyuDeviceItems,whole:seiyuDeviceWhole,
+    shopText:"西友",itemText:seiyuDeviceItems,
+    paymentText:"楽天ベイ ¥685",sections:{top:"東大和",middle:"小計 5点 ¥635",
+      bottom:"消費税額\n8Y 5点 ¥60\n楽天ペイ ¥685"},meta:{passes:22}},"2026-10-10");
   var seiyuOctMissingTax=analyzeAmount("小計 5点 ¥635\n税抜金額対象\n8% 5点 ¥635\n楽天ペイ ¥685","");
   var seiyuOctRows=pSeiyuOct.itemRows||[];
   var sample="○○スーパー\n2026/09/24\n牛乳 238\n冷凍餃子 398\n小計 636\n合計 636\nVISA";
@@ -4566,27 +4616,35 @@ function receiptTests(){
     {name:"超ド級サイズ R7 bnZ",rawName:"超ド級サイズ R7 bnZ",total:218},
     {name:"超ド級サイズ R7 bnZ",rawName:"超ド級サイズ R7 bnZ",total:218}], [donkiCleanText]);
   return[
-    ["receipt v3.71.13 tax-base never merchandise",receiptNonMerchandiseLabel("税抜金額対象")&&!itemRowsFromText("税抜金額対象\n8% 5点 ¥635",2).length],
-    ["receipt v3.71.13 explicit 50 tax despite 60 OCR noise",pSeiyuOct.tax===50&&pSeiyuOct.subtotal===635&&pSeiyuOct.amount===685],
-    ["receipt v3.71.13 numeric accounting reconciled",pSeiyuOct.accountingStructureValid&&pSeiyuOct.itemSetComplete&&pSeiyuOct.itemSum===635],
-    ["receipt v3.71.13 4 kinds 5 items",seiyuOctRows.length===4&&pSeiyuOct.actualItemCount===5&&pSeiyuOct.expectedItemCount===5],
-    ["receipt v3.71.13 ¥89 times two stays one kind",seiyuOctRows.some(function(r){return /メロンソーダ/.test(r.name)&&r.qty===2&&r.unitPrice===89&&r.total===178})],
-    ["receipt v3.71.13 purchase prices preserved",seiyuOctRows.map(function(r){return r.total}).sort(function(a,b){return a-b}).join("|")==="129|129|178|199"],
-    ["receipt v3.71.13 tax-base not saved as product",!seiyuOctRows.some(function(r){return /税抜金額対象|楽天ペイ|ポイント/.test(r.name)})],
-    ["receipt v3.71.13 payment and review gate",pSeiyuOct.paymentCandidate==="rakutenpay"&&pSeiyuOct.productConfidenceLevel==="low"&&pSeiyuOct.itemRows.every(function(r){return !r.autoConfirmed})],
-    ["receipt v3.71.13 missing tax cannot claim reconciliation",seiyuOctMissingTax.subtotal===635&&seiyuOctMissingTax.tax===0&&!parseReceiptText("西友\n2026/10/10\nお菓子 ¥635\n小計 ¥635\n楽天ペイ ¥685","2026-10-10").accountingStructureValid],
-    ["receipt v3.71.13 Donki JAN next-line item evidence",receiptJanMerchandiseEvidence([donkiCleanText]).some(function(x){return x.code==="4901335118872"&&/ポテトハニ/.test(x.name)})],
-    ["receipt v3.71.13 Donki second name corrected as review-only",donkiDistorted.itemRows.some(function(x){return x.name==="超ド級サイズ ポテトハニー"&&x.lowConfidence===true&&!x.autoConfirmed&&x.candidateOnly===true})],
-    ["receipt v3.71.13 Donki first snack not overwritten",donkiDistorted.itemRows.some(function(x){return /カラムーチョ/.test(x.name)})],
-    ["receipt v3.71.13 Donki amount and category unchanged",donkiDistorted.amount===470&&donkiDistorted.subtotal===436&&donkiDistorted.tax===34&&donkiDistorted.paymentCandidate==="wallet"],
-    ["receipt v3.71.13 correction recorded without any JAN code in diagnosis",donkiDistorted.diagnosticStages.janNameRepairs===1&&/商品名補正=1件/.test(receiptDiagnosticSummary(donkiDistorted))&&!/4901335118872/.test(receiptDiagnosticSummary(donkiDistorted))],
-    ["receipt v3.71.13 wrong JAN checksum does not repair",applyVerifiedJanNameHints("ドン・キホーテ田無駅前店",[{name:"超ド級サイズ R7 bnZ",rawName:"超ド級サイズ R7 bnZ",total:218}],["4901335118873JAN\n超ド級サイズ ポテトハニ ¥218"]).applied===0],
-    ["receipt v3.71.13 same-price first snack stays intact",applyVerifiedJanNameHints("ドン・キホーテ田無駅前店",[{name:"超ド級カラムーチョ ホッ",rawName:"超ド級カラムーチョ ホッ",total:218}],[donkiCleanText]).applied===0],
-    ["receipt v3.71.13 Donki wrong price not replaced",donkiWrongPrice.applied===0&&donkiWrongPrice.rows[0].name!=="超ド級サイズ ポテトハニー"],
-    ["receipt v3.71.13 Donki other merchant not replaced",donkiOtherShop.applied===0],
-    ["receipt v3.71.13 Donki same-price ambiguous JAN not broadcast",donkiAmbiguous.applied===0],
-    ["receipt v3.71.13 Donki diagnostics not fake false merchant clues",!/候補根拠: 店舗=false/.test(receiptDiagnosticSummary(donkiDistorted))&&/商品抽出根拠:/.test(receiptDiagnosticSummary(donkiDistorted))],
-    ["receipt v3.71.13 no bank state changed",state.transactions.length===before],
+    ["receipt v3.71.14 Android malformed subtotal excluded",receiptBrokenTotalLabel("ト計 5点 ¥635")&&receiptNonMerchandiseLabel("ト計 5点 ¥635")&&!itemRowsFromText("ト計 5点 ¥635",4).length],
+    ["receipt v3.71.14 Android valid product text preserved",!receiptBrokenTotalLabel("超ド級カラムーチョ ホッ ¥218")&&itemRowsFromText("リプトンアップルティ _\\129C",4).some(function(x){return x.total===129})],
+    ["receipt v3.71.14 Android four kinds",seiyuDevice.itemRows.length===4&&seiyuDevice.actualItemCount===5&&seiyuDevice.expectedItemCount===5],
+    ["receipt v3.71.14 Android item amounts",seiyuDevice.itemRows.map(function(x){return x.total}).sort(function(a,b){return a-b}).join("|")==="129|129|178|199"],
+    ["receipt v3.71.14 Android melon soda 89x2",seiyuDevice.itemRows.some(function(x){return /メロンソーダ/.test(x.name)&&x.qty===2&&x.unitPrice===89&&x.total===178})],
+    ["receipt v3.71.14 Android independent tax cross-pass",seiyuDevice.subtotal===635&&seiyuDevice.amount===685&&seiyuDevice.tax===50&&seiyuDevice.accountingStructureValid&&seiyuDevice.diagnosticStages.taxReviewSource==="cross_pass_reconciled"],
+    ["receipt v3.71.14 Android no fabricated 50 on missing evidence",seiyuDeviceNoTax.tax!==50&&!seiyuDeviceNoTax.accountingStructureValid],
+    ["receipt v3.71.14 Android no auto-confirm or phantom product",seiyuDevice.itemRows.every(function(x){return x.lowConfidence&&!x.autoConfirmed&&!/計\s*[0-9]*点|税抜金額対象/.test(x.name)})],
+    ["receipt v3.71.14 tax-base never merchandise",receiptNonMerchandiseLabel("税抜金額対象")&&!itemRowsFromText("税抜金額対象\n8% 5点 ¥635",2).length],
+    ["receipt v3.71.14 explicit 50 tax despite 60 OCR noise",pSeiyuOct.tax===50&&pSeiyuOct.subtotal===635&&pSeiyuOct.amount===685],
+    ["receipt v3.71.14 numeric accounting reconciled",pSeiyuOct.accountingStructureValid&&pSeiyuOct.itemSetComplete&&pSeiyuOct.itemSum===635],
+    ["receipt v3.71.14 4 kinds 5 items",seiyuOctRows.length===4&&pSeiyuOct.actualItemCount===5&&pSeiyuOct.expectedItemCount===5],
+    ["receipt v3.71.14 ¥89 times two stays one kind",seiyuOctRows.some(function(r){return /メロンソーダ/.test(r.name)&&r.qty===2&&r.unitPrice===89&&r.total===178})],
+    ["receipt v3.71.14 purchase prices preserved",seiyuOctRows.map(function(r){return r.total}).sort(function(a,b){return a-b}).join("|")==="129|129|178|199"],
+    ["receipt v3.71.14 tax-base not saved as product",!seiyuOctRows.some(function(r){return /税抜金額対象|楽天ペイ|ポイント/.test(r.name)})],
+    ["receipt v3.71.14 payment and review gate",pSeiyuOct.paymentCandidate==="rakutenpay"&&pSeiyuOct.productConfidenceLevel==="low"&&pSeiyuOct.itemRows.every(function(r){return !r.autoConfirmed})],
+    ["receipt v3.71.14 missing tax cannot claim reconciliation",seiyuOctMissingTax.subtotal===635&&seiyuOctMissingTax.tax===0&&!parseReceiptText("西友\n2026/10/10\nお菓子 ¥635\n小計 ¥635\n楽天ペイ ¥685","2026-10-10").accountingStructureValid],
+    ["receipt v3.71.14 Donki JAN next-line item evidence",receiptJanMerchandiseEvidence([donkiCleanText]).some(function(x){return x.code==="4901335118872"&&/ポテトハニ/.test(x.name)})],
+    ["receipt v3.71.14 Donki second name corrected as review-only",donkiDistorted.itemRows.some(function(x){return x.name==="超ド級サイズ ポテトハニー"&&x.lowConfidence===true&&!x.autoConfirmed&&x.candidateOnly===true})],
+    ["receipt v3.71.14 Donki first snack not overwritten",donkiDistorted.itemRows.some(function(x){return /カラムーチョ/.test(x.name)})],
+    ["receipt v3.71.14 Donki amount and category unchanged",donkiDistorted.amount===470&&donkiDistorted.subtotal===436&&donkiDistorted.tax===34&&donkiDistorted.paymentCandidate==="wallet"],
+    ["receipt v3.71.14 correction recorded without any JAN code in diagnosis",donkiDistorted.diagnosticStages.janNameRepairs===1&&/商品名補正=1件/.test(receiptDiagnosticSummary(donkiDistorted))&&!/4901335118872/.test(receiptDiagnosticSummary(donkiDistorted))],
+    ["receipt v3.71.14 wrong JAN checksum does not repair",applyVerifiedJanNameHints("ドン・キホーテ田無駅前店",[{name:"超ド級サイズ R7 bnZ",rawName:"超ド級サイズ R7 bnZ",total:218}],["4901335118873JAN\n超ド級サイズ ポテトハニ ¥218"]).applied===0],
+    ["receipt v3.71.14 same-price first snack stays intact",applyVerifiedJanNameHints("ドン・キホーテ田無駅前店",[{name:"超ド級カラムーチョ ホッ",rawName:"超ド級カラムーチョ ホッ",total:218}],[donkiCleanText]).applied===0],
+    ["receipt v3.71.14 Donki wrong price not replaced",donkiWrongPrice.applied===0&&donkiWrongPrice.rows[0].name!=="超ド級サイズ ポテトハニー"],
+    ["receipt v3.71.14 Donki other merchant not replaced",donkiOtherShop.applied===0],
+    ["receipt v3.71.14 Donki same-price ambiguous JAN not broadcast",donkiAmbiguous.applied===0],
+    ["receipt v3.71.14 Donki diagnostics not fake false merchant clues",!/候補根拠: 店舗=false/.test(receiptDiagnosticSummary(donkiDistorted))&&/商品抽出根拠:/.test(receiptDiagnosticSummary(donkiDistorted))],
+    ["receipt v3.71.14 no bank state changed",state.transactions.length===before],
     ["receipt v3.71.11 crop fallback does not trim the currency column", typeof detectReceiptBounds==="function"&&/金額行・全幅カラー/.test(buildOCRBundle.toString())],
     ["receipt v3.71.11 rate-only tax label never means 8 yen",taxAmountFromLine("8%税額")===0&&taxAmountFromLine("8%対象額")===0&&analyzeAmount("8%税額\nお買上点数 2点","").tax===0],
     ["receipt v3.71.11 tax amount after 8% rate is still 34 yen",taxAmountFromLine("8%税額 ¥34")===34],
@@ -4877,7 +4935,7 @@ function receiptTests(){
 function attachTests(){
   var b=document.getElementById("selfTest");if(!b||b.dataset.receiptWrapped)return;
   var base=b.onclick;b.dataset.receiptWrapped="1";
-  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),passed=out.filter(function(x){return x[1]}).length,pass=passed===out.length,box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">v3.71.13 レシート機能テスト '+passed+'/'+out.length+' 件すべて合格しました。</div>':'<div class="errorbox">v3.71.13 レシート機能テスト '+passed+'/'+out.length+' 件合格。失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
+  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),passed=out.filter(function(x){return x[1]}).length,pass=passed===out.length,box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">v3.71.14 レシート機能テスト '+passed+'/'+out.length+' 件すべて合格しました。</div>':'<div class="errorbox">v3.71.14 レシート機能テスト '+passed+'/'+out.length+' 件合格。失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
 }
 var body=document.getElementById("modalBody");
 if(body){new MutationObserver(function(){enhance()}).observe(body,{childList:true,subtree:true})}

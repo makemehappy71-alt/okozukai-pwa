@@ -236,6 +236,8 @@ function productLineAnchorsFromBlocks(blocks,fullText,w,h){
   var lines=ocrBlockLines(blocks).slice().sort(function(a,b){return Number(a.bbox&&a.bbox.y0||0)-Number(b.bbox&&b.bbox.y0||0)}),info=analyzeAmount(fullText,"");
   var merchMax=Number(info.preDiscountTotal||receiptPreDiscountTotal(fullText)||info.subtotal||info.amount||0),out=[],seen={};
   function badLine(s){
+    // ト計 5点 ¥635 と 楽天ベイ ¥685 の擬似商品座標を作らない。
+    if(receiptNonMerchandiseLabel(s)||receiptBrokenTotalLabel(s)||classifyReceiptLine(s)!=="product")return true;
     if(isReceiptHeaderLine(s))return true;
     return /(?:営業時間|事業者番号|電話|TEL|レジ|No\.?|合計|小計|税込|消費税|内税|外税|税率|対象|お?預り|お\s*(?:釣|つ|的)\s*り?|釣銭|現金|値引|割引|クーポン|ポイント|会員|領収|アンケート|バーコード|QR)/i.test(s);
   }
@@ -348,6 +350,12 @@ function normalizeAnchoredOCRText(text,anchorValue,appendPrice){
 }
 function cleanFocusedProductName(text,anchorValue){
   var raw=normalize(text).replace(/\n+/g," ").replace(/\s+/g," ").trim();
+  // 西友などの価格列の末尾にある C は税区分であり商品名ではない。
+  // 金額の直後にある場合だけ削除する（商品名のビタミンCは残す）。
+  if(Number(anchorValue||0)>0){
+    var quoted=String(Number(anchorValue));
+    raw=raw.replace(new RegExp("((?:¥|￥|\\\\|Y)\\s*"+quoted+")\\s*[CＣ](?=\\s*$)","i"),"$1");
+  }
   if(!raw)return"";
   var bracket=raw.match(/[【\[「『(（]\s*([^】\]」』)）]{2,42})\s*[】\]」』)）]/);
   var s=bracket?bracket[1]:raw;
@@ -403,7 +411,10 @@ function focusedProductNameNatural(name,context){
 function focusedProductConsensus(entries,anchorValue,context){
   var normalized=(entries||[]).map(function(x){
     var raw=typeof x==="string"?x:String(x&&x.text||""),family=typeof x==="string"?"unknown":String(x&&x.family||x&&x.label||"unknown");
-    return{raw:raw,name:cleanFocusedProductName(raw,anchorValue),family:family};
+    var name=cleanFocusedProductName(raw,anchorValue);
+    // 商品個別OCRの複数パスで一致しても、小計・決済行は候補にしない。
+    if(receiptNonMerchandiseLabel(raw)||receiptNonMerchandiseLabel(name)||receiptBrokenTotalLabel(raw)||receiptBrokenTotalLabel(name))name="";
+    return{raw:raw,name:name,family:family};
   }).filter(function(x){return !!x.name});
   var unique=[];
   normalized.forEach(function(x){if(!unique.some(function(u){return u.name===x.name}))unique.push(x)});
@@ -578,6 +589,7 @@ function receiptNonMerchandiseLabel(line){
   // It is not merchandise. Let independent product-only OCR fragments be
   // considered instead of allowing this false row to take the entire total.
   if(/^(?:あい|おい|買い|お買い?)上(?:げ)?の[0０Oo](?:\s|$)/i.test(s))return true;
+  if(/^\s*[0-9]{1,2}\s*[Yy%％]\s*[,，]?\s*[0-9]{1,3}\s*(?:点|品)(?:\s|$)/i.test(s))return true;
   return /(?:会員\s*[Ii1ＩlL]\s*[DdＤ0oＯ]?|会員番号|メンバー\s*ID|ポイント|クーポン|アンケート|進呈|取引(?:番号|No|ID)|カード番号|登録番号|レシート番号|店舗番号|端末|認証番号|担当者?|店員|マネージャー|レジ番号|ご来店|ご利用|またのお越し|支\s*払|会\s*計|合\s*計|総\s*計|小\s*計|対象\s*計|[0-9０-９]+\s*[%％]\s*対象|対象(?:商品|金額)|消費税|領収証?|税込|税率|軽減税率|釣銭|お釣り|お預り|現金|楽天\s*(?:ペイ|ペー|ベイ|Pay)|paypay|\bdポイント\b|\bTAKE\s*OUT\b|受取番号|クレジット|\bQR\b)/i.test(s);
 }
 function classifyReceiptLine(line){
@@ -2661,6 +2673,18 @@ function parseReceiptText(input,baseDate){
     row.nameConfidence="medium";row.lowConfidence=false;row.candidateOnly=true;
   });
   rows=applyMerchantVerifiedQuantityHints(shop,rows,verifiedBasketEvidence);
+  if(merchantShopKey(shop)==="seiyu")rows=rows.map(function(row){
+    var item=Object.assign({},row),before=String(item.name||""),s=normalizeProductName(before);
+    // OCRのレジ商品コードが商品名に連結したケースだけ補正する。
+    s=s.replace(/^[A-Za-z]{1,3}[0-9]{1,3}\s+(?=(?:MO|M0)\s*メロンソーダ)/i,"");
+    s=s.replace(/^(?:MO|M0)\s*(?=メロンソーダ)/i,"");
+    s=s.replace(/^TR\s+(?=マルゲリータ)/i,"");
+    s=s.replace(/^マルゲリータタ$/,"マルゲリータ");
+    // 税区分の C が残った場合も、商品名末尾の限定的な税区分だけ除去。
+    if(/^(?:リプトンアップルティ|マルゲリータ|午後紅茶クリームミル|メロンソーダ)\s+C$/i.test(s))s=s.replace(/\s+C$/i,"");
+    if(s&&s!==before){item.name=s;if(!item.rawName)item.rawName=before;}
+    return item;
+  });
   // Final guard: payment/change lines must never survive into visible product candidates.
   rows=rows.filter(function(x){return !isChangeCueText(String(x.name||""))&&!isQuantityDescriptorName(String(x.name||""))&&!receiptBrokenTotalLabel(String(x.name||""))&&!receiptBrokenTotalLabel(String(x.rawName||""));});
   rows=removeDerivedChangeRows(rows,receiptAllText,amount);
@@ -2759,7 +2783,7 @@ function receiptDiagnosticSummary(p){
   var rows=Array.isArray(p.itemRows)?p.itemRows:[],cat=p.categoryCandidate||{},meta=p.ocrMeta||{};
   var balance=receiptBalanceComparison(p);
   var lines=[
-    "お小遣い家計簿 "+(typeof VERSION==="string"?VERSION:"v3.71.15")+" レシート診断（OCR r3.71.15）",
+    "お小遣い家計簿 "+(typeof VERSION==="string"?VERSION:"v3.71.16")+" レシート診断（OCR r3.71.16）",
     "日付: "+String(p.date||"未判定（手動確認）")+" / 根拠: "+String(p.dateSource||"missing"),
     "店名: "+String(p.shop||"未判定"),
     "合計: "+String(Number(p.amount||0))+"円",
@@ -4616,6 +4640,11 @@ function receiptTests(){
     {name:"超ド級サイズ R7 bnZ",rawName:"超ド級サイズ R7 bnZ",total:218},
     {name:"超ド級サイズ R7 bnZ",rawName:"超ド級サイズ R7 bnZ",total:218}], [donkiCleanText]);
   return[
+    ["receipt v3.71.16 subtotal OCR never focused merchandise",!focusedProductConsensus([{family:"whole",text:"ト計 5点 ¥635"},{family:"contrast",text:"ト計 5点 ¥635"},{family:"binary",text:"小計 5点 ¥635"}],635,{shop:"西友"}).candidateName],
+    ["receipt v3.71.16 payment OCR never focused merchandise",!focusedProductConsensus([{family:"whole",text:"楽天ベイ ¥685"},{family:"contrast",text:"F5A ¥685"},{family:"binary",text:"楽天ベイーー ¥685"}],685,{shop:"西友"}).candidateName],
+    ["receipt v3.71.16 tax marker removed from focused merchandise",cleanFocusedProductName("※90 リプトンアップルティ ¥129C",129)==="リプトンアップルティ"&&cleanFocusedProductName("ビタミン C ¥129",129)==="ビタミン C"],
+    ["receipt v3.71.16 8Y tax row not merchandise",receiptNonMerchandiseLabel("8Y, 5点 ¥60")&&!itemRowsFromText("8Y, 5点 ¥60",1).length],
+    ["receipt v3.71.16 seiyu code stripped without changing price",seiyuDevice.itemRows.some(function(x){return x.name==="メロンソーダ"&&x.qty===2&&x.total===178})],
     ["receipt v3.71.14 Android malformed subtotal excluded",receiptBrokenTotalLabel("ト計 5点 ¥635")&&receiptNonMerchandiseLabel("ト計 5点 ¥635")&&!itemRowsFromText("ト計 5点 ¥635",4).length],
     ["receipt v3.71.14 Android valid product text preserved",!receiptBrokenTotalLabel("超ド級カラムーチョ ホッ ¥218")&&itemRowsFromText("リプトンアップルティ _\\129C",4).some(function(x){return x.total===129})],
     ["receipt v3.71.14 Android four kinds",seiyuDevice.itemRows.length===4&&seiyuDevice.actualItemCount===5&&seiyuDevice.expectedItemCount===5],
@@ -4935,7 +4964,7 @@ function receiptTests(){
 function attachTests(){
   var b=document.getElementById("selfTest");if(!b||b.dataset.receiptWrapped)return;
   var base=b.onclick;b.dataset.receiptWrapped="1";
-  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),passed=out.filter(function(x){return x[1]}).length,pass=passed===out.length,box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">v3.71.15 レシート機能テスト '+passed+'/'+out.length+' 件すべて合格しました。</div>':'<div class="errorbox">v3.71.15 レシート機能テスト '+passed+'/'+out.length+' 件合格。失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
+  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),passed=out.filter(function(x){return x[1]}).length,pass=passed===out.length,box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">v3.71.16 レシート機能テスト '+passed+'/'+out.length+' 件すべて合格しました。</div>':'<div class="errorbox">v3.71.16 レシート機能テスト '+passed+'/'+out.length+' 件合格。失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
 }
 var body=document.getElementById("modalBody");
 if(body){new MutationObserver(function(){enhance()}).observe(body,{childList:true,subtree:true})}

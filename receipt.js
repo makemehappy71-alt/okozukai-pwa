@@ -2678,6 +2678,10 @@ function parseReceiptText(input,baseDate){
     // OCRのレジ商品コードが商品名に連結したケースだけ補正する。
     s=s.replace(/^[A-Za-z]{1,3}[0-9]{1,3}\s+(?=(?:MO|M0)\s*メロンソーダ)/i,"");
     s=s.replace(/^(?:MO|M0)\s*(?=メロンソーダ)/i,"");
+    // Seiyu OCR may misread the register marker "※91 TR" as "へ 1R".
+    // Remove this prefix only for the identified merchandise name.
+    // Preserve original OCR in rawName and keep the review/learning gate.
+    s=s.replace(/^(?:へ|ヘ)\s*(?:1|I|l|T)\s*R\s+(?=マルゲリータ(?:タ)?(?:\s|$))/i,"");
     s=s.replace(/^TR\s+(?=マルゲリータ)/i,"");
     s=s.replace(/^マルゲリータタ$/,"マルゲリータ");
     // 税区分の C が残った場合も、商品名末尾の限定的な税区分だけ除去。
@@ -2783,7 +2787,7 @@ function receiptDiagnosticSummary(p){
   var rows=Array.isArray(p.itemRows)?p.itemRows:[],cat=p.categoryCandidate||{},meta=p.ocrMeta||{};
   var balance=receiptBalanceComparison(p);
   var lines=[
-    "お小遣い家計簿 "+(typeof VERSION==="string"?VERSION:"v3.71.16")+" レシート診断（OCR r3.71.16）",
+    "お小遣い家計簿 "+(typeof VERSION==="string"?VERSION:"v3.71.16")+" レシート診断（OCR r3.71.17）",
     "日付: "+String(p.date||"未判定（手動確認）")+" / 根拠: "+String(p.dateSource||"missing"),
     "店名: "+String(p.shop||"未判定"),
     "合計: "+String(Number(p.amount||0))+"円",
@@ -4639,7 +4643,24 @@ function receiptTests(){
   var donkiAmbiguous=applyVerifiedJanNameHints("ドン・キホーテ田無駅前店",[
     {name:"超ド級サイズ R7 bnZ",rawName:"超ド級サイズ R7 bnZ",total:218},
     {name:"超ド級サイズ R7 bnZ",rawName:"超ド級サイズ R7 bnZ",total:218}], [donkiCleanText]);
+  // V3.71.17 Android SEIYU: focused product OCR may say "へ 1R".
+  var prefixItemText=["※90 リプトンアップルティ ¥129C","へ 1R マルゲリータ ¥199C",
+    "※01 午後紅茶クリームミル ¥129C","※01 MOメロンソーダ",
+    "¥89 x 2 ¥178C","小計 5点 ¥635"].join("\n");
+  var prefixFullText=["西友","2026年10月10日 (土) 13:38",prefixItemText,
+    "税抜金額対象","消費税額","8Y,5点 ¥60","楽天ベイ ¥685"].join("\n");
+  var prefixFixture=parseReceiptText({text:prefixFullText,whole:prefixFullText,shopText:"西友",
+    itemText:prefixItemText,paymentText:"楽天ペイ ¥685",
+    sections:{top:"西友\n2026年10月10日 (土) 13:38",
+      middle:prefixItemText+"\n消費税額\n8% 5点 ¥50\n合計 ¥685",
+      bottom:"消費税額\n8% 5点 ¥50\n合計 ¥685\n楽天ペイ ¥685"},
+    meta:{passes:18,multiProductFocus:[{value:199,
+      consensus:{accepted:true,name:"へ 1R マルゲリータ",support:2,familySupport:2,score:65}}]}},"2026-10-10");
   return[
+    ["receipt v3.71.17 SEIYU OCR tag へ 1R removed",prefixFixture.itemRows.some(function(x){return x.name==="マルゲリータ"&&x.total===199&&x.qty===1})],
+    ["receipt v3.71.17 SEIYU prefix correction remains review-only",prefixFixture.itemRows.every(function(x){return x.lowConfidence&&!x.autoConfirmed})],
+    ["receipt v3.71.17 SEIYU prefix leaves four item prices intact",prefixFixture.itemRows.length===4&&prefixFixture.itemRows.map(function(x){return x.total}).sort(function(a,b){return a-b}).join("|")==="129|129|178|199"],
+    ["receipt v3.71.17 SEIYU amount tax payment untouched",prefixFixture.subtotal===635&&prefixFixture.tax===50&&prefixFixture.amount===685&&prefixFixture.paymentCandidate==="rakutenpay"&&prefixFixture.actualItemCount===5],
     ["receipt v3.71.16 subtotal OCR never focused merchandise",!focusedProductConsensus([{family:"whole",text:"ト計 5点 ¥635"},{family:"contrast",text:"ト計 5点 ¥635"},{family:"binary",text:"小計 5点 ¥635"}],635,{shop:"西友"}).candidateName],
     ["receipt v3.71.16 payment OCR never focused merchandise",!focusedProductConsensus([{family:"whole",text:"楽天ベイ ¥685"},{family:"contrast",text:"F5A ¥685"},{family:"binary",text:"楽天ベイーー ¥685"}],685,{shop:"西友"}).candidateName],
     ["receipt v3.71.16 tax marker removed from focused merchandise",cleanFocusedProductName("※90 リプトンアップルティ ¥129C",129)==="リプトンアップルティ"&&cleanFocusedProductName("ビタミン C ¥129",129)==="ビタミン C"],
@@ -4964,7 +4985,7 @@ function receiptTests(){
 function attachTests(){
   var b=document.getElementById("selfTest");if(!b||b.dataset.receiptWrapped)return;
   var base=b.onclick;b.dataset.receiptWrapped="1";
-  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),passed=out.filter(function(x){return x[1]}).length,pass=passed===out.length,box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">v3.71.16 レシート機能テスト '+passed+'/'+out.length+' 件すべて合格しました。</div>':'<div class="errorbox">v3.71.16 レシート機能テスト '+passed+'/'+out.length+' 件合格。失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
+  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),passed=out.filter(function(x){return x[1]}).length,pass=passed===out.length,box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">v3.71.17 レシート機能テスト '+passed+'/'+out.length+' 件すべて合格しました。</div>':'<div class="errorbox">v3.71.17 レシート機能テスト '+passed+'/'+out.length+' 件合格。失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
 }
 var body=document.getElementById("modalBody");
 if(body){new MutationObserver(function(){enhance()}).observe(body,{childList:true,subtree:true})}

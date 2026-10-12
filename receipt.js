@@ -378,6 +378,7 @@ function focusedProductNamePlausible(name){
   var s=normalizeProductName(name),hira=(s.match(/[ぁ-ん]/g)||[]).length,kata=(s.match(/[ァ-ヶー]/g)||[]).length,kanji=(s.match(/[一-龠]/g)||[]).length,latin=(s.match(/[A-Za-z]/g)||[]).length;
   if(!s||s.length<4||s.length>36)return false;
   if(/^(?:商品名要確認|商品|メニュー|セット)$/i.test(s))return false;
+  if(/(?:本社|東京都|北海道|(?:大阪|京都)府|[一-龠]{2,4}県|〒\s*[0-9]{3})/.test(s))return false;
   if(/^(?:[0-9０-９])(?=[ぁ-んァ-ヶ一-龠])/.test(s)&&!/^(?:7UP|100%|24h)/i.test(s))return false;
   if(/(?:店舗|問い合わせ|領収|会員|合計|割引|クーポン|消費税|現金|お釣|アンケート)/i.test(s))return false;
   if(hira>=4&&kata<=2&&kanji===0&&latin===0)return false;
@@ -390,6 +391,7 @@ function focusedProductCandidatePlausible(name){
   if(!s||s.length<3||s.length>40)return false;
   if(/(?:店舗|問い合わせ|領収|会員|合計|割引|クーポン|消費税|現金|お釣|アンケート|電話|レジ)/i.test(s))return false;
   if(/^(?:商品名要確認|商品|メニュー)$/i.test(s))return false;
+  if(/(?:本社|東京都|北海道|(?:大阪|京都)府|[一-龠]{2,4}県|〒\s*[0-9]{3})/.test(s))return false;
   if(jp+latin<3)return false;
   if(productMeaningfulScore(s)<12)return false;
   return true;
@@ -2011,6 +2013,12 @@ function bestShopFromSources(sources){
   // A footer recruitment slogan by itself is not proof of the retailer. Both
   // an explicit Tanashi branch and brand text are required for this recovery.
   if(donkiBrand&&donkiBranch)candidates.push({name:"ドン・キホーテ 田無駅前店",score:185});
+  // The MEGA/Tachikawa header needs a separate retailer cue (phone or brand).
+  // Never infer the full shop name from the word "MEGA" alone.
+  var megaCompact=joined.replace(/[ \t　]/g,"");
+  var megaTachikawa=/(?:ME\s*GA|メガ)\s*立川店/i.test(joined)||/MEGA立川店/i.test(megaCompact);
+  var megaRetailer=/(?:ドン[・\s]*キホーテ|ドンキホーテ|[ビド][ブン][.・\s]?[キギ].{0,5}[ーテ])/.test(joined)||/0570[\s-]*067[\s-]*701/.test(joined);
+  if(megaTachikawa&&megaRetailer)candidates.push({name:"MEGAドン・キホーテ立川店",score:245});
   var hasFirstKitchen=/\bFirst\s*Kitchen\b|ファースト[・\s]*キッチン/i.test(joined);
   if(hasFirstKitchen){
     var tanashi=/田無(?:店|町)|甘無店/.test(joined);
@@ -2184,6 +2192,7 @@ function itemCategorySuggestion(name,shop){
   var snack=/クリスプ|チップス|スナック|ポテト|クッキー|ビスケット|クラッカー|チョコ|グミ|キャンディ|飴|せんべい|煎餅|菓子|プレッツェル|コーンスナック/i;
   var coffee=/コーヒー|coffee|カフェラテ|cafe latte/i;
   var drink=/サイダー|紅茶|スポーツドリンク|ラブズスポーツ|飲料|ジュース|コーラ|炭酸|緑茶|麦茶|ウーロン茶|午後の紅茶|ミネラルウォーター|お茶|オーレ|ミルク|ウォーター|水\b|スターバックス|ホワイトモカ|モカ|NOPE|ギルティ炭酸|クラフトボス|ベリー[＆&]アサイー|三ツ矢|洋梨mix/i;
+  var megaDrinks=/(?:^|\s)POM\s*塩と夏みかん|ニッポンエール\s*山梨県産すもも|三ツ矢\s*サイダークラシック/i;
   var oral=/クリニカ|デンリスト|歯\s*磨|ハミガキ|歯ブラシ|デンタル/i;
   if(/ファーストキッチン|first\s*kitchen|バーガーキング|burger\s*king|マクドナルド|ケンタッキー|kfc|モスバーガー/i.test(String(shop||"")))return findCategoryPair("食費","外食")||findCategoryPair("食費","スーパー・食材");
   if(/シャトレーゼ|chateraise/i.test(String(shop||"")))return findCategoryPair("食費","スイーツ")||findCategoryPair("食費","お菓子");
@@ -2191,7 +2200,7 @@ function itemCategorySuggestion(name,shop){
   if(/パンケーキ|どらやき|どら焼き|フィナンシェ|もちパイ|ケーキ|菓子/i.test(n))return findCategoryPair("食費","スイーツ")||findCategoryPair("食費","お菓子");
   if(snack.test(n))return findCategoryPair("食費","お菓子")||findCategoryPair("食費","スイーツ");
   if(coffee.test(n))return findCategoryPair("食費","コーヒー")||findCategoryPair("食費","飲み物");
-  if(drink.test(n))return findCategoryPair("食費","飲み物");
+  if(drink.test(n)||megaDrinks.test(n))return findCategoryPair("食費","飲み物");
   if(/^(?:GU)(?:\s|$)/i.test(String(shop||""))){
     if(/シャツ/i.test(n))return findCategoryPair("ファッション","シャツ")||findCategoryPair("ファッション","トップス");
     if(/Tシャツ/i.test(n))return findCategoryPair("ファッション","Tシャツ")||findCategoryPair("ファッション","トップス");
@@ -2276,7 +2285,7 @@ function allocateReceiptRows(rows,subtotal,tax,total,shop,taxIncluded,taxBuckets
 }
 function categorySuggestion(text,shop,itemRows){
   var raw=normalize(text).toLowerCase(),rows=Array.isArray(itemRows)?itemRows:[],names=rows.map(function(x){return x.name}).join(" ").toLowerCase();
-  var coffee=/コーヒー|coffee|カフェラテ|cafe latte/i,drink=/サイダー|紅茶|スポーツドリンク|ラブズスポーツ|飲料|ジュース|コーラ|炭酸|緑茶|麦茶|ウーロン茶|午後の紅茶|ミネラルウォーター|お茶|オーレ|スターバックス|ホワイトモカ|モカ/i;
+  var coffee=/コーヒー|coffee|カフェラテ|cafe latte/i,drink=/サイダー|紅茶|スポーツドリンク|ラブズスポーツ|飲料|ジュース|コーラ|炭酸|緑茶|麦茶|ウーロン茶|午後の紅茶|ミネラルウォーター|お茶|オーレ|スターバックス|ホワイトモカ|モカ|三ツ矢|(?:^|\s)POM\s*塩と夏みかん|ニッポンエール\s*山梨県産すもも/i;
   if(names&&coffee.test(names))return findCategoryPair("食費","コーヒー")||findCategoryPair("食費","飲み物");
   if(/ドン[・\s]*キホーテ/.test(String(shop||""))&&/(?:カラムーチョ|ポテトハニ|ポテトチップ|スナック|菓子)/.test(names+" "+raw))return findCategoryPair("食費","お菓子")||findCategoryPair("食費","スーパー・食材");
   if(rows.length){
@@ -2689,6 +2698,16 @@ function parseReceiptText(input,baseDate){
     if(s&&s!==before){item.name=s;if(!item.rawName)item.rawName=before;}
     return item;
   });
+  if(/^MEGAドン・キホーテ立川店$/.test(String(shop||"")))rows=rows.map(function(row){
+    var item=Object.assign({},row),before=String(item.name||""),n=normalizeProductName(before);
+    // Strip row markers only from the identified POM merchandise line.
+    n=n.replace(/^(?:と|[x×*+])\s+(?=POM\s*塩と夏みかん)/i,"");
+    n=n.replace(/^ニッ矢(?=\s*サイダークラシック)/,"三ツ矢");
+    // 500nm/500m/50On: capacity OCR correction, not a price rewrite.
+    n=n.replace(/(サイダークラシック)\s*50[0Oo](?:nm|ml|m|n)\s*$/i,"$1 500ml");
+    if(n&&n!==before){item.name=n;if(!item.rawName)item.rawName=before;}
+    return item;
+  });
   // Final guard: payment/change lines must never survive into visible product candidates.
   rows=rows.filter(function(x){return !isChangeCueText(String(x.name||""))&&!isQuantityDescriptorName(String(x.name||""))&&!receiptBrokenTotalLabel(String(x.name||""))&&!receiptBrokenTotalLabel(String(x.rawName||""));});
   rows=removeDerivedChangeRows(rows,receiptAllText,amount);
@@ -2787,7 +2806,7 @@ function receiptDiagnosticSummary(p){
   var rows=Array.isArray(p.itemRows)?p.itemRows:[],cat=p.categoryCandidate||{},meta=p.ocrMeta||{};
   var balance=receiptBalanceComparison(p);
   var lines=[
-    "お小遣い家計簿 "+(typeof VERSION==="string"?VERSION:"v3.71.16")+" レシート診断（OCR r3.71.17）",
+    "お小遣い家計簿 "+(typeof VERSION==="string"?VERSION:"v3.71.18")+" レシート診断（OCR r3.71.18）",
     "日付: "+String(p.date||"未判定（手動確認）")+" / 根拠: "+String(p.dateSource||"missing"),
     "店名: "+String(p.shop||"未判定"),
     "合計: "+String(Number(p.amount||0))+"円",
@@ -4656,7 +4675,37 @@ function receiptTests(){
       bottom:"消費税額\n8% 5点 ¥50\n合計 ¥685\n楽天ペイ ¥685"},
     meta:{passes:18,multiProductFocus:[{value:199,
       consensus:{accepted:true,name:"へ 1R マルゲリータ",support:2,familySupport:2,score:65}}]}},"2026-10-10");
+  // V3.71.18 MEGA Don Quijote Tachikawa OCR: 3 kinds, 13 units.
+  var megaReceiptItem=[
+    "4908729107665JAN","x POM 塩と夏みかん490mlペッ ¥59",
+    "4901085666371JAN","*+ ニッポンエール 山梨県産すもも",
+    "6コX単39 \\234","4514603493719JAN",
+    "* 三ツ矢 サイダークラシック500nm","6コX単49 \\294"
+  ].join("\n");
+  var megaReceiptAll=[
+    "MEGA","ビブ.キ訓ーテ","本社ぃ 東京都目黒区青葉台2ー 19-10",
+    "ME GA立川店 TEL0570-067-701","2026年10月11日(日)15:51",
+    megaReceiptItem,"小計 \\587","8%対象額 \\587","8%税額 \\46",
+    "合計 ¥633","お預り ¥1,005","お釣り ¥372","お買上点数 13点"
+  ].join("\n");
+  var megaReceipt=parseReceiptText({text:megaReceiptAll,whole:megaReceiptAll,
+    shopText:"MEGA\nME GA立川店 TEL0570-067-701\nビブ.キ訓ーテ",
+    itemText:megaReceiptItem,
+    sections:{top:"MEGA\nME GA立川店 TEL0570-067-701\n2026年10月11日(日)15:51",
+      middle:megaReceiptItem+"\n小計 ¥587\n8%税額 ¥46\n合計 ¥633\nお預り ¥1,005\nお釣り ¥372",
+      bottom:"お預り ¥1,005\nお釣り ¥372"},
+    meta:{passes:19}},"2026-10-11");
+  var megaBare=bestShopFromSources(["MEGA","ME GA立川店","2026年10月11日(日)15:51"]);
   return[
+    ["receipt v3.71.18 MEGA store requires corroborated branch",megaReceipt.shop==="MEGAドン・キホーテ立川店"&&megaBare!=="MEGAドン・キホーテ立川店"],
+    ["receipt v3.71.18 no headquarters as product",!focusedProductConsensus([{family:"contrast",text:"本社ぃ 東京都目黒区青葉台2 ¥10"}],10,{shop:"MEGAドン・キホーテ立川店"}).candidateName],
+    ["receipt v3.71.18 numeric account and cash preserved",megaReceipt.amount===633&&megaReceipt.subtotal===587&&megaReceipt.tax===46&&megaReceipt.paymentCandidate==="wallet"],
+    ["receipt v3.71.18 3 kinds 13 units",megaReceipt.itemRows.length===3&&megaReceipt.actualItemCount===13&&megaReceipt.expectedItemCount===13],
+    ["receipt v3.71.18 all prices and quantities preserved",megaReceipt.itemRows.map(function(x){return x.total+"x"+x.qty}).sort().join("|")==="234x6|294x6|59x1"],
+    ["receipt v3.71.18 POM prefix cleaned",megaReceipt.itemRows.some(function(x){return /^POM 塩と夏みかん/.test(x.name)&&x.total===59&&x.lowConfidence})],
+    ["receipt v3.71.18 Mitsuya 500ml corrected",megaReceipt.itemRows.some(function(x){return /三ツ矢 サイダークラシック 500ml/.test(x.name)&&x.total===294&&x.qty===6})],
+    ["receipt v3.71.18 per-item drink categories",megaReceipt.splitRows.length===3&&megaReceipt.splitRows.every(function(x){return x.categoryLabel==="食費 ＞ 飲み物"})],
+    ["receipt v3.71.18 no silent autosave nor name confirmation",megaReceipt.itemRows.every(function(x){return x.lowConfidence&&!x.autoConfirmed})&&state.transactions.length===before],
     ["receipt v3.71.17 SEIYU OCR tag へ 1R removed",prefixFixture.itemRows.some(function(x){return x.name==="マルゲリータ"&&x.total===199&&x.qty===1})],
     ["receipt v3.71.17 SEIYU prefix correction remains review-only",prefixFixture.itemRows.every(function(x){return x.lowConfidence&&!x.autoConfirmed})],
     ["receipt v3.71.17 SEIYU prefix leaves four item prices intact",prefixFixture.itemRows.length===4&&prefixFixture.itemRows.map(function(x){return x.total}).sort(function(a,b){return a-b}).join("|")==="129|129|178|199"],
@@ -4985,7 +5034,7 @@ function receiptTests(){
 function attachTests(){
   var b=document.getElementById("selfTest");if(!b||b.dataset.receiptWrapped)return;
   var base=b.onclick;b.dataset.receiptWrapped="1";
-  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),passed=out.filter(function(x){return x[1]}).length,pass=passed===out.length,box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">v3.71.17 レシート機能テスト '+passed+'/'+out.length+' 件すべて合格しました。</div>':'<div class="errorbox">v3.71.17 レシート機能テスト '+passed+'/'+out.length+' 件合格。失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
+  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),passed=out.filter(function(x){return x[1]}).length,pass=passed===out.length,box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">v3.71.18 レシート機能テスト '+passed+'/'+out.length+' 件すべて合格しました。</div>':'<div class="errorbox">v3.71.18 レシート機能テスト '+passed+'/'+out.length+' 件合格。失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
 }
 var body=document.getElementById("modalBody");
 if(body){new MutationObserver(function(){enhance()}).observe(body,{childList:true,subtree:true})}

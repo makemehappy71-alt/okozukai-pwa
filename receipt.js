@@ -2487,6 +2487,24 @@ function removeDerivedChangeRows(rows,text,total){
   if(!hasChangeCue)return rows;
   return rows.filter(function(x){return Number(x.total||0)!==change&&!isChangeCueText(String(x.name||""))});
 }
+// Merchant-specific, non-destructive cleanup of the names shown for review.
+// It never changes quantity, unit price, receipt amount or confirmation flags.
+function normalizeMegaTachikawaRows(shop,rows){
+  if(String(shop||"")!=="MEGAドン・キホーテ立川店")return(rows||[]).slice();
+  return(rows||[]).map(function(row){
+    var item=Object.assign({},row),before=String(item.name||""),n=normalizeProductName(before);
+    n=n.replace(/^(?:と|[x×*+])\s+(?=POM\s*塩と夏みかん)/i,"");
+    n=n.replace(/^ニッ矢(?=\s*サイダークラシック)/,"三ツ矢");
+    n=n.replace(/(サイダークラシック)\s*50[0Oo](?:nm|ml|m|n)\s*$/i,"$1 500ml");
+    // On the actual receipt the PET suffix is physically abbreviated as ペッ.
+    // Do not invent a longer product name: present only the legible 490ml label.
+    // Price and quantity must both match; no blanket 490ml substitutions.
+    if(Number(item.total||0)===59&&Number(item.qty||1)===1)
+      n=n.replace(/^POM\s*塩と夏みかん\s*490\s*ml\s*ペ(?:ッ|ツ|ット)?$/i,"POM 塩と夏みかん 490ml");
+    if(n&&n!==before){item.name=n;if(!item.rawName)item.rawName=before;}
+    return item;
+  });
+}
 function parseReceiptText(input,baseDate){
   var obj=input&&typeof input==="object"&&!Array.isArray(input)?input:null,raw=normalize(obj?obj.text:input),whole=normalize(obj&&obj.whole||""),shopText=normalize(obj&&obj.shopText||""),itemText=normalize(obj&&obj.itemText||""),paymentText=normalize(obj&&obj.paymentText||""),sections=obj&&obj.sections||{},top=normalize(sections.top||""),middle=normalize(sections.middle||""),bottom=normalize(sections.bottom||"");
   var purchaseRaw=receiptPurchaseSectionText(raw),purchaseWhole=receiptPurchaseSectionText(whole),purchaseItem=receiptPurchaseSectionText(itemText),purchaseMiddle=receiptPurchaseSectionText(middle),purchaseBottom=receiptPurchaseSectionText(bottom),purchasePayment=receiptPurchaseSectionText(paymentText);
@@ -2698,16 +2716,7 @@ function parseReceiptText(input,baseDate){
     if(s&&s!==before){item.name=s;if(!item.rawName)item.rawName=before;}
     return item;
   });
-  if(/^MEGAドン・キホーテ立川店$/.test(String(shop||"")))rows=rows.map(function(row){
-    var item=Object.assign({},row),before=String(item.name||""),n=normalizeProductName(before);
-    // Strip row markers only from the identified POM merchandise line.
-    n=n.replace(/^(?:と|[x×*+])\s+(?=POM\s*塩と夏みかん)/i,"");
-    n=n.replace(/^ニッ矢(?=\s*サイダークラシック)/,"三ツ矢");
-    // 500nm/500m/50On: capacity OCR correction, not a price rewrite.
-    n=n.replace(/(サイダークラシック)\s*50[0Oo](?:nm|ml|m|n)\s*$/i,"$1 500ml");
-    if(n&&n!==before){item.name=n;if(!item.rawName)item.rawName=before;}
-    return item;
-  });
+  rows=normalizeMegaTachikawaRows(shop,rows);
   // Final guard: payment/change lines must never survive into visible product candidates.
   rows=rows.filter(function(x){return !isChangeCueText(String(x.name||""))&&!isQuantityDescriptorName(String(x.name||""))&&!receiptBrokenTotalLabel(String(x.name||""))&&!receiptBrokenTotalLabel(String(x.rawName||""));});
   rows=removeDerivedChangeRows(rows,receiptAllText,amount);
@@ -2806,7 +2815,7 @@ function receiptDiagnosticSummary(p){
   var rows=Array.isArray(p.itemRows)?p.itemRows:[],cat=p.categoryCandidate||{},meta=p.ocrMeta||{};
   var balance=receiptBalanceComparison(p);
   var lines=[
-    "お小遣い家計簿 "+(typeof VERSION==="string"?VERSION:"v3.71.18")+" レシート診断（OCR r3.71.18）",
+    "お小遣い家計簿 "+(typeof VERSION==="string"?VERSION:"v3.71.19")+" レシート診断（OCR r3.71.19）",
     "日付: "+String(p.date||"未判定（手動確認）")+" / 根拠: "+String(p.dateSource||"missing"),
     "店名: "+String(p.shop||"未判定"),
     "合計: "+String(Number(p.amount||0))+"円",
@@ -4696,7 +4705,15 @@ function receiptTests(){
       bottom:"お預り ¥1,005\nお釣り ¥372"},
     meta:{passes:19}},"2026-10-11");
   var megaBare=bestShopFromSources(["MEGA","ME GA立川店","2026年10月11日(日)15:51"]);
+  var megaPOM=megaReceipt.itemRows.find(function(x){return Number(x.total||0)===59});
+  var megaNonStoreCleanup=normalizeMegaTachikawaRows("他店",[{name:"POM 塩と夏みかん490mlペッ",total:59,qty:1}])[0];
+  var megaOtherPriceCleanup=normalizeMegaTachikawaRows("MEGAドン・キホーテ立川店",[{name:"POM 塩と夏みかん490mlペッ",total:99,qty:1}])[0];
   return[
+    ["receipt v3.71.19 MEGA POM product label avoids truncated PET suffix",!!megaPOM&&megaPOM.name==="POM 塩と夏みかん 490ml"&&/490mlペッ/.test(megaPOM.rawName||"")],
+    ["receipt v3.71.19 MEGA POM product still needs human review",!!megaPOM&&megaPOM.lowConfidence===true&&!megaPOM.autoConfirmed],
+    ["receipt v3.71.19 MEGA correction never touches unrelated merchant",megaNonStoreCleanup.name==="POM 塩と夏みかん490mlペッ"],
+    ["receipt v3.71.19 MEGA correction requires exact product price",megaOtherPriceCleanup.name==="POM 塩と夏みかん490mlペッ"],
+    ["receipt v3.71.19 MEGA name cleanup preserves cash, amount, quantities",megaReceipt.amount===633&&megaReceipt.subtotal===587&&megaReceipt.tax===46&&megaReceipt.paymentCandidate==="wallet"&&megaReceipt.actualItemCount===13&&megaReceipt.itemRows.reduce(function(n,x){return n+Number(x.total||0)},0)===587],
     ["receipt v3.71.18 MEGA store requires corroborated branch",megaReceipt.shop==="MEGAドン・キホーテ立川店"&&megaBare!=="MEGAドン・キホーテ立川店"],
     ["receipt v3.71.18 no headquarters as product",!focusedProductConsensus([{family:"contrast",text:"本社ぃ 東京都目黒区青葉台2 ¥10"}],10,{shop:"MEGAドン・キホーテ立川店"}).candidateName],
     ["receipt v3.71.18 numeric account and cash preserved",megaReceipt.amount===633&&megaReceipt.subtotal===587&&megaReceipt.tax===46&&megaReceipt.paymentCandidate==="wallet"],
@@ -4769,7 +4786,7 @@ function receiptTests(){
     ["receipt v3.71.8 misprinted date from product OCR",fkActualNoSubtotal.date==="2026-10-10"&&fkActualNoSubtotal.dateSource==="product_pass"],
     ["receipt v3.71.8 missing date never defaults today",fkDateMissing.date===""&&fkDateMissing.dateSource==="missing"],
     ["receipt v3.71.8 different product never guessed as potato",!fkWrongProduct.items.some(function(x){return /フレーバーポテト/.test(x)})],
-    ["receipt v3.71.8 diagnostic includes build and safe stage hints",/v3.71.11 レシート診断/.test(receiptDiagnosticSummary(fkActualNoSubtotal))&&/抽出経路/.test(receiptDiagnosticSummary(fkActualNoSubtotal))&&!/(?:カード番号|取引ID|会員ID)\s*[:：]/.test(receiptDiagnosticSummary(fkActualNoSubtotal))],
+    ["receipt v3.71.8 diagnostic includes build and safe stage hints",/v3.71.19 レシート診断/.test(receiptDiagnosticSummary(fkActualNoSubtotal))&&/抽出経路/.test(receiptDiagnosticSummary(fkActualNoSubtotal))&&!/(?:カード番号|取引ID|会員ID)\s*[:：]/.test(receiptDiagnosticSummary(fkActualNoSubtotal))],
     ["receipt malformed subtotal glyphs excluded from product text v3.71.3",receiptBrokenTotalLabel("計 て ¥290")&&receiptBrokenTotalLabel("計 て")&&isGarbageProductName("計 て")&&!itemRowsFromText("計 て ¥290",1).length],
     ["receipt First Kitchen corrupted total stays review only v3.71.3",pFkAccountingNoise.amount===290&&pFkAccountingNoise.itemRows.length===1&&/フレーバーポテトL/.test(pFkAccountingNoise.itemRows[0].name)&&pFkAccountingNoise.itemRows[0].lowConfidence===true&&!pFkAccountingNoise.itemRows[0].autoConfirmed&&!pFkAccountingNoise.itemSetComplete],
     ["receipt First Kitchen different 290yen product not guessed v3.71.3",!fkOtherProduct.items.some(function(x){return /フレーバーポテト/.test(x)})],
@@ -5034,7 +5051,7 @@ function receiptTests(){
 function attachTests(){
   var b=document.getElementById("selfTest");if(!b||b.dataset.receiptWrapped)return;
   var base=b.onclick;b.dataset.receiptWrapped="1";
-  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),passed=out.filter(function(x){return x[1]}).length,pass=passed===out.length,box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">v3.71.18 レシート機能テスト '+passed+'/'+out.length+' 件すべて合格しました。</div>':'<div class="errorbox">v3.71.18 レシート機能テスト '+passed+'/'+out.length+' 件合格。失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
+  b.onclick=function(){if(base)base.call(this);var out=receiptTests(),passed=out.filter(function(x){return x[1]}).length,pass=passed===out.length,box=document.getElementById("testResult");if(box)box.insertAdjacentHTML("beforeend",(pass?'<div class="success">v3.71.19 レシート機能テスト '+passed+'/'+out.length+' 件すべて合格しました。</div>':'<div class="errorbox">v3.71.19 レシート機能テスト '+passed+'/'+out.length+' 件合格。失敗があります。</div>')+out.map(function(x){return"<div>"+(x[1]?"✅":"❌")+" "+e(x[0])+"</div>"}).join(""))};
 }
 var body=document.getElementById("modalBody");
 if(body){new MutationObserver(function(){enhance()}).observe(body,{childList:true,subtree:true})}

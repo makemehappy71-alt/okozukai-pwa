@@ -2,6 +2,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const http = require('node:http');
+const { execFileSync } = require('node:child_process');
+const { createHash } = require('node:crypto');
 const { test } = require('node:test');
 
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE_PATH || 'playwright');
@@ -109,3 +111,28 @@ for (const width of [360, 412]) {
     }
   });
 }
+
+test('deferred OCR crops preserve baseline bitmap pixels in Chromium', { timeout: 60000 }, async () => {
+  const before = execFileSync('git', ['show', 'fd3d18a4138be0d3a1f13800047e0091914c064e:receipt.js'], { cwd: root, encoding: 'utf8', maxBuffer: 2 * 1024 * 1024 });
+  const after = fs.readFileSync(path.join(root, 'receipt.js'), 'utf8');
+  const browser = await chromium.launch({ headless: true, ...(process.env.BROWSER_PATH ? { executablePath: process.env.BROWSER_PATH } : {}) });
+  try {
+    const page = await browser.newPage();
+    async function bitmaps(source) {
+      await page.addScriptTag({ content: source.replace('window.receiptFeature={', 'window.receiptImageTest={buildOCRBundle,setSource:function(source){pendingReceipt={source:source}}};window.receiptFeature={') });
+      const result = await page.evaluate(() => {
+        const source = document.createElement('canvas'); source.width = 60; source.height = 180;
+        const context = source.getContext('2d'), pixels = context.createImageData(60, 180);
+        for (let i = 0; i < pixels.data.length; i += 4) {
+          pixels.data[i] = i % 251; pixels.data[i + 1] = (i * 7) % 253; pixels.data[i + 2] = (i * 13) % 255; pixels.data[i + 3] = 255;
+        }
+        context.putImageData(pixels, 0, 0);
+        window.receiptImageTest.setSource(source);
+        const bundle = window.receiptImageTest.buildOCRBundle();
+        return ['slices', 'shopSlices', 'itemSlices', 'amountSlices', 'paymentSlices'].flatMap(role => bundle[role].map(part => ({ role, label: part.label || part.role, width: part.canvas.width, height: part.canvas.height, png: part.canvas.toDataURL() })));
+      });
+      return result.map(({ png, ...metadata }) => ({ ...metadata, sha256: createHash('sha256').update(png).digest('hex') }));
+    }
+    assert.deepEqual(await bitmaps(after), await bitmaps(before));
+  } finally { await browser.close(); }
+});

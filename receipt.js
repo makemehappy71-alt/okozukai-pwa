@@ -1539,7 +1539,7 @@ function chooseItemsForSubtotal(rows,subtotal,receiptTotal,receiptDiscount,shop)
     if(Number(inf.textSimilarity||0)>=.82)return 55;
     return 0;
   });
-  function bestSubsetForTarget(target){
+  function enumeratedSubsetForTarget(target){
     var best=null;
     for(var mask=1;mask<max;mask++){
       var sum=0,quality=0,count=0,qtyBonus=0;
@@ -1552,6 +1552,43 @@ function chooseItemsForSubtotal(rows,subtotal,receiptTotal,receiptDiscount,shop)
       var score=quality+count*9+qtyBonus;
       if(!best||score>best.score)best={mask:mask,score:score,count:count};
     }
+    return best;
+  }
+  // At 18 candidates, enumerating every full basket scans over 4.7 million
+  // row positions per target. Join two at-most-9-row subsets instead. Restrict
+  // this path to exact integer money and half-integer scores so regrouping
+  // additions cannot change the legacy arithmetic or tie-breaking behaviour.
+  var exactRows=Number.isSafeInteger(fullSum)&&rows.every(function(row,i){
+    var quality=Number(row.quality||0)+Number(merchantBonus[i]||0);
+    return Number.isSafeInteger(row.total)&&Number.isSafeInteger(quality*2)&&Number.isSafeInteger((Math.abs(quality)+21)*2*n);
+  }),leftOptions=null,rightBySum=null,leftSize=Math.floor(n/2);
+  function halfOptions(start,end){
+    var options=[];
+    for(var mask=0;mask<(1<<(end-start));mask++){
+      var sum=0,quality=0,count=0,qtyBonus=0;
+      for(var i=start;i<end;i++)if(mask&(1<<(i-start))){
+        sum+=rows[i].total;quality+=Number(rows[i].quality||0)+Number(merchantBonus[i]||0);count++;
+        if(Number(rows[i].qty||1)>1)qtyBonus+=12;
+      }
+      options.push({sum:sum,score:quality+count*9+qtyBonus,mask:mask,count:count});
+    }
+    return options;
+  }
+  function bestSubsetForTarget(target){
+    if(!exactRows||!Number.isSafeInteger(target))return enumeratedSubsetForTarget(target);
+    if(!leftOptions){
+      leftOptions=halfOptions(0,leftSize);rightBySum=new Map();
+      halfOptions(leftSize,n).forEach(function(option){
+        var old=rightBySum.get(option.sum);
+        if(!old||option.score>old.score||(option.score===old.score&&option.mask<old.mask))rightBySum.set(option.sum,option);
+      });
+    }
+    var best=null;
+    leftOptions.forEach(function(left){
+      var right=rightBySum.get(target-left.sum);if(!right)return;
+      var mask=left.mask|(right.mask<<leftSize),score=left.score+right.score;
+      if(mask&&(!best||score>best.score||(score===best.score&&mask<best.mask)))best={mask:mask,score:score,count:left.count+right.count};
+    });
     return best;
   }
   var best=bestSubsetForTarget(primaryTarget),matchedTarget=primaryTarget;
@@ -3424,6 +3461,14 @@ function receiptStructuralFastPath(full,middle,bottom){
   return{ready:ready,rows:selected,target:target,sum:sum,expectedItemCount:expected,actualItemCount:actual,amountInfo:amountInfo,discount:discount,preDiscountTotal:Number(preDecision.value||0)};
 }
 
+function deferredOCRPart(factory,options){
+  var canvas=null;
+  Object.defineProperty(options,"canvas",{enumerable:true,get:function(){
+    if(!canvas)canvas=factory();
+    return canvas;
+  }});
+  return options;
+}
 function buildOCRBundle(){
   if(!pendingReceipt)throw new Error("読み取る画像がありません");
   var crop=cropFromSliders()||pendingReceipt.crop,rawCrop=cropCanvas(pendingReceipt.source,crop),skew=estimateSkew(rawCrop),deskewed=rotateCanvas(rawCrop,skew);
@@ -3442,33 +3487,33 @@ function buildOCRBundle(){
   var count=ratio>=3.2?4:ratio>=2?3:2,overlap=.055,slices=[];
   for(var s=0;s<count;s++){var st=Math.max(0,s/count-overlap),en=Math.min(1,(s+1)/count+overlap),role=s===0?"top":s===count-1?"bottom":"middle";slices.push({role:role,index:s,canvas:makeOCRSlice(binary,st,en)})}
   var shopSlices=[
-    {canvas:makeOCRRegion(base,.24,.005,.72,.085,5),mode:"7",label:"店名ロゴ中央1",whitelist:"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"},
-    {canvas:makeOCRRegion(gray,.22,.005,.74,.10,4),mode:"8",label:"店名ロゴ中央2",whitelist:"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"},
-    {canvas:makeOCRRegion(binary,.20,.005,.76,.11,3),mode:"11",label:"店名ロゴ中央3",whitelist:"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"},
-    {canvas:makeOCRRegion(gray,.14,0,.86,.17,2),mode:"11",label:"店名ロゴ広域",whitelist:"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"},
-    {canvas:makeOCRRegion(base,0,.06,1,.27,2),mode:"6",label:"店舗名日本語・支店",whitelist:""}
+    deferredOCRPart(function(){return makeOCRRegion(base,.24,.005,.72,.085,5)},{mode:"7",label:"店名ロゴ中央1",whitelist:"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"}),
+    deferredOCRPart(function(){return makeOCRRegion(gray,.22,.005,.74,.10,4)},{mode:"8",label:"店名ロゴ中央2",whitelist:"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"}),
+    deferredOCRPart(function(){return makeOCRRegion(binary,.20,.005,.76,.11,3)},{mode:"11",label:"店名ロゴ中央3",whitelist:"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"}),
+    deferredOCRPart(function(){return makeOCRRegion(gray,.14,0,.86,.17,2)},{mode:"11",label:"店名ロゴ広域",whitelist:"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"}),
+    deferredOCRPart(function(){return makeOCRRegion(base,0,.06,1,.27,2)},{mode:"6",label:"店舗名日本語・支店",whitelist:""})
   ];
   // Use overlapping bands instead of assuming every receipt has products at 17-31%.
   // Different receipt layouts place items at very different vertical positions.
   var itemSlices=[
-    {canvas:makeOCRScaledSlice(base,.10,.34,2.4),mode:"6",label:"商品上段カラー"},
-    {canvas:makeOCRScaledSlice(gray,.10,.34,2.4),mode:"6",label:"商品上段グレー"},
-    {canvas:makeOCRScaledSlice(binary,.10,.34,2.2),mode:"6",label:"商品上段二値"},
-    {canvas:makeOCRScaledSlice(gray,.22,.52,2.3),mode:"6",label:"商品中段グレー"},
-    {canvas:makeOCRScaledSlice(binary,.22,.52,2.1),mode:"6",label:"商品中段二値"},
-    {canvas:makeOCRScaledSlice(gray,.34,.66,2),mode:"11",label:"商品下段広域"},
-    {canvas:makeOCRSlice(gray,.08,.68),mode:"11",label:"商品全域フォールバック"}
+    deferredOCRPart(function(){return makeOCRScaledSlice(base,.10,.34,2.4)},{mode:"6",label:"商品上段カラー"}),
+    deferredOCRPart(function(){return makeOCRScaledSlice(gray,.10,.34,2.4)},{mode:"6",label:"商品上段グレー"}),
+    deferredOCRPart(function(){return makeOCRScaledSlice(binary,.10,.34,2.2)},{mode:"6",label:"商品上段二値"}),
+    deferredOCRPart(function(){return makeOCRScaledSlice(gray,.22,.52,2.3)},{mode:"6",label:"商品中段グレー"}),
+    deferredOCRPart(function(){return makeOCRScaledSlice(binary,.22,.52,2.1)},{mode:"6",label:"商品中段二値"}),
+    deferredOCRPart(function(){return makeOCRScaledSlice(gray,.34,.66,2)},{mode:"11",label:"商品下段広域"}),
+    deferredOCRPart(function(){return makeOCRSlice(gray,.08,.68)},{mode:"11",label:"商品全域フォールバック"})
   ];
   var amountSlices=[
-    {canvas:makeOCRRegion(base,.12,.25,1,.68,2),mode:"6",label:"金額行・全幅カラー",whitelist:""},
-    {canvas:makeOCRRegion(gray,.12,.25,1,.68,2),mode:"6",label:"金額行・全幅グレー",whitelist:""},
-    {canvas:makeOCRRegion(base,.66,.25,1,.68,3),mode:"6",label:"右端金額列・数字",whitelist:"0123456789,.¥"}
+    deferredOCRPart(function(){return makeOCRRegion(base,.12,.25,1,.68,2)},{mode:"6",label:"金額行・全幅カラー",whitelist:""}),
+    deferredOCRPart(function(){return makeOCRRegion(gray,.12,.25,1,.68,2)},{mode:"6",label:"金額行・全幅グレー",whitelist:""}),
+    deferredOCRPart(function(){return makeOCRRegion(base,.66,.25,1,.68,3)},{mode:"6",label:"右端金額列・数字",whitelist:"0123456789,.¥"})
   ];
   var paymentSlices=[
-    {canvas:makeOCRSlice(gray,.50,.84),mode:"6",label:"支払方法1"},
-    {canvas:makeOCRSlice(binary,.50,.84),mode:"6",label:"支払方法2"},
-    {canvas:makeOCRSlice(gray,.64,1),mode:"11",label:"支払方法3"},
-    {canvas:makeOCRSlice(binary,.64,1),mode:"11",label:"支払方法4"}
+    deferredOCRPart(function(){return makeOCRSlice(gray,.50,.84)},{mode:"6",label:"支払方法1"}),
+    deferredOCRPart(function(){return makeOCRSlice(binary,.50,.84)},{mode:"6",label:"支払方法2"}),
+    deferredOCRPart(function(){return makeOCRSlice(gray,.64,1)},{mode:"11",label:"支払方法3"}),
+    deferredOCRPart(function(){return makeOCRSlice(binary,.64,1)},{mode:"11",label:"支払方法4"})
   ];
   return{base:base,gray:gray,binary:binary,slices:slices,shopSlices:shopSlices,itemSlices:itemSlices,amountSlices:amountSlices,paymentSlices:paymentSlices,skew:skew,ratio:ratio};
 }

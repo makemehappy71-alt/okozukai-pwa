@@ -32,14 +32,15 @@ for (const width of [360, 412]) {
       const errors = [];
       page.on('pageerror', error => errors.push(error.message));
       // The camera image and OCR worker are synthetic; no claim of real OCR speed.
-      await page.addInitScript(() => {
+      await page.addInitScript(({ text }) => {
         window.testOCRCalls = 0; window.testOCRTerminated = 0;
         window.Tesseract = { async createWorker() { return {
           async setParameters() {},
-          async recognize() { window.testOCRCalls++; return { data: { blocks: [], text: 'ヤオコー東大和店\n2026年10月10日\nテスト"緑茶 ¥100\n小計 1点 ¥100\n消費税 ¥8\n合計 ¥108\n楽天ペイ ¥108' } }; },
+          async recognize() { window.testOCRCalls++; return { data: { blocks: [], text } }; },
           async terminate() { window.testOCRTerminated++; }
         }; } };
-      });
+      }, { text: width === 412 ? 'ヤオコー東大和店\n2026年10月10日\n牛乳 2 ¥1,280\n小計 2点 ¥1,280\n消費税 ¥102\n合計 ¥1,382\n楽天ペイ ¥1,382' : 'ヤオコー東大和店\n2026年10月10日\nテスト"緑茶 ¥100\n小計 1点 ¥100\n消費税 ¥8\n合計 ¥108\n楽天ペイ ¥108' });
+      const expectedAmount = width === 412 ? '1382' : '108';
       await page.goto(`http://127.0.0.1:${server.address().port}/`);
       // A fresh PWA install claims the page and intentionally reloads it once.
       await page.waitForFunction(() => navigator.serviceWorker.controller && performance.getEntriesByType('navigation')[0].type === 'reload');
@@ -74,7 +75,7 @@ for (const width of [360, 412]) {
       assert(await page.locator('#receiptCropPreview').isVisible());
       await page.locator('#receiptCropReadBtn').click();
       await page.locator('#receiptApplyBtn').waitFor();
-      assert.equal(await page.locator('#receiptAmount').inputValue(), '108');
+      assert.equal(await page.locator('#receiptAmount').inputValue(), expectedAmount);
       assert.equal(await page.locator('#receiptShop').inputValue(), 'ヤオコー東大和店');
       assert.equal(await page.locator('#receiptDate').inputValue(), '2026-10-10');
       assert.equal(await page.locator('#receiptCameraBtn').isEnabled(), true);
@@ -88,7 +89,7 @@ for (const width of [360, 412]) {
       await page.locator('#receiptApplyBtn').click();
       await dismissed;
       assert.equal(await page.locator('#txAmount').inputValue(), '');
-      await page.locator('.receipt-product-review-name').fill('テスト緑茶');
+      await page.locator('.receipt-product-review-name').fill(width === 412 ? '牛乳' : 'テスト緑茶');
       await page.locator('.receipt-product-review-confirm').check();
       const geometry = await page.locator('#receiptApplyBtn').boundingBox();
       assert(geometry.width >= 44 && geometry.height >= 44);
@@ -96,7 +97,7 @@ for (const width of [360, 412]) {
       await page.locator('#receiptApplyBtn').scrollIntoViewIfNeeded();
       await page.screenshot({ path: path.join(output, `mobile-${width}.png`) });
       await page.locator('#receiptApplyBtn').click();
-      assert.equal(await page.locator('#txAmount').inputValue(), '108');
+      assert.equal(await page.locator('#txAmount').inputValue(), expectedAmount);
       assert.equal(await page.locator('#txShop').inputValue(), 'ヤオコー東大和店');
       assert.equal(await page.evaluate(() => JSON.stringify(state.transactions)), snapshot.transactions);
       assert.equal(await page.evaluate(() => localStorage.getItem('okozukai_v321_mirror')), snapshot.mirror);

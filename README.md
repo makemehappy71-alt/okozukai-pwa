@@ -7,11 +7,13 @@ V3.71.19を基準にした調査とローカル改善です。公開版の更新
 - [総合監査と改善計画](docs/総合監査と改善計画.md)
 - [改善結果・テスト数・残存問題・変更ファイル](docs/改善結果.md)
 - [第2段階：性能改善とAndroid検証準備](docs/性能改善とAndroid検証準備.md)
+- [第3段階：残存OCR再調査と修正結果](docs/残存OCR再調査と修正結果.md)
 - 既存テスト: `node tests/run.cjs`
 - 追加回帰: `node --test tests/regression.test.cjs`
 - 改善前後の比較: `node tests/compare.cjs`
 - 性能の同等性回帰: `node --test tests/performance.test.cjs`
 - 性能測定: `node tests/profile.cjs`（他のテスト終了後に単独実行）
+- 残存OCRの回帰・前後比較: `node --test tests/ocr-remaining.test.cjs` / `node tests/compare-ocr.cjs`
 - モバイル表示の操作テスト: `node --test tests/mobile.test.cjs`（Playwright・Chromium系ブラウザが必要）
 
 schemaVersion 12と保存形式を維持しています。Android実機のOCR速度・認識精度測定は次段階です。

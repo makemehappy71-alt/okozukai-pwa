@@ -44,7 +44,7 @@ function createRuntime(root = path.resolve(__dirname, '../..'), { captureFixture
   const exportBoundary = 'window.receiptFeature={';
   if (!receipt.includes(exportBoundary)) throw new Error('Receipt export boundary changed');
   receipt = receipt.replace(exportBoundary,
-    'window.receiptInternals={setPendingSource:function(source){pendingReceipt={source:source}},itemRowsFromText,itemCategorySuggestion,categorySuggestion,loadOCR,runOCR,receiptStructuralFastPath,buildOCRBundle,shopFromText,cleanFocusedProductName,focusedProductConsensus,productNameRequiresConfirmation,applyFocusedNamesToRows,analyzeAmount,allocateReceiptRows,chooseItemsForSubtotal};' + exportBoundary);
+    'window.receiptInternals={setPendingSource:function(source){pendingReceipt={source:source}},itemRowsFromText,itemCategorySuggestion,categorySuggestion,loadOCR,runOCR,receiptStructuralFastPath,buildOCRBundle,shopFromText,cleanFocusedProductName,focusedProductConsensus,productNameRequiresConfirmation,applyFocusedNamesToRows,analyzeAmount,allocateReceiptRows,chooseItemsForSubtotal,receiptQuantitySummaryLine,receiptDiscountAmount};' + exportBoundary);
   if (captureFixtures) receipt = receipt.replace('var diagnosticP5=receiptDiagnosticSummary(p5);',
     'window.receiptFixtures={p5,pbk,pbkRow,okFastPath,pOk,goodFocusConsensus,noisyNameChecks,naturalNameCheck,multiWeakConsensusRows,multiStrongConsensusRows,p510,psw};var diagnosticP5=receiptDiagnosticSummary(p5);');
   vm.runInContext(receipt, context, { filename: 'receipt.js' });

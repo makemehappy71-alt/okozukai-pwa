@@ -4,7 +4,7 @@ const vm = require('node:vm');
 const { webcrypto } = require('node:crypto');
 
 // Never start the application or connect to browser storage in this harness.
-function createRuntime(root = path.resolve(__dirname, '../..'), { captureFixtures = false } = {}) {
+function createRuntime(root = path.resolve(__dirname, '../..'), { captureFixtures = false, merchantDictionary } = {}) {
   const elements = new Map();
   const element = id => {
     if (!elements.has(id)) elements.set(id, {
@@ -44,9 +44,13 @@ function createRuntime(root = path.resolve(__dirname, '../..'), { captureFixture
   const exportBoundary = 'window.receiptFeature={';
   if (!receipt.includes(exportBoundary)) throw new Error('Receipt export boundary changed');
   receipt = receipt.replace(exportBoundary,
-    'window.receiptInternals={setPendingSource:function(source){pendingReceipt={source:source}},itemRowsFromText,itemCategorySuggestion,categorySuggestion,loadOCR,runOCR,receiptStructuralFastPath,buildOCRBundle,shopFromText,cleanFocusedProductName,focusedProductConsensus,productNameRequiresConfirmation,applyFocusedNamesToRows,analyzeAmount,allocateReceiptRows,chooseItemsForSubtotal,receiptQuantitySummaryLine,receiptDiscountAmount};' + exportBoundary);
+    'window.receiptInternals={setPendingSource:function(source){pendingReceipt={source:source}},itemRowsFromText,itemCategorySuggestion,categorySuggestion,loadOCR,runOCR,receiptStructuralFastPath,buildOCRBundle,shopFromText,cleanFocusedProductName,focusedProductConsensus,productNameRequiresConfirmation,applyFocusedNamesToRows,analyzeAmount,allocateReceiptRows,chooseItemsForSubtotal,receiptQuantitySummaryLine,receiptDiscountAmount,productSourceText,normalizeProductName,isGarbageProductName,classifyReceiptLine,isReceiptHeaderLine,stripReceiptHeaderNoise,receiptNonMerchandiseLabel,productMeaningfulScore};' + exportBoundary);
   if (captureFixtures) receipt = receipt.replace('var diagnosticP5=receiptDiagnosticSummary(p5);',
-    'window.receiptFixtures={p5,pbk,pbkRow,okFastPath,pOk,goodFocusConsensus,noisyNameChecks,naturalNameCheck,multiWeakConsensusRows,multiStrongConsensusRows,p510,psw};var diagnosticP5=receiptDiagnosticSummary(p5);');
+    'window.receiptFixtures={p5,pbk,pbkRow,okText,okObj,okFastPath,pOk,goodFocusConsensus,noisyNameChecks,naturalNameCheck,multiWeakConsensusRows,multiStrongConsensusRows,p510,psw};var diagnosticP5=receiptDiagnosticSummary(p5);');
+  if (merchantDictionary) {
+    context.testMerchantDictionary = merchantDictionary;
+    receipt = receipt.replace(exportBoundary, 'merchantProductDictionary=function(){return globalThis.testMerchantDictionary};' + exportBoundary);
+  }
   vm.runInContext(receipt, context, { filename: 'receipt.js' });
   return { context, storage, writes, element, evaluate: source => vm.runInContext(source, context) };
 }

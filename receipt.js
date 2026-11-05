@@ -1820,9 +1820,20 @@ function merchantProductByCode(shop,code){
   var match=merchantProductCodeMatch(shop,code,0);
   return match&&!match.fuzzy?match.entry:null;
 }
-function itemRowsFromText(text,sourcePriority){
+function itemRowsFromText(text,sourcePriority,shop){
   var lines=normalize(text).split("\n").map(function(x){return x.trim()}).filter(Boolean),priority=Number(sourcePriority||1);
   var bad=/(税\s*抜\s*(?:金\s*額\s*)?対\s*象|課\s*税\s*対\s*象|総合計|合計|小計|税込|お支払|お買上|お?預り|お\s*(?:釣|つ|的)\s*り?|釣銭|消費税|内消費[税千笑]|内税|外税|税率|8\s*%|10\s*%|軽減税率|対象金額|ポイント|通常P|合計P|今回P|前回累計|累計P|当月お買上累計額|お買上累計額|値引|割引|クーポン|楽天\s*(?:pay|ペイ|ベイ|べイ)|paypay|d払い|au\s*pay|クレジット|visa|master|jcb|amex|残高|receipt|領収|tel|電話|〒|登録番号|取引ID|POS\s*取引番号|注文番号|決済番号|受付番号|伝票番号|承認番号|決済手段|取引内容|取引金額|ご利用金額|カード\s*no|カード番号|レジ|店番号|担当|日時|日付|営業時間|営業\s*時間|バーコード|QR|LINEスタンプ|ハッピープライス|公式通販|オンラインショップ|引換商品|引換期間|1\s*本\s*無料)/i,out=[];
+  var verifiedNames=null,verifiedNameMatches={};
+  function verifiedPriceAlias(raw,total){
+    var key=productKey(raw),price=Number(total||0);if(!shop||!key||price<=0)return false;
+    var cacheKey=key+"|"+price;
+    if(Object.prototype.hasOwnProperty.call(verifiedNameMatches,cacheKey))return verifiedNameMatches[cacheKey];
+    if(!verifiedNames)verifiedNames=merchantProductDictionary(shop).filter(function(entry){return entry.source==="verified_sample"||entry.source==="learned"});
+    var matches=verifiedNames.filter(function(entry){
+      return [entry.name].concat(entry.aliases||[]).some(function(alias){return productKey(alias)===key});
+    });
+    return verifiedNameMatches[cacheKey]=matches.length===1&&(matches[0].priceHints||[]).indexOf(price)>=0;
+  }
   function cleanName(s){return normalizeProductName(s)}
   function validName(s,total,raw){
     if(!s||s.length<2||s.length>58||bad.test(s)||receiptNonMerchandiseLabel(raw)||receiptNonMerchandiseLabel(s)||!/[ぁ-んァ-ヶ一-龠A-Za-z]/.test(s))return false;
@@ -1830,12 +1841,17 @@ function itemRowsFromText(text,sourcePriority){
     if(Number(total||0)>0&&Number(total)<10)return false;
     if(isReceiptHeaderLine(raw)&&!/[A-Za-zぁ-んァ-ヶ一-龠]{3,}/.test(stripReceiptHeaderNoise(raw)))return false;
     var core=s.replace(/[0-9０-９.,．\s¥￥@*_#\-＝=]/g,"");
-    return core.length>=2&&!isGarbageProductName(s);
+    // A weak OCR name must not discard a separately printed price before the
+    // known-merchant dictionary can see it. All header/accounting guards above
+    // remain mandatory; only an exact, unique verified alias AND price qualifies.
+    return core.length>=2&&(!isGarbageProductName(s)||verifiedPriceAlias(raw,total));
   }
   function add(name,unit,qty,total,sourceIndex,productCode){
     var rawName=String(name||""),clean=cleanName(rawName),code=normalizeProductCodeToken(productCode);unit=Number(unit||0);qty=Number(qty||1);total=Number(total||0);
     if(!validName(clean,total,rawName))return;
-    out.push({name:clean,rawName:rawName,unitPrice:unit,qty:qty,total:total,productCode:code,quality:productNameQuality(rawName)+priority*10,sourceIndex:Number(sourceIndex||0),sourcePriority:priority});
+    var weakName=isGarbageProductName(clean),row={name:weakName?"商品名要確認":clean,rawName:rawName,unitPrice:weakName&&qty===1&&!unit?total:unit,qty:qty,total:total,productCode:code,quality:productNameQuality(rawName)+priority*10,sourceIndex:Number(sourceIndex||0),sourcePriority:priority};
+    if(weakName){row.lowConfidence=true;row.candidateOnly=true;row.candidateSource="verified_alias_ocr"}
+    out.push(row);
   }
   function priceRowOf(s){
     var x=quantityMoneyText(s).replace(/\s+/g," ").trim(),m;
@@ -2632,10 +2648,10 @@ function parseReceiptText(input,baseDate){
   // Middle-section candidates get the strongest priority. Whole/raw are fallback
   // sources only after receipt header/payment/summary rows are removed.
   var initialRows=[];
-  if(purchaseItem)initialRows=initialRows.concat(itemRowsFromText(productSourceText(purchaseItem),4));
-  if(purchaseMiddle)initialRows=initialRows.concat(itemRowsFromText(productSourceText(purchaseMiddle),3));
-  if(purchaseWhole)initialRows=initialRows.concat(itemRowsFromText(productSourceText(purchaseWhole),2));
-  initialRows=initialRows.concat(itemRowsFromText(productSourceText(purchaseRaw||raw),1));
+  if(purchaseItem)initialRows=initialRows.concat(itemRowsFromText(productSourceText(purchaseItem),4,shop));
+  if(purchaseMiddle)initialRows=initialRows.concat(itemRowsFromText(productSourceText(purchaseMiddle),3,shop));
+  if(purchaseWhole)initialRows=initialRows.concat(itemRowsFromText(productSourceText(purchaseWhole),2,shop));
+  initialRows=initialRows.concat(itemRowsFromText(productSourceText(purchaseRaw||raw),1,shop));
 
   var receiptAllText=[purchaseItem,purchaseMiddle,purchaseWhole,purchaseRaw,purchasePayment,purchaseBottom].filter(Boolean).join("\n");
   var discounted=discountedSingleItem(initialRows,receiptAllText,amount)||recoverDiscountedStructure(initialRows,receiptAllText,amount);
@@ -3454,16 +3470,16 @@ function recoverVerifiedMerchantBasket(shop,text,currentRows,context){
   return{rows:recovered,shop:"シャトレーゼ 立川高島屋SC店",reason:"verified_receipt_fingerprint"};
 }
 
-function receiptStructuralFastPath(full,middle,bottom){
-  var receiptText=[middle,full,bottom].filter(Boolean).join("\n");
+function receiptStructuralFastPath(full,middle,bottom,shop){
+  var receiptText=[middle,full,bottom].filter(Boolean).join("\n"),merchant=shop||bestShopFromSources([full,middle,bottom]);
   var amountInfo=analyzeAmount(full,[bottom].filter(Boolean).join("\n"));
   var discount=receiptDiscountAmount(receiptText);
   var preRaw=receiptPreDiscountTotal(receiptText);
   var preDecision=validatedPreDiscountTotal(preRaw,amountInfo.subtotal,discount);
   var target=Number(preDecision.value||amountInfo.subtotal||0);
   var rows=[];
-  if(middle)rows=rows.concat(itemRowsFromText(productSourceText(middle),3));
-  if(full)rows=rows.concat(itemRowsFromText(productSourceText(full),2));
+  if(middle)rows=rows.concat(itemRowsFromText(productSourceText(middle),3,merchant));
+  if(full)rows=rows.concat(itemRowsFromText(productSourceText(full),2,merchant));
   rows=removeDerivedChangeRows(rows,receiptText,Number(amountInfo.amount||0));
   var choice=chooseItemsForSubtotal(rows,amountInfo.subtotal,amountInfo.amount,discount),selected=choice.rows||[];
   var sum=selected.reduce(function(a,x){return a+Number(x.total||0)},0);
@@ -3571,7 +3587,7 @@ async function runOCR(bundle){
     }
     try{await worker.setParameters({tessedit_char_whitelist:""})}catch(_e){}
     var shopHint=bestShopFromSources([shopText,sectionMap.top,full]),focusEntries=[];
-    var fastProduct=receiptStructuralFastPath(full,sectionMap.middle,sectionMap.bottom);
+    var fastProduct=receiptStructuralFastPath(full,sectionMap.middle,sectionMap.bottom,shopHint);
     if(anchorMeta&&anchorMeta.text)focusEntries.push({family:"whole",label:"全体座標行",text:anchorMeta.text});
     var dictionaryInference=merchantProductInference(shopHint,focusEntries,full,anchorMeta&&anchorMeta.value||0);
     var itemText="",itemPasses=0,itemParts=(dictionaryInference||fastProduct.ready)?[]:(bundle.itemSlices||[]);
@@ -4994,7 +5010,7 @@ function receiptTests(){
     ["receipt Burger King structural item recovery test",!!pbkRow&&pbkRow.total===840&&pbkRow.originalTotal===1090&&pbkRow.discount===250],
     ["receipt Burger King comma-price OCR retains dictionary candidate for review test",!!pbkRow&&pbkRow.name==="ワッパーチーズセット"&&!!pbkRow.rawName&&pbkRow.candidateSource==="verified_sample"&&pbkRow.lowConfidence===true&&pbkRow.candidateOnly===true&&!pbkRow.autoConfirmed],
     ["receipt OK merchant template key test",merchantShopKey("オーケー立川若葉町店")==="ok"],
-    ["receipt OK incomplete structural fast-path stays disabled test",okFastPath.ready===false&&okFastPath.sum===717&&okFastPath.actualItemCount===6&&okFastPath.expectedItemCount===7],
+    ["receipt OK verified alias preserves the printed 101-yen row in fast-path test",okFastPath.ready===true&&okFastPath.rows.length===4&&okFastPath.sum===818&&okFastPath.actualItemCount===7&&okFastPath.expectedItemCount===7&&okFastPath.rows.some(function(row){return row.total===101&&row.name==="商品名要確認"&&row.rawName==="F NEIE® -F74-1000m|"})],
     ["receipt OK built-in 284 suggestion test",!!okBuiltIn284&&okBuiltIn284.name==="ドデカミン500ml"&&okBuiltIn284.source==="verified_sample"],
     ["receipt OK built-in 108 家族の潤いライチ suggestion test",!!okBuiltIn108&&okBuiltIn108.name==="家族の潤いライチ"&&okBuiltIn108.source==="verified_sample"&&okBuiltIn108.priceMatch===true],
     ["receipt OK built-in 108 row correction remains confirm-required test",!!okBuiltIn108Applied&&okBuiltIn108Applied.name==="家族の潤いライチ"&&okBuiltIn108Applied.lowConfidence===true],

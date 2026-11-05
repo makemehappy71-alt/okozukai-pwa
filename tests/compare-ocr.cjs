@@ -4,20 +4,24 @@ const path = require('node:path');
 const { execFileSync, spawnSync } = require('node:child_process');
 const { createRuntime } = require('./helpers/runtime.cjs');
 const root = path.resolve(__dirname, '..');
-const baselineCommit = 'fb6e2cd0d6e87c07871ddc6bae6fa9013db542ad';
+const suite = process.argv[2] || 'ocr-remaining.test.cjs';
+const baselineCommit = process.argv[3] || 'fb6e2cd0d6e87c07871ddc6bae6fa9013db542ad';
+assert(/^[a-z0-9-]+\.test\.cjs$/.test(suite), 'Use a test filename in tests/');
+assert(/^[a-f0-9]{7,40}$/.test(baselineCommit), 'Use a Git commit hash');
+const tag = suite === 'ocr-remaining.test.cjs' ? 'remaining-ocr' : suite.replace('.test.cjs', '');
 const artifacts = path.join(root, '.test-artifacts');
-const baseline = path.join(artifacts, 'remaining-ocr-baseline');
+const baseline = path.join(artifacts, `${tag}-baseline`);
 fs.mkdirSync(baseline, { recursive: true });
 for (const name of ['app.js', 'receipt.js']) fs.writeFileSync(path.join(baseline, name),
   execFileSync('git', ['show', `${baselineCommit}:${name}`], { cwd: root, maxBuffer: 2 * 1024 * 1024 }));
 
 function measure(directory) {
-  const child = spawnSync(process.execPath, ['--test', '--test-reporter=tap', path.join(__dirname, 'ocr-remaining.test.cjs')], {
+  const child = spawnSync(process.execPath, ['--test', '--test-reporter=tap', path.join(__dirname, suite)], {
     cwd: root, env: { ...process.env, RECEIPT_TEST_ROOT: directory }, encoding: 'utf8', timeout: 30000
   });
   if (child.error) throw child.error;
   const tap = child.stdout + child.stderr;
-  fs.writeFileSync(path.join(artifacts, `${directory === root ? 'after' : 'before'}-remaining-ocr.tap`), tap);
+  fs.writeFileSync(path.join(artifacts, `${directory === root ? 'after' : 'before'}-${tag}.tap`), tap);
   const count = key => Number(tap.match(new RegExp(`^# ${key} (\\d+)`, 'm'))?.[1]);
   assert(Number.isFinite(count('tests')) && count('tests') > 0);
   assert.equal(count('tests'), count('pass') + count('fail'));
@@ -32,6 +36,6 @@ function measure(directory) {
     existingOCR: { total: results.length, passed: results.filter(result => result[1]).length }, protectedStores };
 }
 const report = { baselineCommit, before: measure(baseline), after: measure(root) };
-fs.writeFileSync(path.join(artifacts, 'remaining-ocr-comparison.json'), JSON.stringify(report, null, 2) + '\n');
+fs.writeFileSync(path.join(artifacts, `${tag}-comparison.json`), JSON.stringify(report, null, 2) + '\n');
 console.log(JSON.stringify(report, null, 2));
 if (report.after.regression.failed || report.after.existingOCR.passed !== report.after.existingOCR.total) process.exitCode = 1;

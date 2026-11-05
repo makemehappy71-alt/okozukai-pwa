@@ -1,5 +1,18 @@
 # お小遣い家計簿 V3.68 — Galaxy / Android PWA リリース候補版
 
+## 総合改善プロジェクト（作業ブランチ・2026-11-05）
+
+V3.71.19を基準にした調査とローカル改善です。公開版の更新は行っていません。
+
+- [総合監査と改善計画](docs/総合監査と改善計画.md)
+- [改善結果・テスト数・残存問題・変更ファイル](docs/改善結果.md)
+- 既存テスト: `node tests/run.cjs`
+- 追加回帰: `node --test tests/regression.test.cjs`
+- 改善前後の比較: `node tests/compare.cjs`
+- モバイル表示の操作テスト: `node --test tests/mobile.test.cjs`（Playwright・Chromium系ブラウザが必要）
+
+schemaVersion 12と保存形式を維持しています。Android実機のOCR速度・認識精度測定は次段階です。
+
 このリポジトリは「お小遣い家計簿 V3.68」のPWA公開用です。
 
 公開サーバーへ置くのはアプリ本体だけで、実際の支出・残高・カード未払いなどのユーザーデータは端末内（IndexedDB / LocalStorage）に保存されます。

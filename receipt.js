@@ -1701,6 +1701,7 @@ function analyzeAmount(text,extraText){
     if(/ポイント|通常P|合計P|今回P|前回累計|累計P|当月お買上累計額|お買上累計額|残高|登録番号|取引ID|受付番号|カード\s*No|カード番号|TEL|電話|〒|レジ|店番号|バーコード/i.test(line))return;
     if(!n)return;
     if(/(?:値引|割引)\s*前\s*(?:合\s*計|小\s*計)/i.test(line)){preDiscountTotal=preDiscountTotal||n;return}
+    if(receiptDiscountSummaryLine(line))return;
     if(/小\s*計/i.test(line)){
       subtotal=subtotal||n;
       if(/税\s*抜/i.test(line))subtotalTaxMode="excluded";
@@ -2380,7 +2381,7 @@ function itemCategorySuggestion(name,shop){
   if(/ダイソー|\bDAISO\b/i.test(String(shop||"")))return findCategoryPair("日用品","生活用品")||findCategoryPair("日用品","その他日用品");
   return findCategoryPair("食費","スーパー・食材")||null;
 }
-function allocateReceiptRows(rows,subtotal,tax,total,shop,taxIncluded,taxBuckets){
+function allocateReceiptRows(rows,subtotal,tax,total,shop,taxIncluded,taxBuckets,itemDiscounts){
   rows=(rows||[]).filter(function(x){return Number(x.total||0)>0&&!isChangeCueText(String(x.name||""))}).map(function(x){return Object.assign({},x)});
   var originalSum=rows.reduce(function(a,x){return a+Number(x.total||0)},0),target=Number(total||0),netTarget=Number(subtotal||0),taxTarget=Number(tax||0);
   if(!rows.length)return[];
@@ -2391,6 +2392,13 @@ function allocateReceiptRows(rows,subtotal,tax,total,shop,taxIncluded,taxBuckets
     return parts.map(function(x){return x.value});
   }
   var originals=rows.map(function(x){return Number(x.total||0)});
+  if(Array.isArray(itemDiscounts)){
+    if(itemDiscounts.length!==rows.length||!itemDiscounts.every(function(n,i){return Number.isSafeInteger(n)&&n>=0&&n<originals[i]})||itemDiscounts.reduce(function(a,n){return a+n},0)!==originalSum-netTarget)return[];
+    var adjusted=rows.map(function(row,i){return Object.assign({},row,{total:originals[i]-itemDiscounts[i]})});
+    var allocated=allocateReceiptRows(adjusted,subtotal,tax,total,shop,taxIncluded,taxBuckets);
+    if(allocated.length!==rows.length)return[];
+    return allocated.map(function(row,i){return Object.assign({},row,{originalNet:originals[i],discount:itemDiscounts[i]})});
+  }
   var mixedBuckets=(Array.isArray(taxBuckets)?taxBuckets:[]).filter(function(b){return b&&Number(b.net||0)>=0&&Number(b.tax||0)>=0&&Number(b.gross||0)>0});
   if(!taxIncluded&&mixedBuckets.length>=2){
     var bucketByRate={};mixedBuckets.forEach(function(b){bucketByRate[Number(b.rate)]=b});
@@ -2579,6 +2587,72 @@ function receiptDiscountAmount(text,expected){
   if(want&&info.values.indexOf(want)>=0)return want;
   return info.values.length?info.values[0]:0;
 }
+function receiptDiscountSummaryLine(line){
+  return /(?:値引|割引)(?:額)?\s*合計|合計\s*(?:値引|割引)/.test(line);
+}
+function receiptMultipleDiscounts(sources,initialRows,amountInfo,amount,shop){
+  // Retain occurrences inside one OCR source, but never add separate passes.
+  var basket=mergeProductRows(initialRows),groups=[],seen={},amounts={},active=false;
+  (sources||[]).filter(Boolean).forEach(function(source){
+    var text=normalize(source);if(seen[text])return;seen[text]=true;
+    var details=[],summaries=[],invalid=false,current=null;
+    text.split("\n").map(function(x){return ocrMoneyClean(x.trim())}).filter(Boolean).forEach(function(line){
+      if(receiptIsPromotionalCoupon(line)||receiptMarkdownPriceLine(line)||/(?:値引|割引)\s*(?:前|後)/.test(line)){current=null;return}
+      if(/値引|割引|値下(?:げ)?額|クーポン/.test(line)){
+        var n=discountAmountFromLine(line),amountLine=line.replace(/[0-9]+(?:[.,][0-9]+)?\s*[%％]/g," "),m=amountLine.match(/(?:値引|割引|値下(?:げ)?額|クーポン)(?:額)?(?:合計)?\s*[:：]?\s*¥?\s*[-−ー]?\s*([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{1,7})\s*(?:円)?\s*$/);
+        if(!n||!m||Number(m[1].replace(/,/g,""))!==n){invalid=true;current=null;return}
+        amounts[n]=true;
+        if(receiptDiscountSummaryLine(line)){summaries.push(n);current=null;return}
+        details.push({amount:n,row:/^(?:商品|単品)(?:値引|割引|値下(?:げ)?額)/.test(line)?current:null});
+        return;
+      }
+      var rows=itemRowsFromText(line,1,shop);
+      current=rows.length===1&&!rows[0].candidateOnly?rows[0]:null;
+    });
+    if(details.length>1||summaries.length||invalid)active=true;
+    var sum=details.reduce(function(a,x){return a+x.amount},0),summary=summaries[0]||0;
+    if(summaries.some(function(n){return n!==summary})||(summary&&sum&&sum!==summary))invalid=true;
+    groups.push({total:summary||sum,details:details,invalid:invalid});
+  });
+  active=active||Object.keys(amounts).length>1;
+  var result={active:active,resolved:false,total:0,attributed:false,assignments:[],reason:"insufficient_evidence"};
+  if(!active)return result;
+  var subtotal=Number(amountInfo.subtotal||0),original=basket.reduce(function(a,x){return a+x.total},0),expected=original-subtotal;
+  var count=receiptItemCountFromText((sources||[]).filter(Boolean).join("\n")),qty=basket.reduce(function(a,x){return a+x.qty},0);
+  var paid=(amountInfo.candidates||[]).some(function(x){return x.amount===amount&&(x.labels.total||x.labels.payment||x.labels.barcodePayment)});
+  var accounting=amountInfo.taxIncluded?subtotal===amount:subtotal+Number(amountInfo.tax||0)===amount;
+  if(!subtotal||!paid||!accounting||!count||qty!==count||expected<=0||expected>100000)return result;
+  var valid=groups.filter(function(g){return !g.invalid&&g.total===expected});
+  if(!valid.length){result.reason="discount_total_mismatch";return result}
+  result.resolved=true;result.total=expected;result.reason="attribution_unresolved";
+  var mappings=[];
+  valid.forEach(function(group){
+    if(basket.length===1){mappings.push([expected]);return}
+    if(!group.details.length)return;
+    var values=basket.map(function(){return 0}),complete=true;
+    group.details.forEach(function(detail){
+      var row=detail.row,indices=[];
+      basket.forEach(function(b,i){if(row&&productKey(b.name)===productKey(row.name)&&b.total===row.total&&b.qty===row.qty)indices.push(i)});
+      if(indices.length!==1)complete=false;else values[indices[0]]+=detail.amount;
+    });
+    if(complete&&values.every(function(n,i){return n>=0&&n<basket[i].total})&&values.reduce(function(a,n){return a+n},0)===expected)mappings.push(values);
+  });
+  if(!mappings.length||mappings.some(function(values){return JSON.stringify(values)!==JSON.stringify(mappings[0])}))return result;
+  result.attributed=true;result.reason=basket.length===1?"single_item":"explicit_item_labels";
+  result.assignments=basket.map(function(row,i){return{key:productKey(row.name),rawKey:productKey(row.rawName),total:row.total,qty:row.qty,discount:mappings[0][i]}});
+  return result;
+}
+function receiptDiscountsForRows(rows,assignments){
+  if(rows.length!==assignments.length)return null;
+  var used={},values=[];
+  for(var i=0;i<rows.length;i++){
+    var row=rows[i],keys=[productKey(row.name),productKey(row.rawName)],matches=[];
+    assignments.forEach(function(a,j){if(!used[j]&&a.total===row.total&&a.qty===row.qty&&(keys.indexOf(a.key)>=0||keys.indexOf(a.rawKey)>=0))matches.push(j)});
+    if(matches.length!==1)return null;
+    used[matches[0]]=true;values.push(assignments[matches[0]].discount);
+  }
+  return values;
+}
 function receiptOriginalPriceCandidates(text,target,discountInfo){
   target=Number(target||0);discountInfo=discountInfo||{values:[],counts:{}};
   var bad=/(?:総合計|合計金額|合計|小計|税込|消費税|内税|外税|お支払|現金|cash|お?預り|預かり|お?釣|お?つり|釣銭|値引|割引|クーポン|ポイント|アンケート|以上の商品購入)/i;
@@ -2726,7 +2800,11 @@ function parseReceiptText(input,baseDate){
   initialRows=initialRows.concat(itemRowsFromText(productSourceText(purchaseRaw||raw),1,shop));
 
   var receiptAllText=[purchaseItem,purchaseMiddle,purchaseWhole,purchaseRaw,purchasePayment,purchaseBottom].filter(Boolean).join("\n");
-  var discounted=discountedSingleItem(initialRows,receiptAllText,amount)||recoverDiscountedStructure(initialRows,receiptAllText,amount);
+  // paymentText and merged itemText may concatenate passes. Prefer the actual
+  // recognition records when available, never treating those joins as a pass.
+  var discountPasses=(obj&&Array.isArray(obj.diagnostics)?obj.diagnostics:[]).filter(function(d){return /^(?:全体|分割\s*[0-9]+|商品(?:上段|中段|下段|全域))/.test(String(d&&d.label||""))}).map(function(d){return receiptPurchaseSectionText(String(d.text||""))}).filter(Boolean);
+  var multipleDiscounts=receiptMultipleDiscounts(discountPasses.length?discountPasses:[purchaseItem,purchaseMiddle,purchaseWhole,purchaseRaw,purchaseBottom],initialRows,amountInfo,amount,shop);
+  var discounted=multipleDiscounts.resolved?null:discountedSingleItem(initialRows,receiptAllText,amount)||recoverDiscountedStructure(initialRows,receiptAllText,amount);
   var focusConsensus=obj&&obj.meta&&obj.meta.focusConsensus||null,productAnchor=obj&&obj.meta&&obj.meta.productAnchor||null,dictionaryInference=obj&&obj.meta&&obj.meta.dictionaryInference||null;
   if(discounted&&productAnchor&&Number(discounted.originalTotal||0)===Number(productAnchor.value||0)){
     if(focusConsensus&&focusConsensus.accepted&&focusConsensus.name){
@@ -2749,7 +2827,7 @@ function parseReceiptText(input,baseDate){
   var structuralDiscount=explicitPreDiscountRaw>0&&amountInfo.subtotal>0&&explicitPreDiscountRaw>amountInfo.subtotal?explicitPreDiscountRaw-amountInfo.subtotal:0;
   // Prefer an explicitly printed discount. A derived discount is only used when it is
   // itself plausible and no direct discount was found.
-  var receiptWideDiscount=directDiscount||(structuralDiscount>0&&structuralDiscount<=(amountInfo.subtotal||amount||100000)?structuralDiscount:0);
+  var receiptWideDiscount=multipleDiscounts.active?multipleDiscounts.total:directDiscount||(structuralDiscount>0&&structuralDiscount<=(amountInfo.subtotal||amount||100000)?structuralDiscount:0);
   var preDiscountDecision=validatedPreDiscountTotal(explicitPreDiscountRaw,amountInfo.subtotal,receiptWideDiscount);
   var explicitPreDiscount=Number(preDiscountDecision.value||0),merchandiseAccountingTarget=explicitPreDiscount||amountInfo.subtotal||0;
   var accountingStructureValid=!!(amountInfo.subtotal&&merchandiseAccountingTarget&&merchandiseAccountingTarget-(receiptWideDiscount||0)===amountInfo.subtotal&&(!amount||(amountInfo.taxIncluded?amountInfo.subtotal===amount:amountInfo.subtotal+(amountInfo.tax||0)===amount)));
@@ -2910,17 +2988,20 @@ function parseReceiptText(input,baseDate){
   var reviewTarget=(reviewOnlyTotalTarget&&!merchandiseTarget)?Number(amount):0;
   if(!merchandiseTarget&&verifiedBasket&&verifiedBasket.rows&&verifiedBasket.rows.length&&amount>0&&!receiptWideDiscount&&(amountInfo.taxIncluded||!amountInfo.tax))merchandiseTarget=amount;
   var expectedItemCount=receiptItemCountFromText(receiptAllText),actualItemCount=rows.reduce(function(a,x){return a+Math.max(1,Number(x.qty||1))},0),provisionalItemSum=rows.reduce(function(a,x){return a+Number(x.total||0)},0);
+  var itemDiscounts=multipleDiscounts.attributed?receiptDiscountsForRows(rows,multipleDiscounts.assignments):null;
+  var discountReviewRequired=multipleDiscounts.active&&(!multipleDiscounts.resolved||!itemDiscounts);
   rows=autoConfirmVerifiedSampleRows(shop,rows,{
-    accountingStructureValid:accountingStructureValid,
+    accountingStructureValid:accountingStructureValid&&!discountReviewRequired,
     amountConfidence:amountInfo.confidence,
     merchandiseTarget:merchandiseTarget,
     itemSum:provisionalItemSum,
     expectedItemCount:expectedItemCount,
     actualItemCount:actualItemCount
   });
+  if(discountReviewRequired)rows.forEach(function(row){row.autoConfirmed=false;row.lowConfidence=true;row.candidateOnly=true;row.nameConfidence="low"});
   var items=rows.map(function(x){return x.name}),reliableRows=rows.filter(function(x){return !x.lowConfidence}),cat=categorySuggestion(raw,shop,reliableRows);
   var itemSum=rows.reduce(function(a,x){return a+Number(x.total||0)},0);
-  var itemSetComplete=!!amount&&!!merchandiseTarget&&!!items.length&&itemSum===merchandiseTarget&&!rows.some(function(x){return !!x.provisionalAmount})&&(!amountInfo.subtotal||accountingStructureValid),itemQuantityMatch=expectedItemCount>0?actualItemCount===expectedItemCount:null;
+  var itemSetComplete=!discountReviewRequired&&!!amount&&!!merchandiseTarget&&!!items.length&&itemSum===merchandiseTarget&&!rows.some(function(x){return !!x.provisionalAmount})&&(!amountInfo.subtotal||accountingStructureValid),itemQuantityMatch=expectedItemCount>0?actualItemCount===expectedItemCount:null;
   var productConfidence=summarizeProductConfidence(rows),autoConfirmedItemCount=productConfidence.autoConfirmed,lowConfidenceItemCount=productConfidence.low,productLowConfidence=lowConfidenceItemCount>0;
   var productReadFailed=(!items.length||productLowConfidence||!itemSetComplete)&&!!amount;
   var detailFallback=shop||"レシート購入";
@@ -2931,16 +3012,17 @@ function parseReceiptText(input,baseDate){
   var detailValue=detailProductAllowed?items.slice(0,2).join("・")+(items.length>2?"ほか":""):detailFallback;
   if(detailProductAllowed&&items.length>=3&&productConfidence.level==="high")detailValue=compactReceiptDetail(shop,cat,items.length,actualItemCount);
   var subtotalTaxMatch=!!(amountInfo.subtotal&&amountInfo.tax&&(amountInfo.taxIncluded?amountInfo.subtotal===amount:amountInfo.subtotal+amountInfo.tax===amount));
-  var splitRows=itemSetComplete?allocateReceiptRows(rows,amountInfo.subtotal,amountInfo.tax,amount,shop,amountInfo.taxIncluded,amountInfo.taxBuckets):[];
+  var splitRows=itemSetComplete?allocateReceiptRows(rows,amountInfo.subtotal,amountInfo.tax,amount,shop,amountInfo.taxIncluded,amountInfo.taxBuckets,itemDiscounts||undefined):[];
   var diag=obj&&obj.diagnostics||[];var diagnosticText=diag.map(function(d,i){return"--- PASS "+(i+1)+" / "+d.label+" ---\n"+(d.text||"(空)")}).join("\n\n");
   var debugText=maskReceiptDebugText([diagnosticText,raw?"--- 統合OCR ---\n"+raw:"",shopText?"--- 店名専用OCR統合 ---\n"+shopText:"",itemText?"--- 商品専用OCR統合 ---\n"+itemText:"",paymentText?"--- 支払専用OCR統合 ---\n"+paymentText:""].filter(Boolean).join("\n\n"));
   var dictionaryAutoConfirmed=!!(dictionaryInference&&dictionaryInference.name&&rows.some(function(x){return !!x.autoConfirmed&&x.name===dictionaryInference.name}));
   var candidateStatus=focusConsensus&&focusConsensus.accepted?"confirmed":dictionaryAutoConfirmed?"confirmed":dictionaryInference&&dictionaryInference.name?"candidate":focusConsensus&&focusConsensus.candidateName?"candidate":"unresolved";
+  if(discountReviewRequired)candidateStatus="unresolved";
   var candidateSource=focusConsensus&&focusConsensus.accepted?"ocr":dictionaryAutoConfirmed?"learned":dictionaryInference&&dictionaryInference.name?(dictionaryInference.source||"verified_sample"):focusConsensus&&focusConsensus.candidateName?"ocr":"";
   var candidateList=dictionaryInference&&dictionaryInference.name?[dictionaryInference.name].concat(dictionaryInference.alternatives||[]):focusConsensus&&focusConsensus.candidates||[];
   candidateList=candidateList.filter(function(x,i,a){return x&&a.indexOf(x)===i}).slice(0,3);
   var diagnosticStages={taxReviewSource:taxReviewSource,dateSource:dateSource,hasSubtotal:Number(amountInfo.subtotal||0)>0,reviewTarget:reviewTarget,initialRows:initialRows.length,chosenRows:itemChoice.rows.length,finalRows:rows.length,merchantHint:finalMerchantHint,promoCouponIgnored:ignoredPromotionalCoupons,recognizedDiscount:receiptWideDiscount,fkShop:fkDiagnostic.shopOk,fkAmount:fkDiagnostic.amountOk,fkPayment:fkDiagnostic.paid,fkProduct:fkDiagnostic.strong,fkFlavor:fkDiagnostic.flavor,fkCount:fkDiagnostic.countOk,productPasses:fkDiagnostic.productPasses,janPairs:janNameReview.pairs,janNameRepairs:janNameReview.applied};
-  return{rawText:raw,debugText:debugText,date:date,dateSource:dateSource,diagnosticStages:diagnosticStages,reviewTarget:reviewTarget,shop:shop,verifiedBasketRecovered:!!(verifiedBasket&&verifiedBasket.rows&&verifiedBasket.rows.length),amount:amount,amountConfidence:amountInfo.confidence,amountScore:amountInfo.score,subtotal:amountInfo.subtotal,preDiscountTotal:explicitPreDiscount,preDiscountOCR:explicitPreDiscountRaw,preDiscountSource:preDiscountDecision.source,preDiscountConflict:!!preDiscountDecision.conflict,discount:receiptWideDiscount,accountingStructureValid:accountingStructureValid,tax:amountInfo.tax,taxIncluded:!!amountInfo.taxIncluded,taxBuckets:amountInfo.taxBuckets||[],subtotalTaxMatch:subtotalTaxMatch,paymentCandidate:payment,categoryCandidate:cat,items:items,itemRows:rows,splitRows:splitRows,itemSum:itemSum,merchandiseTarget:merchandiseTarget,itemSetComplete:itemSetComplete,expectedItemCount:expectedItemCount,actualItemCount:actualItemCount,itemQuantityMatch:itemQuantityMatch,autoConfirmedItemCount:autoConfirmedItemCount,itemSubtotalMatch:!!(amountInfo.subtotal&&itemSum===amountInfo.subtotal),itemPreDiscountMatch:!!(amountInfo.subtotal&&receiptWideDiscount>0&&itemSum===amountInfo.subtotal+receiptWideDiscount),gapRecovered:!!gapRecovery.recovered,gapRecoveredAmount:Number(gapRecovery.gap||0),gapRecoveredName:gapRecovery.recoveredName||"",learnedGapRecovered:!!learnedGapRecovery.recovered,learnedGapRecoveredAmount:Number(learnedGapRecovery.gap||0),learnedGapRecoveredName:learnedGapRecovery.recoveredName||"",productConfidenceLevel:productConfidence.level,highConfidenceItemCount:productConfidence.high,mediumConfidenceItemCount:productConfidence.medium,requiresProductReview:productConfidence.requiresReview,productReviewRecommended:productConfidence.reviewRecommended,detail:detailValue,productReadFailed:productReadFailed,productLowConfidence:productLowConfidence,lowConfidenceItemCount:lowConfidenceItemCount,productCandidateStatus:candidateStatus,productCandidateSource:candidateSource,productCandidateAutoConfirmed:dictionaryAutoConfirmed,productCandidates:candidateList,productCandidateReason:dictionaryAutoConfirmed?"learned_auto_confirmed":dictionaryInference&&dictionaryInference.name?"merchant_dictionary":focusConsensus&&focusConsensus.rejectionReason||"",tendered:receiptTenderedAmount(receiptAllText,amount),ocrMeta:obj&&obj.meta||null};
+  return{discountStatus:!multipleDiscounts.active?"legacy":!multipleDiscounts.resolved?"unresolved":itemDiscounts?"attributed":"total_only",discountReviewRequired:discountReviewRequired,discountAttributionConfirmed:!!itemDiscounts,discountReason:multipleDiscounts.reason,rawText:raw,debugText:debugText,date:date,dateSource:dateSource,diagnosticStages:diagnosticStages,reviewTarget:reviewTarget,shop:shop,verifiedBasketRecovered:!!(verifiedBasket&&verifiedBasket.rows&&verifiedBasket.rows.length),amount:amount,amountConfidence:amountInfo.confidence,amountScore:amountInfo.score,subtotal:amountInfo.subtotal,preDiscountTotal:explicitPreDiscount,preDiscountOCR:explicitPreDiscountRaw,preDiscountSource:preDiscountDecision.source,preDiscountConflict:!!preDiscountDecision.conflict,discount:receiptWideDiscount,accountingStructureValid:accountingStructureValid,tax:amountInfo.tax,taxIncluded:!!amountInfo.taxIncluded,taxBuckets:amountInfo.taxBuckets||[],subtotalTaxMatch:subtotalTaxMatch,paymentCandidate:payment,categoryCandidate:cat,items:items,itemRows:rows,splitRows:splitRows,itemSum:itemSum,merchandiseTarget:merchandiseTarget,itemSetComplete:itemSetComplete,expectedItemCount:expectedItemCount,actualItemCount:actualItemCount,itemQuantityMatch:itemQuantityMatch,autoConfirmedItemCount:autoConfirmedItemCount,itemSubtotalMatch:!!(amountInfo.subtotal&&itemSum===amountInfo.subtotal),itemPreDiscountMatch:!!(amountInfo.subtotal&&receiptWideDiscount>0&&itemSum===amountInfo.subtotal+receiptWideDiscount),gapRecovered:!!gapRecovery.recovered,gapRecoveredAmount:Number(gapRecovery.gap||0),gapRecoveredName:gapRecovery.recoveredName||"",learnedGapRecovered:!!learnedGapRecovery.recovered,learnedGapRecoveredAmount:Number(learnedGapRecovery.gap||0),learnedGapRecoveredName:learnedGapRecovery.recoveredName||"",productConfidenceLevel:productConfidence.level,highConfidenceItemCount:productConfidence.high,mediumConfidenceItemCount:productConfidence.medium,requiresProductReview:productConfidence.requiresReview,productReviewRecommended:productConfidence.reviewRecommended,detail:detailValue,productReadFailed:productReadFailed,productLowConfidence:productLowConfidence,lowConfidenceItemCount:lowConfidenceItemCount,productCandidateStatus:candidateStatus,productCandidateSource:candidateSource,productCandidateAutoConfirmed:dictionaryAutoConfirmed,productCandidates:candidateList,productCandidateReason:dictionaryAutoConfirmed?"learned_auto_confirmed":dictionaryInference&&dictionaryInference.name?"merchant_dictionary":focusConsensus&&focusConsensus.rejectionReason||"",tendered:receiptTenderedAmount(receiptAllText,amount),ocrMeta:obj&&obj.meta||null};
 }
 function summarizeProductConfidence(rows){
   var list=rows||[],high=0,medium=0,low=0,autoConfirmed=0;
@@ -3261,6 +3343,7 @@ function renderResult(p,errorText){
   var metaDetailsHtml=metaHtml?'<details class="receipt-technical-details"><summary>解析詳細</summary><div class="receipt-technical-body">'+metaHtml+'</div></details>':"";
   var balanceHtml='<div class="receipt-balance-review" role="status"><strong>'+e(receiptBalanceDisplay(p))+'</strong>'+(balance.hasRows?'<div class="receipt-balance-note">商品名：'+e(balance.itemStatus)+(balance.provisional?' / 商品単価は仮置き':'')+'</div>':'')+'</div>';
   var confidenceWarn=(!Number(p.amount||0)?'<div class="warning">合計金額を特定できませんでした。金額一致とは扱わず、手入力が必要です。</div>':"")+(p.amountConfidence==="low"?'<div class="warning">金額候補の信頼度が低いため、合計金額を確認してください。</div>':"");
+  if(p.discountReviewRequired)confidenceWarn+='<div class="warning receipt-discount-warning">'+(p.discountStatus==="total_only"?'値引合計は会計と一致していますが、商品ごとの割当を確認できません。':'複数の値引を会計と照合できません。')+'商品別の自動分割は行いません。原本の値引内容を確認してください。</div>';
   if(!p.date)confidenceWarn+='<div class="warning">レシートの日付を読み取れませんでした。登録前に必ず購入日を入力してください。</div>';
   if(p.reviewTarget&&!p.itemSetComplete)confidenceWarn+='<div class="warning">小計が判読できません。'+(balance.numberMatches?'商品候補と支払額は数値上のみ一致しますが、商品単価・会計構造の独立照合は未完了です。':'支払額 '+e(yen(p.reviewTarget))+' は参考上限です。商品明細の確認が必要です。')+'</div>';
   if(!p.itemSetComplete&&p.merchandiseTarget){

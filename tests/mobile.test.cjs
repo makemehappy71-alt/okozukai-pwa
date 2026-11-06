@@ -11,8 +11,8 @@ const root = path.resolve(__dirname, '..');
 const output = path.join(root, '.test-artifacts');
 fs.mkdirSync(output, { recursive: true });
 
-for (const [width, mixedTax, codePrice] of [[360, false, false], [412, false, false], [412, true, false], [412, false, true]]) {
-  const caseName = `${width}${mixedTax ? '-mixed-tax' : codePrice ? '-product-code' : ''}`;
+for (const [width, mixedTax, codePrice, adjustment] of [[360, false, false], [412, false, false], [412, true, false], [412, false, true], [412, false, false, 'markdown'], [412, false, false, 'discount']]) {
+  const caseName = `${width}${adjustment ? '-' + adjustment : mixedTax ? '-mixed-tax' : codePrice ? '-product-code' : ''}`;
   test(`mobile Chromium ${caseName}px: image crop, OCR review, apply, data safety`, { timeout: 60000 }, async () => {
     const allowed = new Set(['index.html', 'app.js', 'receipt.js', 'styles.css', 'sw.js', 'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png']);
     const server = http.createServer((request, response) => {
@@ -40,8 +40,8 @@ for (const [width, mixedTax, codePrice] of [[360, false, false], [412, false, fa
           async recognize() { window.testOCRCalls++; return { data: { blocks: [], text } }; },
           async terminate() { window.testOCRTerminated++; }
         }; } };
-      }, { text: codePrice ? 'ヤオコー東大和店\n2026年10月10日\nテスト"緑茶\n2200083271771 2 ¥98\n小計 2点 ¥98\n合計 ¥98\n楽天ペイ ¥98' : mixedTax ? 'ヤオコー東大和店\n2026年10月10日\nテスト"緑茶 ¥100\n歯ブラシ ¥200\n8%税抜対象額 ¥100\n8%税額 ¥8\n10%税抜対象額 ¥200\n10%税額 ¥20\n合計 ¥328\n楽天ペイ ¥328' : width === 412 ? 'ヤオコー東大和店\n2026年10月10日\nテスト"緑茶 10 ¥15,625\n小計 10点 ¥15,625\n消費税額\n8% 10点 ¥1,250\n合計 ¥16,875\n楽天ペイ ¥16,875' : 'ヤオコー東大和店\n2026年10月10日\nテスト"緑茶 ¥100\n小計 1点 ¥100\n消費税 ¥8\n合計 ¥108\n楽天ペイ ¥108' });
-      const expectedAmount = codePrice ? '98' : mixedTax ? '328' : width === 412 ? '16875' : '108';
+      }, { text: adjustment === 'markdown' ? 'ヤオコー東大和店\n2026年10月10日\nテスト"緑茶\n値下(元 ¥2,500) ¥1,280\n小計 1点 ¥1,280\n合計 ¥1,280\n楽天ペイ ¥1,280' : adjustment === 'discount' ? 'ヤオコー東大和店\n2026年10月10日\nテスト"緑茶 ¥2,500\n値引 ¥1,280\n歯ブラシ ¥100\n小計 2点 ¥1,320\n合計 ¥1,320\n楽天ペイ ¥1,320' : codePrice ? 'ヤオコー東大和店\n2026年10月10日\nテスト"緑茶\n2200083271771 2 ¥98\n小計 2点 ¥98\n合計 ¥98\n楽天ペイ ¥98' : mixedTax ? 'ヤオコー東大和店\n2026年10月10日\nテスト"緑茶 ¥100\n歯ブラシ ¥200\n8%税抜対象額 ¥100\n8%税額 ¥8\n10%税抜対象額 ¥200\n10%税額 ¥20\n合計 ¥328\n楽天ペイ ¥328' : width === 412 ? 'ヤオコー東大和店\n2026年10月10日\nテスト"緑茶 10 ¥15,625\n小計 10点 ¥15,625\n消費税額\n8% 10点 ¥1,250\n合計 ¥16,875\n楽天ペイ ¥16,875' : 'ヤオコー東大和店\n2026年10月10日\nテスト"緑茶 ¥100\n小計 1点 ¥100\n消費税 ¥8\n合計 ¥108\n楽天ペイ ¥108' });
+      const expectedAmount = adjustment === 'markdown' ? '1280' : adjustment === 'discount' ? '1320' : codePrice ? '98' : mixedTax ? '328' : width === 412 ? '16875' : '108';
       await page.goto(`http://127.0.0.1:${server.address().port}/`);
       // A fresh PWA install claims the page and intentionally reloads it once.
       await page.waitForFunction(() => navigator.serviceWorker.controller && performance.getEntriesByType('navigation')[0].type === 'reload');
@@ -79,7 +79,16 @@ for (const [width, mixedTax, codePrice] of [[360, false, false], [412, false, fa
       assert.equal(await page.locator('#receiptAmount').inputValue(), expectedAmount);
       assert.equal(await page.locator('#receiptShop').inputValue(), 'ヤオコー東大和店');
       assert.equal(await page.locator('#receiptDate').inputValue(), '2026-10-10');
-      if (mixedTax) {
+      if (adjustment === 'markdown') {
+        const rows = await page.locator('#receiptOCRPanel').evaluate(el => JSON.parse(el.dataset.itemRows));
+        assert.equal(rows.length, 1);
+        assert.equal(rows[0].total, 1280);
+        assert.equal(rows[0].markdownOriginalTotal, 2500);
+        assert.equal(rows[0].markdownDiscount, 1220);
+      } else if (adjustment === 'discount') {
+        const rows = await page.locator('#receiptOCRPanel').evaluate(el => JSON.parse(el.dataset.itemRows));
+        assert.deepEqual(rows.map(row => row.total), [2500, 100]);
+      } else if (mixedTax) {
         const rows = await page.locator('#receiptOCRPanel').evaluate(el => JSON.parse(el.dataset.splitRows));
         assert.deepEqual(rows.map(row => [row.net, row.extra, row.gross, row.taxRate]), [[100, 8, 108, 8], [200, 20, 220, 10]]);
       } else if (width === 412) {
@@ -102,7 +111,7 @@ for (const [width, mixedTax, codePrice] of [[360, false, false], [412, false, fa
       await dismissed;
       assert.equal(await page.locator('#txAmount').inputValue(), '');
       await page.locator('.receipt-product-review-name[data-index="0"]').fill('テスト緑茶');
-      if (mixedTax) await page.locator('.receipt-product-review-name[data-index="1"]').fill('歯ブラシ');
+      if (mixedTax || adjustment === 'discount') await page.locator('.receipt-product-review-name[data-index="1"]').fill('歯ブラシ');
       for (const checkbox of await page.locator('.receipt-product-review-confirm').all()) await checkbox.check();
       const geometry = await page.locator('#receiptApplyBtn').boundingBox();
       assert(geometry.width >= 44 && geometry.height >= 44);
@@ -117,13 +126,20 @@ for (const [width, mixedTax, codePrice] of [[360, false, false], [412, false, fa
         assert.equal(plan.total, 328);
         assert.deepEqual(plan.rows.map(row => [row.name, row.net, row.extra, row.gross, row.taxRate]), [['テスト緑茶', 100, 8, 108, 8], ['歯ブラシ', 200, 20, 220, 10]]);
       }
+      if (adjustment === 'discount') {
+        const plan = JSON.parse(await page.locator('#receiptSplitPlan').inputValue());
+        assert.equal(plan.total, 1320);
+        assert.equal(plan.rows.reduce((sum, row) => sum + row.originalNet, 0), 2600);
+        assert.equal(plan.rows.reduce((sum, row) => sum + row.discount, 0), 1280);
+        assert.equal(plan.rows.reduce((sum, row) => sum + row.gross, 0), 1320);
+      }
       assert.equal(await page.evaluate(() => JSON.stringify(state.transactions)), snapshot.transactions);
       assert.equal(await page.evaluate(() => localStorage.getItem('okozukai_v321_mirror')), snapshot.mirror);
       assert.equal(await page.evaluate(async () => JSON.stringify(await idbReadCurrent())), snapshot.indexedDB);
       assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('okozukaiReceiptProductDictionaryV1')).some(row => row.name === '既存の学習商品' && row.confirmedCount === 4)), true);
       assert.deepEqual(errors, []);
       const metrics = await page.evaluate(() => ({ calls: window.testOCRCalls, terminated: window.testOCRTerminated }));
-      fs.writeFileSync(path.join(output, `mobile-${caseName}.json`), JSON.stringify({ width, mixedTax, codePrice, ...metrics, errors, realAndroidDevice: false, mockedOCR: true }, null, 2));
+      fs.writeFileSync(path.join(output, `mobile-${caseName}.json`), JSON.stringify({ width, mixedTax, codePrice, adjustment, ...metrics, errors, realAndroidDevice: false, mockedOCR: true }, null, 2));
     } finally {
       if (browser) await browser.close();
       await new Promise(resolve => server.close(resolve));

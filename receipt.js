@@ -1622,28 +1622,37 @@ function chooseItemsForSubtotal(rows,subtotal,receiptTotal,receiptDiscount,shop)
 function labeledMoney(line){
   var n=numberFromLine(line);return n>0?n:0;
 }
-function receiptTaxBuckets(text){
+function receiptTaxBuckets(text,details){
   var lines=normalize(text).split("\n").map(function(x){return ocrMoneyClean(String(x||"").trim())}).filter(Boolean),map={},activeRate=0;
+  details=details||{};details.taxLineIndexes={};
   function moneyToken(s){
-    var n=Number(String(s||"").replace(/[,\s]/g,""));
-    return Number.isFinite(n)&&n>=0&&n<=1000000?n:0;
+    var raw=String(s||"").trim();
+    if(!/^(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]{1,7})$/.test(raw))return null;
+    var n=Number(raw.replace(/,/g,""));
+    return Number.isFinite(n)&&n>=0&&n<=1000000?n:null;
   }
-  lines.forEach(function(line){
+  lines.forEach(function(line,index){
     var x=line.replace(/\s+/g," ").trim(),m=x.match(/(?:^|[（(\s])((?:8|10))\s*[%％]\s*(税抜)?\s*対象(?:額)?[^0-9]{0,8}(?:¥|￥)?\s*([0-9][0-9,\s]{0,12})/i);
+    if(/(?:^|[（(\s])[0-9]+\s*[%％]\s*(?:税額|消費税)/i.test(x))details.taxLineIndexes[index]=true;
     if(m){
       var rate=Number(m[1]),target=moneyToken(m[3]);
-      if(target){map[rate]=map[rate]||{rate:rate,target:0,tax:0,mode:m[2]?"excluded":"included"};map[rate].target=target;map[rate].mode=m[2]?"excluded":"included";activeRate=rate}
+      map[rate]=map[rate]||{rate:rate,target:null,tax:null,mode:m[2]?"excluded":"included"};
+      map[rate].target=target;map[rate].mode=m[2]?"excluded":"included";activeRate=rate;
       var same=x.match(/うち\s*消費税(?:等)?[^0-9]{0,8}(?:¥|￥)?\s*([0-9][0-9,\s]{0,10})/i);
-      if(same&&map[rate])map[rate].tax=moneyToken(same[1]);
+      if(same&&map[rate]){map[rate].tax=moneyToken(same[1]);details.taxLineIndexes[index]=true}
       return;
     }
-    var direct=x.match(/((?:8|10))\s*[%％]\s*(?:税額|消費税)[^0-9]{0,8}(?:¥|￥)?\s*([0-9][0-9,\s]{0,10})/i);
+    var direct=x.match(/(?:^|[（(\s])((?:8|10))\s*[%％]\s*(?:税額|消費税)[^0-9]{0,8}(?:¥|￥)?\s*([0-9][0-9,\s]{0,10})/i);
     if(direct){
-      var dr=Number(direct[1]);map[dr]=map[dr]||{rate:dr,target:0,tax:0,mode:"excluded"};map[dr].tax=moneyToken(direct[2]);activeRate=dr;return;
+      var dr=Number(direct[1]);map[dr]=map[dr]||{rate:dr,target:null,tax:null,mode:"excluded"};map[dr].tax=moneyToken(direct[2]);activeRate=dr;return;
     }
     var taxOnly=x.match(/うち\s*消費税(?:等)?[^0-9]{0,8}(?:¥|￥)?\s*([0-9][0-9,\s]{0,10})/i);
-    if(taxOnly&&activeRate&&map[activeRate])map[activeRate].tax=moneyToken(taxOnly[1]);
+    if(taxOnly&&activeRate&&map[activeRate]){map[activeRate].tax=moneyToken(taxOnly[1]);details.taxLineIndexes[index]=true}
   });
+  details.mixed=Object.keys(map).length>=2;
+  // Missing/invalid tax is different from an explicitly printed zero. Do not
+  // reconcile a whole receipt from only the readable portion of its tax blocks.
+  if(Object.keys(map).some(function(k){var b=map[k];return b.target===null||b.target<=0||b.tax===null}))return[];
   return Object.keys(map).map(function(k){
     var b=map[k],target=Number(b.target||0),tax=Number(b.tax||0),net=b.mode==="excluded"?target:Math.max(0,target-tax),gross=b.mode==="excluded"?target+tax:target;
     return{rate:Number(b.rate),target:target,tax:tax,net:net,gross:gross,mode:b.mode};
@@ -1651,13 +1660,14 @@ function receiptTaxBuckets(text){
 }
 function analyzeAmount(text,extraText){
   var allText=normalize([text,extraText].filter(Boolean).join("\n")),lines=allText.split("\n").map(function(x){return ocrMoneyClean(x.trim())}).filter(Boolean),map={},subtotal=0,preDiscountTotal=0,tax=0,taxIncluded=false,subtotalTaxMode="";
+  var taxBucketDetails={},taxBuckets=receiptTaxBuckets(allText,taxBucketDetails);
   function add(n,label,score,line){
     n=Number(n||0);if(!n||n>1000000)return;
     var x=map[n]||(map[n]={amount:n,score:0,occurrences:0,labels:{},lines:[]});
     x.score+=score;x.occurrences++;x.labels[label]=true;x.lines.push(line);
   }
   var paymentLabelRecent=0;
-  lines.forEach(function(line){
+  lines.forEach(function(line,index){
     var n=labeledMoney(line),paymentLine=/(?:楽天\s*(?:ペイ|ペー|ベイ|Pay)|[<＜]\s*楽天\s*ペイ|paypay|d払い|バー\s*コード\s*決済)/i.test(line);
     if(paymentLine)paymentLabelRecent=2;
     else if(paymentLabelRecent>0)paymentLabelRecent--;
@@ -1678,6 +1688,9 @@ function analyzeAmount(text,extraText){
     // Some supermarket receipts omit "小計" but print an explicit pre-tax base.
     // Use only clearly labeled tax-base rows so payment/tender amounts cannot become merchandise subtotal.
     if(/(?:本体\s*(?:8|10)\s*[%％]\s*対象|(?:8|10)\s*[%％]\s*税抜対象額|税抜対象額)/i.test(line)){
+      // A rate-specific base is one part of the basket, not its subtotal.
+      // Complete tax buckets below supply their combined net/tax instead.
+      if(/(?:^|[（(\s])(?:8|10)\s*[%％]\s*税抜対象額/i.test(line))return;
       subtotal=subtotal||n;subtotalTaxMode="excluded";add(n,"taxBaseSubtotal",55,line);return
     }
     // Some compact receipts print only "計 1点 100" before the tax rows.
@@ -1687,6 +1700,8 @@ function analyzeAmount(text,extraText){
     }
     var explicitTax=taxAmountFromLine(line);
     if(explicitTax){
+      // A tax from only one rate cannot stand in for the whole mixed basket.
+      if(taxBucketDetails.mixed&&taxBucketDetails.taxLineIndexes[index])return;
       tax=tax||explicitTax;
       if(subtotalTaxMode!=="excluded"&&/内税|内消費税/i.test(line))taxIncluded=true;
       return;
@@ -1712,9 +1727,11 @@ function analyzeAmount(text,extraText){
   // reconciles with the printed subtotal and a printed payment/total amount.
   var adjacentTaxCandidates=[];
   lines.forEach(function(line,idx){
+    if(taxBucketDetails.mixed&&taxBucketDetails.taxLineIndexes[idx])return;
     if(!/(?:消費税\s*額|税\s*額(?:\s*合\s*計)?)/.test(line))return;
     for(var offset=0;offset<=2&&idx+offset<lines.length;offset++){
       var taxLine=lines[idx+offset];
+      if(taxBucketDetails.mixed&&taxBucketDetails.taxLineIndexes[idx+offset])continue;
       if(offset>0&&/(?:合\s*計|楽天|お支払|ポイント|小\s*計|税抜金額対象|税抜対象額)/i.test(taxLine))break;
       var candidateLine=offset===0?taxLine:taxLine;
       if(offset>0&&!/^\s*[（(]?\s*(?:(?:8|10)\s*[%％YＹ]?\s*[,，]?\s*(?:[0-9]{1,3}\s*(?:点|品)\s*)?)?¥\s*(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]{1,6})\s*(?:円)?\s*(?:内|外|軽|[A-Z※*])?\s*[）)]?\s*$/i.test(candidateLine))continue;
@@ -1755,12 +1772,14 @@ function analyzeAmount(text,extraText){
       tax=compactTaxes[0];subtotalTaxMode="excluded";
     }
   }
-  var taxBuckets=receiptTaxBuckets(allText);
   if(taxBuckets.length>=2){
     var bucketTax=taxBuckets.reduce(function(a,b){return a+Number(b.tax||0)},0),bucketNet=taxBuckets.reduce(function(a,b){return a+Number(b.net||0)},0),bucketGross=taxBuckets.reduce(function(a,b){return a+Number(b.gross||0)},0);
-    if(bucketTax>0)tax=bucketTax;
+    tax=bucketTax;
     if(!subtotal&&bucketNet>0){subtotal=bucketNet;subtotalTaxMode="excluded";add(bucketNet,"mixedTaxSubtotal",70,"mixed tax buckets")}
     if(bucketGross>0)add(bucketGross,"mixedTaxTotal",150,"mixed tax buckets");
+  }else if(!subtotal&&taxBuckets.length===1&&taxBuckets[0].mode==="excluded"){
+    subtotal=taxBuckets[0].net;tax=taxBuckets[0].tax;subtotalTaxMode="excluded";
+    add(subtotal,"taxBaseSubtotal",55,"complete single tax bucket");
   }
   if(subtotalTaxMode==="excluded")taxIncluded=false;
   else if(subtotalTaxMode==="included")taxIncluded=true;

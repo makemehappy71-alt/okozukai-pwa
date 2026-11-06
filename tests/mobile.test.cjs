@@ -21,7 +21,9 @@ const mobileCases = [
   { width: 412, amount: 1200, adjustment: 'multi-item', body: 'テスト"緑茶 ¥1,000\n商品値引 ¥100\n歯ブラシ ¥500\n商品値引 ¥200\n値引合計 ¥300\n小計 2点 ¥1,200\n合計 ¥1,200\n楽天ペイ ¥1,200' },
   { width: 412, amount: 1200, adjustment: 'multi-unassigned', body: 'テスト"緑茶 ¥1,000\n歯ブラシ ¥500\n会員値引 ¥100\nクーポン割引 ¥200\n小計 2点 ¥1,200\n合計 ¥1,200\n楽天ペイ ¥1,200' },
   { width: 412, amount: 1700, adjustment: 'repeat-code', body: 'テスト"緑茶\n2200083271771 1 ¥1,000\n商品値引 ¥100\nテスト"緑茶\n2200083271702 1 ¥1,000\n商品値引 ¥200\n小計 2点 ¥1,700\n合計 ¥1,700\n楽天ペイ ¥1,700' },
-  { width: 412, amount: 1900, adjustment: 'repeat-unassigned', body: 'テスト"緑茶 ¥1,000\n商品値引 ¥100\nテスト"緑茶 ¥1,000\n小計 2点 ¥1,900\n合計 ¥1,900\n楽天ペイ ¥1,900' }
+  { width: 412, amount: 1900, adjustment: 'repeat-unassigned', body: 'テスト"緑茶 ¥1,000\n商品値引 ¥100\nテスト"緑茶 ¥1,000\n小計 2点 ¥1,900\n合計 ¥1,900\n楽天ペイ ¥1,900' },
+  { width: 412, amount: 1700, adjustment: 'printed-id', body: '明細番号 101\nテスト"緑茶\n2200083271771 1 ¥1,000\n商品値引 ¥100\n明細番号 102\nテスト"緑茶\n2200083271771 1 ¥1,000\n商品値引 ¥200\n小計 2点 ¥1,700\n合計 ¥1,700\n楽天ペイ ¥1,700' },
+  { width: 412, amount: 1700, adjustment: 'printed-id-unknown', body: '明細番号 101\nテスト"緑茶\n2200083271771 1 ¥1,000\n明細番号 102\nテスト"緑茶\n2200083271771 1 ¥1,000\n明細番号 999 値引 ¥100\n明細番号 102 値引 ¥200\n小計 2点 ¥1,700\n合計 ¥1,700\n楽天ペイ ¥1,700' }
 ];
 for (const { width, amount, body, mixedTax = false, codePrice = false, adjustment } of mobileCases) {
   const caseName = `${width}${adjustment ? '-' + adjustment : mixedTax ? '-mixed-tax' : codePrice ? '-product-code' : ''}`;
@@ -91,7 +93,19 @@ for (const { width, amount, body, mixedTax = false, codePrice = false, adjustmen
       assert.equal(await page.locator('#receiptAmount').inputValue(), expectedAmount);
       assert.equal(await page.locator('#receiptShop').inputValue(), 'ヤオコー東大和店');
       assert.equal(await page.locator('#receiptDate').inputValue(), '2026-10-10');
-      if (adjustment === 'repeat-code' || adjustment === 'repeat-unassigned') {
+      if (['printed-id', 'printed-id-unknown'].includes(adjustment)) {
+        const rows = await page.locator('#receiptOCRPanel').evaluate(el => JSON.parse(el.dataset.itemRows));
+        assert.deepEqual(rows.map(row => [row.receiptLineId, row.productCode, row.qty, row.total]), [['101', '2200083271771', 1, 1000], ['102', '2200083271771', 1, 1000]]);
+        assert.deepEqual(await page.locator('.receipt-line-id').allTextContents(), ['明細番号: 101', '明細番号: 102']);
+        if (adjustment === 'printed-id') {
+          const split = await page.locator('#receiptOCRPanel').evaluate(el => JSON.parse(el.dataset.splitRows));
+          assert.deepEqual(split.map(row => [row.discount, row.gross]), [[100, 900], [200, 800]]);
+        } else {
+          assert.equal(await page.locator('.receipt-discount-warning').isVisible(), true);
+          assert.equal(await page.locator('#receiptSplitEnabled').count(), 0);
+          assert.equal(rows.some(row => row.autoConfirmed), false);
+        }
+      } else if (adjustment === 'repeat-code' || adjustment === 'repeat-unassigned') {
         const rows = await page.locator('#receiptOCRPanel').evaluate(el => JSON.parse(el.dataset.itemRows));
         assert.deepEqual(rows.map(row => [row.qty, row.total]), [[1, 1000], [1, 1000]]);
         if (adjustment === 'repeat-code') {
@@ -148,7 +162,7 @@ for (const { width, amount, body, mixedTax = false, codePrice = false, adjustmen
       await dismissed;
       assert.equal(await page.locator('#txAmount').inputValue(), '');
       await page.locator('.receipt-product-review-name[data-index="0"]').fill('テスト緑茶');
-      if (['repeat-code', 'repeat-unassigned'].includes(adjustment)) await page.locator('.receipt-product-review-name[data-index="1"]').fill('テスト緑茶');
+      if (['repeat-code', 'repeat-unassigned', 'printed-id', 'printed-id-unknown'].includes(adjustment)) await page.locator('.receipt-product-review-name[data-index="1"]').fill('テスト緑茶');
       if (mixedTax || ['discount', 'multi-item', 'multi-unassigned'].includes(adjustment)) await page.locator('.receipt-product-review-name[data-index="1"]').fill('歯ブラシ');
       for (const checkbox of await page.locator('.receipt-product-review-confirm').all()) await checkbox.check();
       const geometry = await page.locator('#receiptApplyBtn').boundingBox();
@@ -175,11 +189,12 @@ for (const { width, amount, body, mixedTax = false, codePrice = false, adjustmen
         const plan = JSON.parse(await page.locator('#receiptSplitPlan').inputValue());
         assert.equal(plan.total, 1200);
         assert.deepEqual(plan.rows.map(row => [row.name, row.discount, row.gross]), [['テスト緑茶', 100, 900], ['歯ブラシ', 200, 300]]);
-      } else if (adjustment === 'repeat-code') {
+      } else if (adjustment === 'repeat-code' || adjustment === 'printed-id') {
         const plan = JSON.parse(await page.locator('#receiptSplitPlan').inputValue());
         assert.equal(plan.total, 1700);
         assert.deepEqual(plan.rows.map(row => [row.name, row.discount, row.gross]), [['テスト緑茶', 100, 900], ['テスト緑茶', 200, 800]]);
-      } else if (['multi-unassigned', 'repeat-unassigned'].includes(adjustment)) {
+        assert.equal(plan.rows.some(row => row.receiptLineId), false);
+      } else if (['multi-unassigned', 'repeat-unassigned', 'printed-id-unknown'].includes(adjustment)) {
         assert.equal(await page.locator('#receiptSplitPlan').count(), 0);
       }
       assert.equal(await page.evaluate(() => JSON.stringify(state.transactions)), snapshot.transactions);

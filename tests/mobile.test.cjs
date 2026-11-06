@@ -39,8 +39,8 @@ for (const width of [360, 412]) {
           async recognize() { window.testOCRCalls++; return { data: { blocks: [], text } }; },
           async terminate() { window.testOCRTerminated++; }
         }; } };
-      }, { text: width === 412 ? 'ヤオコー東大和店\n2026年10月10日\n牛乳 2 ¥1,280\n小計 2点 ¥1,280\n消費税 ¥102\n合計 ¥1,382\n楽天ペイ ¥1,382' : 'ヤオコー東大和店\n2026年10月10日\nテスト"緑茶 ¥100\n小計 1点 ¥100\n消費税 ¥8\n合計 ¥108\n楽天ペイ ¥108' });
-      const expectedAmount = width === 412 ? '1382' : '108';
+      }, { text: width === 412 ? 'ヤオコー東大和店\n2026年10月10日\nテスト"緑茶 10 ¥15,625\n小計 10点 ¥15,625\n消費税額\n8% 10点 ¥1,250\n合計 ¥16,875\n楽天ペイ ¥16,875' : 'ヤオコー東大和店\n2026年10月10日\nテスト"緑茶 ¥100\n小計 1点 ¥100\n消費税 ¥8\n合計 ¥108\n楽天ペイ ¥108' });
+      const expectedAmount = width === 412 ? '16875' : '108';
       await page.goto(`http://127.0.0.1:${server.address().port}/`);
       // A fresh PWA install claims the page and intentionally reloads it once.
       await page.waitForFunction(() => navigator.serviceWorker.controller && performance.getEntriesByType('navigation')[0].type === 'reload');
@@ -78,6 +78,13 @@ for (const width of [360, 412]) {
       assert.equal(await page.locator('#receiptAmount').inputValue(), expectedAmount);
       assert.equal(await page.locator('#receiptShop').inputValue(), 'ヤオコー東大和店');
       assert.equal(await page.locator('#receiptDate').inputValue(), '2026-10-10');
+      if (width === 412) {
+        const rows = await page.locator('#receiptOCRPanel').evaluate(el => JSON.parse(el.dataset.itemRows));
+        assert.equal(rows.length, 1);
+        assert.equal(rows[0].qty, 10);
+        assert.equal(rows[0].total, 15625);
+        assert.equal(rows[0].unitPrice, 0);
+      }
       assert.equal(await page.locator('#receiptCameraBtn').isEnabled(), true);
       assert.equal(await page.evaluate(() => window.testOCRTerminated), 1);
       assert.equal(await page.evaluate(() => JSON.stringify(state.transactions)), snapshot.transactions);
@@ -89,7 +96,7 @@ for (const width of [360, 412]) {
       await page.locator('#receiptApplyBtn').click();
       await dismissed;
       assert.equal(await page.locator('#txAmount').inputValue(), '');
-      await page.locator('.receipt-product-review-name').fill(width === 412 ? '牛乳' : 'テスト緑茶');
+      await page.locator('.receipt-product-review-name').fill('テスト緑茶');
       await page.locator('.receipt-product-review-confirm').check();
       const geometry = await page.locator('#receiptApplyBtn').boundingBox();
       assert(geometry.width >= 44 && geometry.height >= 44);

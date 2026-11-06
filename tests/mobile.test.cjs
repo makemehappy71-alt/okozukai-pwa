@@ -11,8 +11,8 @@ const root = path.resolve(__dirname, '..');
 const output = path.join(root, '.test-artifacts');
 fs.mkdirSync(output, { recursive: true });
 
-for (const [width, mixedTax] of [[360, false], [412, false], [412, true]]) {
-  const caseName = `${width}${mixedTax ? '-mixed-tax' : ''}`;
+for (const [width, mixedTax, codePrice] of [[360, false, false], [412, false, false], [412, true, false], [412, false, true]]) {
+  const caseName = `${width}${mixedTax ? '-mixed-tax' : codePrice ? '-product-code' : ''}`;
   test(`mobile Chromium ${caseName}px: image crop, OCR review, apply, data safety`, { timeout: 60000 }, async () => {
     const allowed = new Set(['index.html', 'app.js', 'receipt.js', 'styles.css', 'sw.js', 'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png']);
     const server = http.createServer((request, response) => {
@@ -40,8 +40,8 @@ for (const [width, mixedTax] of [[360, false], [412, false], [412, true]]) {
           async recognize() { window.testOCRCalls++; return { data: { blocks: [], text } }; },
           async terminate() { window.testOCRTerminated++; }
         }; } };
-      }, { text: mixedTax ? 'ヤオコー東大和店\n2026年10月10日\nテスト"緑茶 ¥100\n歯ブラシ ¥200\n8%税抜対象額 ¥100\n8%税額 ¥8\n10%税抜対象額 ¥200\n10%税額 ¥20\n合計 ¥328\n楽天ペイ ¥328' : width === 412 ? 'ヤオコー東大和店\n2026年10月10日\nテスト"緑茶 10 ¥15,625\n小計 10点 ¥15,625\n消費税額\n8% 10点 ¥1,250\n合計 ¥16,875\n楽天ペイ ¥16,875' : 'ヤオコー東大和店\n2026年10月10日\nテスト"緑茶 ¥100\n小計 1点 ¥100\n消費税 ¥8\n合計 ¥108\n楽天ペイ ¥108' });
-      const expectedAmount = mixedTax ? '328' : width === 412 ? '16875' : '108';
+      }, { text: codePrice ? 'ヤオコー東大和店\n2026年10月10日\nテスト"緑茶\n2200083271771 2 ¥98\n小計 2点 ¥98\n合計 ¥98\n楽天ペイ ¥98' : mixedTax ? 'ヤオコー東大和店\n2026年10月10日\nテスト"緑茶 ¥100\n歯ブラシ ¥200\n8%税抜対象額 ¥100\n8%税額 ¥8\n10%税抜対象額 ¥200\n10%税額 ¥20\n合計 ¥328\n楽天ペイ ¥328' : width === 412 ? 'ヤオコー東大和店\n2026年10月10日\nテスト"緑茶 10 ¥15,625\n小計 10点 ¥15,625\n消費税額\n8% 10点 ¥1,250\n合計 ¥16,875\n楽天ペイ ¥16,875' : 'ヤオコー東大和店\n2026年10月10日\nテスト"緑茶 ¥100\n小計 1点 ¥100\n消費税 ¥8\n合計 ¥108\n楽天ペイ ¥108' });
+      const expectedAmount = codePrice ? '98' : mixedTax ? '328' : width === 412 ? '16875' : '108';
       await page.goto(`http://127.0.0.1:${server.address().port}/`);
       // A fresh PWA install claims the page and intentionally reloads it once.
       await page.waitForFunction(() => navigator.serviceWorker.controller && performance.getEntriesByType('navigation')[0].type === 'reload');
@@ -85,9 +85,10 @@ for (const [width, mixedTax] of [[360, false], [412, false], [412, true]]) {
       } else if (width === 412) {
         const rows = await page.locator('#receiptOCRPanel').evaluate(el => JSON.parse(el.dataset.itemRows));
         assert.equal(rows.length, 1);
-        assert.equal(rows[0].qty, 10);
-        assert.equal(rows[0].total, 15625);
-        assert.equal(rows[0].unitPrice, 0);
+        assert.equal(rows[0].qty, codePrice ? 2 : 10);
+        assert.equal(rows[0].total, codePrice ? 98 : 15625);
+        assert.equal(rows[0].unitPrice, codePrice ? 49 : 0);
+        if (codePrice) assert.equal(rows[0].productCode, '2200083271771');
       }
       assert.equal(await page.locator('#receiptCameraBtn').isEnabled(), true);
       assert.equal(await page.evaluate(() => window.testOCRTerminated), 1);
@@ -122,7 +123,7 @@ for (const [width, mixedTax] of [[360, false], [412, false], [412, true]]) {
       assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('okozukaiReceiptProductDictionaryV1')).some(row => row.name === '既存の学習商品' && row.confirmedCount === 4)), true);
       assert.deepEqual(errors, []);
       const metrics = await page.evaluate(() => ({ calls: window.testOCRCalls, terminated: window.testOCRTerminated }));
-      fs.writeFileSync(path.join(output, `mobile-${caseName}.json`), JSON.stringify({ width, mixedTax, ...metrics, errors, realAndroidDevice: false, mockedOCR: true }, null, 2));
+      fs.writeFileSync(path.join(output, `mobile-${caseName}.json`), JSON.stringify({ width, mixedTax, codePrice, ...metrics, errors, realAndroidDevice: false, mockedOCR: true }, null, 2));
     } finally {
       if (browser) await browser.close();
       await new Promise(resolve => server.close(resolve));

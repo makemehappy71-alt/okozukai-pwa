@@ -655,10 +655,7 @@ function productSourceText(text){
   return cleaned.join("\n").split("\n").map(function(line){
     var s=line.trim();
     if(!s)return"";
-    var compactCodeLine=ocrMoneyClean(s).replace(/\s+/g," ").trim();
-    var codeShape=compactCodeLine.match(/^([A-Za-z0-9]{10,18})\s+(?:[0-9]{1,3}\s+)?[^¥￥\\Y]{0,4}(?:¥|￥|\\|Y)\s*[0-9]{1,3}(?:,[0-9]{3})+/i);
-    if(!codeShape)codeShape=compactCodeLine.match(/^([A-Za-z0-9]{10,18})\s+(?:[0-9]{1,3}\s+)?[0-9]{1,3}(?:,[0-9]{3})+\s*(?:内|外|軽|[A-Z※*])?\s*$/i);
-    if(codeShape&&normalizeProductCodeToken(codeShape[1]))return s;
+    if(receiptProductCodePrice(s))return s;
     var kind=classifyReceiptLine(s);
     if(kind==="payment"||kind==="accounting"||receiptNonMerchandiseLabel(s))return"";
     if(kind==="header"){
@@ -1852,6 +1849,18 @@ function merchantProductByCode(shop,code){
   var match=merchantProductCodeMatch(shop,code,0);
   return match&&!match.fuzzy?match.entry:null;
 }
+function receiptProductCodePrice(line){
+  var x=ocrMoneyClean(line).replace(/\s+/g," ").trim();
+  // Source filtering and extraction must agree on the whole code/price line.
+  // Keep the existing short prefix-noise tolerance for the GU "1 3¥1,990" row.
+  var m=x.match(/^([A-Za-z0-9]{10,18})\s+(?:([0-9]{1,3})\s+)?[^¥￥\\Y]{0,4}(?:¥|￥|\\|Y)\s*([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{1,7})\s*(?:円)?\s*(?:内|外|軽|[A-Z※*])?\s*$/i);
+  if(!m)m=x.match(/^([A-Za-z0-9]{10,18})\s+(?:([0-9]{1,3})\s+)?([0-9]{1,3}(?:,[0-9]{3})+)\s*(?:内|外|軽|[A-Z※*])?\s*$/i);
+  if(!m)return null;
+  var code=normalizeProductCodeToken(m[1]),qty=Number(m[2]||1),total=Number(m[3].replace(/,/g,""));
+  if(!code||qty<1||qty>99||total<10||total>1000000)return null;
+  // Zero means unknown; rounding would invent a unit price that cannot sum.
+  return{code:code,qty:qty,total:total,unit:total%qty===0?total/qty:0};
+}
 function itemRowsFromText(text,sourcePriority,shop){
   var lines=normalize(text).split("\n").map(function(x){return x.trim()}).filter(Boolean),priority=Number(sourcePriority||1);
   var bad=/(税\s*抜\s*(?:金\s*額\s*)?対\s*象|課\s*税\s*対\s*象|総合計|合計|小計|税込|お支払|お買上|お?預り|お\s*(?:釣|つ|的)\s*り?|釣銭|消費税|内消費[税千笑]|内税|外税|税率|8\s*%|10\s*%|軽減税率|対象金額|ポイント|通常P|合計P|今回P|前回累計|累計P|当月お買上累計額|お買上累計額|値引|割引|クーポン|楽天\s*(?:pay|ペイ|ベイ|べイ)|paypay|d払い|au\s*pay|クレジット|visa|master|jcb|amex|残高|receipt|領収|tel|電話|〒|登録番号|取引ID|POS\s*取引番号|注文番号|決済番号|受付番号|伝票番号|承認番号|決済手段|取引内容|取引金額|ご利用金額|カード\s*no|カード番号|レジ|店番号|担当|日時|日付|営業時間|営業\s*時間|バーコード|QR|LINEスタンプ|ハッピープライス|公式通販|オンラインショップ|引換商品|引換期間|1\s*本\s*無料)/i,out=[];
@@ -1893,16 +1902,6 @@ function itemRowsFromText(text,sourcePriority,shop){
     var unit=Number(m[1].replace(/,/g,"")),qty=Number(m[2]),total=Number(m[3].replace(/,/g,""));
     if(unit<=0||qty<=0||total<=0||unit*qty!==total)return null;
     return[m[0],String(unit),String(qty),String(total)];
-  }
-  function productCodeQtyPrice(s){
-    var x=ocrMoneyClean(s).replace(/\s+/g," ").trim();
-    var m=x.match(/^([A-Za-z0-9]{10,18})\s+(?:([0-9]{1,3})\s+)?[^¥￥\\Y]{0,4}(?:¥|￥|\\|Y)\s*([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{3,7})/i);
-    if(!m)m=x.match(/^([A-Za-z0-9]{10,18})\s+(?:([0-9]{1,3})\s+)?([0-9]{1,3}(?:,[0-9]{3})+)\s*(?:内|外|軽|[A-Z※*])?\s*$/i);
-    if(!m)return null;
-    var code=normalizeProductCodeToken(m[1]),qty=Number(m[2]||1),total=Number(String(m[3]||"").replace(/,/g,""));
-    if(!code||qty<1||qty>99||total<=0)return null;
-    // Zero means unknown; rounding would invent a unit price that cannot sum.
-    return{code:code,qty:qty,total:total,unit:total%qty===0?total/qty:0};
   }
   function standalonePrice(s){
     var x=ocrMoneyClean(s).replace(/\s+/g," ").trim(),m=x.match(/^\s*(?:¥|￥|\\|Y)\s*([0-9]{1,3}(?:,[0-9]{3})*|[0-9]{1,7})\s*(?:円)?\s*(?:内|外|軽|[A-Z※*%])?\s*$/i);
@@ -1969,7 +1968,7 @@ function itemRowsFromText(text,sourcePriority,shop){
     if(qtyNext&&validName(cleanName(line),qtyNext.total,line)){
       add(line,qtyNext.unit,qtyNext.qty,qtyNext.total,i);continue;
     }
-    var linePrice=priceRowOf(line),nextPrice=priceRowOf(next),priceRow2=priceRowOf(next2),nextStandalone=standalonePrice(next),lineCode=productCodeQtyPrice(line),nextCode=productCodeQtyPrice(next),qtySame=productQtyPriceMatch(line),same=sameProductMatch(line),nextSame=sameProductMatch(next),nextDiscount=discountTotal(next);
+    var linePrice=priceRowOf(line),nextPrice=priceRowOf(next),priceRow2=priceRowOf(next2),nextStandalone=standalonePrice(next),lineCode=receiptProductCodePrice(line),nextCode=receiptProductCodePrice(next),qtySame=productQtyPriceMatch(line),same=sameProductMatch(line),nextSame=sameProductMatch(next),nextDiscount=discountTotal(next);
     if(lineCode){
       var already=out.some(function(x){return x.productCode===lineCode.code&&Number(x.total||0)===lineCode.total});
       if(!already){

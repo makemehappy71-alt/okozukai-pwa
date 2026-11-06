@@ -11,6 +11,7 @@ V3.71.19を基準にした調査とローカル改善です。公開版の更新
 - [第4段階：オーケー101円明細の調査と修正](docs/オーケー101円明細の調査と修正.md)
 - [第5段階：商品名・数量・単価・税額の再調査と修正](docs/商品名数量単価税額の再調査と修正.md)
 - [第6段階：混在税率の小計・税額の調査と修正](docs/混在税率の小計税額の調査と修正.md)
+- [第7段階：商品コード付き価格明細の調査と修正](docs/商品コード付き価格明細の調査と修正.md)
 - 既存テスト: `node tests/run.cjs`
 - 追加回帰: `node --test tests/regression.test.cjs`
 - 改善前後の比較: `node tests/compare.cjs`
@@ -20,6 +21,7 @@ V3.71.19を基準にした調査とローカル改善です。公開版の更新
 - オーケー101円の回帰: `node --test tests/ok-101.test.cjs`
 - 商品名・数量・単価・税額の回帰: `node --test tests/quantity-tax.test.cjs`
 - 混在税率の回帰: `node --test tests/mixed-tax.test.cjs`
+- 商品コード付き明細の回帰: `node --test tests/product-code.test.cjs`
 - モバイル表示の操作テスト: `node --test tests/mobile.test.cjs`（Playwright・Chromium系ブラウザが必要）
 
 schemaVersion 12と保存形式を維持しています。Android実機のOCR速度・認識精度測定は次段階です。

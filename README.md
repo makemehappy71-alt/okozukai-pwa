@@ -16,6 +16,7 @@ V3.71.19を基準にした調査とローカル改善です。公開版の更新
 - [第9段階：複数値引の合算と商品帰属の調査と修正](docs/複数値引の合算と商品帰属の調査と修正.md)
 - [第10段階：同名同額商品の識別と値引帰属の調査と修正](docs/同名同額商品の識別と値引帰属の調査と修正.md)
 - [第11段階：同一コード明細の印字番号識別と値引帰属の調査と修正](docs/同一コード明細の印字番号識別と値引帰属の調査と修正.md)
+- [第12段階：同一行と商品後の明細番号と値引帰属の調査と修正](docs/同一行と商品後の明細番号と値引帰属の調査と修正.md)
 - 既存テスト: `node tests/run.cjs`
 - 追加回帰: `node --test tests/regression.test.cjs`
 - 改善前後の比較: `node tests/compare.cjs`
@@ -30,6 +31,7 @@ V3.71.19を基準にした調査とローカル改善です。公開版の更新
 - 複数値引・商品帰属の回帰: `node --test tests/multiple-discount.test.cjs`
 - 同名同額商品の識別・値引帰属の回帰: `node --test tests/repeated-product.test.cjs`
 - 同一コード明細の印字番号・値引帰属の回帰: `node --test tests/printed-line-id.test.cjs`
+- 同一行・商品後の明細番号・値引帰属の回帰: `node --test tests/printed-id-layout.test.cjs`
 - モバイル表示の操作テスト: `node --test tests/mobile.test.cjs`（Playwright・Chromium系ブラウザが必要）
 
 schemaVersion 12と保存形式を維持しています。Android実機のOCR速度・認識精度測定は次段階です。

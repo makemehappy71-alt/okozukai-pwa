@@ -481,7 +481,7 @@ async function prepareImage(file){
   return pendingReceipt;
 }
 function normalize(text){
-  var s=String(text||"").replace(/\r/g,"").replace(/[￥]/g,"¥").replace(/[，]/g,",");
+  var s=String(text||"").replace(/\r\n?/g,"\n").replace(/[￥]/g,"¥").replace(/[，]/g,",");
   if(!/明細[IＩ][DＤ]/i.test(s))return s.replace(/[ \t]+/g," ").replace(/\n{3,}/g,"\n\n").trim();
   return s.split("\n").map(function(line){
     // Whitespace inside an explicitly labelled ID is data, not OCR spacing.

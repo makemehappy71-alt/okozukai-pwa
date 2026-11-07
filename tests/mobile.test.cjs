@@ -35,10 +35,15 @@ const mobileCases = [
   { width: 412, amount: 1700, adjustment: 'separator-id-unknown', body: 'テスト"緑茶 (明細ID A-101)\n2200083271771 1 ¥1,000\nテスト"緑茶 (明細ID A_101)\n2200083271771 1 ¥1,000\n(明細ID A101) 値引 ¥100\n商品値引 ¥200 [明細ID A_101]\n小計 2点 ¥1,700\n合計 ¥1,700\n楽天ペイ ¥1,700' },
   { width: 412, amount: 1700, adjustment: 'bounded-space-id', lineIds: ['A 101', 'A  101'], body: 'テスト"緑茶 (明細ID A 101)\n2200083271771 1 ¥1,000\nテスト"緑茶 (明細ID A  101)\n2200083271771 1 ¥1,000\n(明細ID A 101) 値引 ¥100\n商品値引 ¥200 [明細ID A  101]\n小計 2点 ¥1,700\n合計 ¥1,700\n楽天ペイ ¥1,700' },
   { width: 412, amount: 1700, adjustment: 'bounded-repeat-id', lineIds: ['A--101', 'A__101'], body: 'テスト"緑茶 (明細ID A--101)\n2200083271771 1 ¥1,000\n商品値引 ¥100\nテスト"緑茶 (明細ID A__101)\n2200083271771 1 ¥1,000\n商品値引 ¥200\n小計 2点 ¥1,700\n合計 ¥1,700\n楽天ペイ ¥1,700' },
-  { width: 412, amount: 1700, adjustment: 'bounded-space-unknown', lineIds: ['A  101', 'B__102'], body: 'テスト"緑茶 (明細ID A  101)\n2200083271771 1 ¥1,000\nテスト"緑茶 (明細ID B__102)\n2200083271771 1 ¥1,000\n(明細ID A 101) 値引 ¥100\n商品値引 ¥200 [明細ID B__102]\n小計 2点 ¥1,700\n合計 ¥1,700\n楽天ペイ ¥1,700' }
+  { width: 412, amount: 1700, adjustment: 'bounded-space-unknown', lineIds: ['A  101', 'B__102'], body: 'テスト"緑茶 (明細ID A  101)\n2200083271771 1 ¥1,000\nテスト"緑茶 (明細ID B__102)\n2200083271771 1 ¥1,000\n(明細ID A 101) 値引 ¥100\n商品値引 ¥200 [明細ID B__102]\n小計 2点 ¥1,700\n合計 ¥1,700\n楽天ペイ ¥1,700' },
+  { width: 412, amount: 1700, adjustment: 'control-tab-layout', lineIds: ['A101', 'B102'], body: 'テスト"緑茶 (明細ID\tA101)\n2200083271771 1 ¥1,000\n商品値引 ¥100\nテスト"緑茶 (明細ID\tB102)\n2200083271771 1 ¥1,000\n商品値引 ¥200\n小計 2点 ¥1,700\n合計 ¥1,700\n楽天ペイ ¥1,700' },
+  { width: 412, amount: 1700, adjustment: 'control-cr-receipt', lineIds: ['A101', 'B102'], body: 'テスト"緑茶 (明細ID A101)\r2200083271771 1 ¥1,000\r商品値引 ¥100\rテスト"緑茶 (明細ID B102)\r2200083271771 1 ¥1,000\r商品値引 ¥200\r小計 2点 ¥1,700\r合計 ¥1,700\r楽天ペイ ¥1,700' },
+  { width: 412, amount: 1700, adjustment: 'control-cr-reference', lineIds: ['A101', 'B102'], body: 'テスト"緑茶 (明細ID A101)\n2200083271771 1 ¥1,000\nテスト"緑茶 (明細ID B102)\n2200083271771 1 ¥1,000\n(明細ID A\r101) 値引 ¥100\n商品値引 ¥200 [明細ID B102]\n小計 2点 ¥1,700\n合計 ¥1,700\n楽天ペイ ¥1,700' },
+  { width: 412, amount: 1700, adjustment: 'control-tab-reference', lineIds: ['A101', 'B102'], body: 'テスト"緑茶 (明細ID A101)\n2200083271771 1 ¥1,000\nテスト"緑茶 (明細ID B102)\n2200083271771 1 ¥1,000\n(明細ID A\t101) 値引 ¥100\n商品値引 ¥200 [明細ID B102]\n小計 2点 ¥1,700\n合計 ¥1,700\n楽天ペイ ¥1,700' }
 ];
 for (const { width, amount, body, mixedTax = false, codePrice = false, adjustment, lineIds } of mobileCases) {
   const caseName = `${width}${adjustment ? '-' + adjustment : mixedTax ? '-mixed-tax' : codePrice ? '-product-code' : ''}`;
+  const unresolvedSplitReference = ['control-cr-reference', 'control-tab-reference'].includes(adjustment);
   test(`mobile Chromium ${caseName}px: image crop, OCR review, apply, data safety`, { timeout: 60000 }, async () => {
     const allowed = new Set(['index.html', 'app.js', 'receipt.js', 'styles.css', 'sw.js', 'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png']);
     const server = http.createServer((request, response) => {
@@ -105,13 +110,20 @@ for (const { width, amount, body, mixedTax = false, codePrice = false, adjustmen
       assert.equal(await page.locator('#receiptAmount').inputValue(), expectedAmount);
       assert.equal(await page.locator('#receiptShop').inputValue(), 'ヤオコー東大和店');
       assert.equal(await page.locator('#receiptDate').inputValue(), '2026-10-10');
-      if (['printed-id', 'printed-id-unknown', 'inline-id', 'post-id', 'post-id-unknown', 'wrapped-id', 'alpha-id', 'alpha-id-unknown', 'separator-id', 'separator-post-id', 'separator-id-unknown', 'bounded-space-id', 'bounded-repeat-id', 'bounded-space-unknown'].includes(adjustment)) {
+      if (['printed-id', 'printed-id-unknown', 'inline-id', 'post-id', 'post-id-unknown', 'wrapped-id', 'alpha-id', 'alpha-id-unknown', 'separator-id', 'separator-post-id', 'separator-id-unknown', 'bounded-space-id', 'bounded-repeat-id', 'bounded-space-unknown', 'control-tab-layout', 'control-cr-receipt', 'control-cr-reference', 'control-tab-reference'].includes(adjustment)) {
         const rows = await page.locator('#receiptOCRPanel').evaluate(el => JSON.parse(el.dataset.itemRows));
         const ids = lineIds || (adjustment.startsWith('separator') ? ['A-101', 'A_101'] : adjustment.startsWith('alpha-id') ? ['A1O1', 'A101'] : ['101', '102']);
-        assert.deepEqual(rows.map(row => [row.receiptLineId, row.productCode, row.qty, row.total]), ids.map(id => [id, '2200083271771', 1, 1000]));
-        assert.deepEqual(await page.locator('.receipt-line-id').allTextContents(), ids.map(id => '明細番号: ' + id));
-        if (lineIds) assert.equal(await page.locator('.receipt-line-id').first().evaluate(el => getComputedStyle(el).whiteSpace), 'pre-wrap');
-        if (['printed-id', 'inline-id', 'post-id', 'wrapped-id', 'alpha-id', 'separator-id', 'separator-post-id', 'bounded-space-id', 'bounded-repeat-id'].includes(adjustment)) {
+        if (unresolvedSplitReference) {
+          assert.deepEqual(rows, []);
+          assert.deepEqual(await page.locator('#receiptOCRPanel').evaluate(el => JSON.parse(el.dataset.splitRows)), []);
+          assert.equal(await page.locator('#receiptOCRPanel').getAttribute('data-product-candidate-auto-confirmed'), '');
+          assert.equal(await page.locator('.receipt-line-id').count(), 0);
+        } else {
+          assert.deepEqual(rows.map(row => [row.receiptLineId, row.productCode, row.qty, row.total]), ids.map(id => [id, '2200083271771', 1, 1000]));
+          assert.deepEqual(await page.locator('.receipt-line-id').allTextContents(), ids.map(id => '明細番号: ' + id));
+          if (lineIds) assert.equal(await page.locator('.receipt-line-id').first().evaluate(el => getComputedStyle(el).whiteSpace), 'pre-wrap');
+        }
+        if (['printed-id', 'inline-id', 'post-id', 'wrapped-id', 'alpha-id', 'separator-id', 'separator-post-id', 'bounded-space-id', 'bounded-repeat-id', 'control-tab-layout', 'control-cr-receipt'].includes(adjustment)) {
           const split = await page.locator('#receiptOCRPanel').evaluate(el => JSON.parse(el.dataset.splitRows));
           assert.deepEqual(split.map(row => [row.discount, row.gross]), [[100, 900], [200, 800]]);
         } else {
@@ -170,15 +182,20 @@ for (const { width, amount, body, mixedTax = false, codePrice = false, adjustmen
       assert.equal(await page.evaluate(() => localStorage.getItem('okozukaiReceiptProductDictionaryV1')), snapshot.dictionary);
       assert.equal(await page.evaluate(() => localStorage.getItem('okozukai_v321_mirror')), snapshot.mirror);
       assert.equal(await page.evaluate(async () => JSON.stringify(await idbReadCurrent())), snapshot.indexedDB);
-      assert(await page.locator('.receipt-product-review-confirm').count() > 0);
-      const dismissed = page.waitForEvent('dialog').then(dialog => dialog.dismiss());
-      await page.locator('#receiptApplyBtn').click();
-      await dismissed;
-      assert.equal(await page.locator('#txAmount').inputValue(), '');
-      await page.locator('.receipt-product-review-name[data-index="0"]').fill('テスト緑茶');
-      if (['repeat-code', 'repeat-unassigned', 'printed-id', 'printed-id-unknown', 'inline-id', 'post-id', 'post-id-unknown', 'wrapped-id', 'alpha-id', 'alpha-id-unknown', 'separator-id', 'separator-post-id', 'separator-id-unknown', 'bounded-space-id', 'bounded-repeat-id', 'bounded-space-unknown'].includes(adjustment)) await page.locator('.receipt-product-review-name[data-index="1"]').fill('テスト緑茶');
-      if (mixedTax || ['discount', 'multi-item', 'multi-unassigned'].includes(adjustment)) await page.locator('.receipt-product-review-name[data-index="1"]').fill('歯ブラシ');
-      for (const checkbox of await page.locator('.receipt-product-review-confirm').all()) await checkbox.check();
+      if (unresolvedSplitReference) {
+        assert.equal(await page.locator('.receipt-product-review-confirm').count(), 0);
+        await page.locator('#receiptItems').fill('テスト緑茶\nテスト緑茶');
+      } else {
+        assert(await page.locator('.receipt-product-review-confirm').count() > 0);
+        const dismissed = page.waitForEvent('dialog').then(dialog => dialog.dismiss());
+        await page.locator('#receiptApplyBtn').click();
+        await dismissed;
+        assert.equal(await page.locator('#txAmount').inputValue(), '');
+        await page.locator('.receipt-product-review-name[data-index="0"]').fill('テスト緑茶');
+        if (['repeat-code', 'repeat-unassigned', 'printed-id', 'printed-id-unknown', 'inline-id', 'post-id', 'post-id-unknown', 'wrapped-id', 'alpha-id', 'alpha-id-unknown', 'separator-id', 'separator-post-id', 'separator-id-unknown', 'bounded-space-id', 'bounded-repeat-id', 'bounded-space-unknown', 'control-tab-layout', 'control-cr-receipt', 'control-cr-reference', 'control-tab-reference'].includes(adjustment)) await page.locator('.receipt-product-review-name[data-index="1"]').fill('テスト緑茶');
+        if (mixedTax || ['discount', 'multi-item', 'multi-unassigned'].includes(adjustment)) await page.locator('.receipt-product-review-name[data-index="1"]').fill('歯ブラシ');
+        for (const checkbox of await page.locator('.receipt-product-review-confirm').all()) await checkbox.check();
+      }
       const geometry = await page.locator('#receiptApplyBtn').boundingBox();
       assert(geometry.width >= 44 && geometry.height >= 44);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
@@ -203,12 +220,12 @@ for (const { width, amount, body, mixedTax = false, codePrice = false, adjustmen
         const plan = JSON.parse(await page.locator('#receiptSplitPlan').inputValue());
         assert.equal(plan.total, 1200);
         assert.deepEqual(plan.rows.map(row => [row.name, row.discount, row.gross]), [['テスト緑茶', 100, 900], ['歯ブラシ', 200, 300]]);
-      } else if (['repeat-code', 'printed-id', 'inline-id', 'post-id', 'wrapped-id', 'alpha-id', 'separator-id', 'separator-post-id', 'bounded-space-id', 'bounded-repeat-id'].includes(adjustment)) {
+      } else if (['repeat-code', 'printed-id', 'inline-id', 'post-id', 'wrapped-id', 'alpha-id', 'separator-id', 'separator-post-id', 'bounded-space-id', 'bounded-repeat-id', 'control-tab-layout', 'control-cr-receipt'].includes(adjustment)) {
         const plan = JSON.parse(await page.locator('#receiptSplitPlan').inputValue());
         assert.equal(plan.total, 1700);
         assert.deepEqual(plan.rows.map(row => [row.name, row.discount, row.gross]), [['テスト緑茶', 100, 900], ['テスト緑茶', 200, 800]]);
         assert.equal(plan.rows.some(row => row.receiptLineId), false);
-      } else if (['multi-unassigned', 'repeat-unassigned', 'printed-id-unknown', 'post-id-unknown', 'alpha-id-unknown', 'separator-id-unknown', 'bounded-space-unknown'].includes(adjustment)) {
+      } else if (['multi-unassigned', 'repeat-unassigned', 'printed-id-unknown', 'post-id-unknown', 'alpha-id-unknown', 'separator-id-unknown', 'bounded-space-unknown', 'control-cr-reference', 'control-tab-reference'].includes(adjustment)) {
         assert.equal(await page.locator('#receiptSplitPlan').count(), 0);
       }
       assert.equal(await page.evaluate(() => JSON.stringify(state.transactions)), snapshot.transactions);

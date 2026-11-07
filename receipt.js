@@ -550,13 +550,13 @@ function receiptPrintedIdValue(value,allowAlpha){
   var s=String(value||"");
   if(/^[0-9]{1,6}$/.test(s)&&Number(s)>0)return String(Number(s));
   // IDs are case-sensitive tokens, never money: do not repair O/0 or I/1.
-  if(allowAlpha&&/^[A-Za-z0-9]{2,16}$/.test(s)&&/[A-Za-z]/.test(s)&&/[0-9]/.test(s))return s;
+  if(allowAlpha&&s.length>=2&&s.length<=16&&/^[A-Za-z0-9]+(?:[-_][A-Za-z0-9]+)*$/.test(s)&&/[0-9]/.test(s)&&/[A-Za-z_-]/.test(s))return s;
   return"";
 }
 function receiptPrintedMarker(line){
   if(String(line||"").indexOf("明細")<0)return null;
   var s=String(line||"");s=s.normalize?s.normalize("NFKC"):s;s=s.trim();
-  var re=/(明細番号|明細No\.?|明細ID)(?=\s|[:#A-Za-z0-9(\[【]|$)/ig,m=re.exec(s);if(!m)return null;
+  var re=/(明細番号|明細No\.?|明細ID)(?=\s|[:#A-Za-z0-9_(\[【-]|$)/ig,m=re.exec(s);if(!m)return null;
   var start=m.index,label=m[1],tail=s.slice(re.lastIndex),left=s.slice(0,start),pair={"(":")","[":"]","【":"】"},outer="",value="",end=0,valid=true;
   var open=left.match(/([(\[【])\s*$/);
   if(open){outer=open[1];start=left.length-open[0].length;left=s.slice(0,start)}
@@ -565,12 +565,12 @@ function receiptPrintedMarker(line){
   function invalid(){return{id:"",before:left.trim(),after:""}}
   if(re.exec(s))return invalid();
   var lead=tail.match(/^\s*:?\s*/)[0];tail=tail.slice(lead.length);end=s.length-tail.length;
-  var inner=tail.match(/^([(\[【])\s*([A-Za-z0-9]+)\s*([)\]】])/);
+  var inner=tail.match(/^([(\[【])\s*([A-Za-z0-9_-]+)\s*([)\]】])/);
   if(inner){
     if(outer||pair[inner[1]]!==inner[3])return invalid();
     value=inner[2];end+=inner[0].length;
   }else{
-    var token=tail.match(/^([A-Za-z0-9]+)/);if(!token)return invalid();
+    var token=tail.match(/^([A-Za-z0-9_-]+)/);if(!token)return invalid();
     value=token[1];end+=token[0].length;
     if(outer){
       var close=s.slice(end).match(/^\s*([)\]】])/);if(!close||pair[outer]!==close[1])return invalid();
@@ -578,6 +578,7 @@ function receiptPrintedMarker(line){
     }else if(end<s.length&&!/\s/.test(s.charAt(end)))return invalid();
   }
   var after=s.slice(end).trim();
+  if(/^[-_−‐‑–—ー]/.test(after))valid=false;
   if(/[()\[\]【】]/.test(after.charAt(0)))valid=false;
   return{id:valid?receiptPrintedIdValue(value,/^明細ID$/i.test(label)):"",before:left.trim(),after:after};
 }

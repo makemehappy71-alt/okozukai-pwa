@@ -104,7 +104,9 @@ test('balanced product-name parentheses next to a wrapped ID remain valid', () =
   assert.equal(p.itemRows.every(r => r.name.includes('濃い味')), true);
 });
 
-for (const id of ['ABC', 'A-101', 'A_101', 'A/101', 'ABCDEFGHIJKLMNOP1', '0', '1000001']) test(`unsupported ID ${id} is not shortened or repaired`, () => held(parse(receipt(body(formats.alphaInline, [id, 'A102'])))));
+for (const id of ['A-101', 'A_101']) test(`explicit separator ID ${id} is preserved`, () => assigned(parse(receipt(body(formats.alphaInline, [id, 'A102']))), [id, 'A102']));
+
+for (const id of ['ABC', 'A/101', 'ABCDEFGHIJKLMNOP1', '0', '1000001']) test(`unsupported ID ${id} is not shortened or repaired`, () => held(parse(receipt(body(formats.alphaInline, [id, 'A102'])))));
 
 for (const label of ['明細番号', '明細No.']) test(`${label} does not reinterpret an O-like numeric error as an alphabetic ID`, () => held(parse(receipt(body(id => `緑茶 (${label} ${id})\n${code} 1 ¥1,000`, ['1O1', '102'])))));
 

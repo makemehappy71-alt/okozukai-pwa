@@ -63,7 +63,8 @@ test('merged sources cannot invent the independent full counterpart', () => {
 });
 test('a spaced ID competing with a folded spelling remains ambiguous', () => held(parse(receipt(`${part('A101')}\n${part('A 101')}\n値引 ¥100 (明細ID A\n101\n)\n(明細ID A 101) 値引 ¥200`))));
 for (const id of ['a101', 'A1O1', 'A_101', 'A 101']) test(`the different complete spelling ${id} is not corrected`, () => held(parse(receipt(products().replace('(明細ID A101) 値引', `(明細ID ${id}) 値引`)))));
-for (const ending of ['\n]', '\n))', '\n) 注記', '\n\t)', '\n )', '\n) ', '\n\n)', '\n\t\n)', '\n消費税 ¥0\n)', '\nNOTE\n)', '\n明細ID C103\n)', '\n¥100\n)']) test(`unsupported closing sequence remains manual: ${JSON.stringify(ending)}`, () => held(parse(receipt(products().replace('A101\n)', 'A101' + ending)))));
+for (const ending of ['\n\t)', '\n )', '\n) ']) test(`closing-only padding uses the same independent complete-ID evidence: ${JSON.stringify(ending)}`, () => assigned(parse(receipt(products().replace('A101\n)', 'A101' + ending)))));
+for (const ending of ['\n]', '\n))', '\n) 注記', '\n\n)', '\n\t\n)', '\n消費税 ¥0\n)', '\nNOTE\n)', '\n明細ID C103\n)', '\n¥100\n)']) test(`unsupported closing sequence remains manual: ${JSON.stringify(ending)}`, () => held(parse(receipt(products().replace('A101\n)', 'A101' + ending)))));
 for (const fragment of ['A101 ', 'A\t101', 'A\n101 ', 'A-\n_101', 'A101\n0']) test(`invalid or mismatching fragments are not repaired: ${JSON.stringify(fragment)}`, () => held(parse(receipt(products().replace('A101\n)', fragment + '\n)')))));
 test('a closing bracket on a discount row is outside the closing-only grammar', () => held(parse(receipt(`${part('A101')}\n${part('B102')}\n(明細ID A101\n) 値引 ¥100\n(明細ID B102\n) 値引 ¥200`))));
 test('a seventeenth character is not discarded before a closing-only row', () => held(parse(receipt(products(['A' + '1'.repeat(16), 'B102']).replace('(明細ID A' + '1'.repeat(16) + ') 値引', '(明細ID A' + '1'.repeat(15) + ') 値引')))));
@@ -85,10 +86,10 @@ test('learning cannot replace a missing independent full ID', () => {
 test('closing-only recovery preserves ledger, dictionary and schema', () => {
   const r = runtime();r.evaluate('state.transactions.push({id:"existing",type:"expense",amount:73,date:"2026-10-01",from:"wallet"})');
   const dictionary = JSON.stringify([{ shopKey: 'unrelated', name: '学習商品', priceHints: [73], source: 'learned', confirmedCount: 4 }]);r.storage.set('okozukaiReceiptProductDictionaryV1', dictionary);
-  const before = r.evaluate('JSON.stringify(state)');assigned(parse(receipt(products()), r));held(parse(receipt(products().replace('A101\n)', 'A101\n\t)')), r));
+  const before = r.evaluate('JSON.stringify(state)');assigned(parse(receipt(products()), r));assigned(parse(receipt(products().replace('A101\n)', 'A101\n\t)')), r));
   assert.equal(r.evaluate('JSON.stringify(state)'), before);assert.equal(r.storage.get('okozukaiReceiptProductDictionaryV1'), dictionary);assert.equal(r.writes.length, 0);assert.equal(r.evaluate('SCHEMA_VERSION'), 12);
 });
-for (const [name, body, valid] of [['merchandise', products(), true], ['reference', references(), true], ['TAB close', products().replace('A101\n)', 'A101\n\t)'), false]]) test(`mock OCR: ${name} closing-only source and storage safety`, async () => {
+for (const [name, body, valid] of [['merchandise', products(), true], ['reference', references(), true], ['TAB close', products().replace('A101\n)', 'A101\n\t)'), true]]) test(`mock OCR: ${name} closing-only source and storage safety`, async () => {
   const r = runtime(), a = r.context.receiptInternals, text = receipt(body);let terminated = 0;
   r.context.Tesseract = { async createWorker() { return { async setParameters() {}, async recognize() { return { data: { text, blocks: [] } }; }, async terminate() { terminated++; } }; } };
   const canvas = { width: 100, height: 300 };

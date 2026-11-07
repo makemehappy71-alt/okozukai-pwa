@@ -628,11 +628,12 @@ function receiptRecoverWrappedIds(text,shop){
     var joined=first.replace(/[ ]+$/,""),id=m[3],end=-1;
     // At most 16 nonempty ID fragments, plus one closing-bracket-only row.
     for(var j=i+1;j<Math.min(i+17,limit);j++){
-      var next=lines[j].normalize("NFKC");if(/\t/.test(next)||!next.trim())break;
-      if(/^[)\]】]$/.test(next)){
-        if(pair[m[2]]!==next)break;
-        joined+=next;end=j;break;
+      var next=lines[j].normalize("NFKC"),closeOnly=next.match(/^[ \t]*([)\]】])[ \t]*$/);
+      if(closeOnly){
+        if(pair[m[2]]!==closeOnly[1])break;
+        joined+=closeOnly[1];end=j;break;
       }
+      if(/\t/.test(next)||!next.trim())break;
       if(id.length>=16)break;
       var close=next.match(/^[ ]*([A-Za-z0-9][A-Za-z0-9_-]*)[ ]*([)\]】])(.*)$/);
       if(close){

@@ -68,7 +68,7 @@ test('the seventeenth character is not silently discarded', () => {
   const id = 'A' + '1'.repeat(16), p = parse(receipt(`${part(fold(id))}\n${part('B102')}\n${references(['A' + '1'.repeat(15), 'B102'])}`));held(p);assert.equal(p.wrappedIdRecoveryCount || 0, 0);
 });
 test('an oversized closing fragment is not truncated to the maximum ID length', () => held(parse(receipt(`${part('ABCD\n1234\n5678\n90123')}\n${part('B102')}\n${references(['ABCD123456789012', 'B102'])}`))));
-test('a separate closing bracket is not used to extend the fragment grammar', () => held(parse(receipt(`${part('A\n1\n0\n1\n')}\n${part('B102')}\n${references(['A101', 'B102'])}`))));
+test('a separate closing bracket uses the same independent complete-ID evidence', () => assigned(parse(receipt(`${part('A\n1\n0\n1\n')}\n${part('B102')}\n${references(['A101', 'B102'])}`))));
 test('a missing bracket cannot be reconstructed', () => held(parse(receipt(productBody().replace('0\n1)', '0\n1]')))));
 test('an unbounded four-line token cannot be joined', () => held(parse(receipt(`明細ID A\n1\n0\n1\n緑茶\n${code} 1 ¥1,000\n${part('B102')}\n${references(['A101', 'B102'])}`))));
 test('a complete footer token after checkout is not a witness', () => {

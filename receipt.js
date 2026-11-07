@@ -626,9 +626,14 @@ function receiptRecoverWrappedIds(text,shop){
     if(!m)continue;
     if(!/[-_]$/.test(m[3])&&/[ ]$/.test(first))continue;
     var joined=first.replace(/[ ]+$/,""),id=m[3],end=-1;
-    // Each continuation adds at least one character to a maximum 16-char ID.
-    for(var j=i+1;j<Math.min(i+16,limit)&&id.length<16;j++){
+    // At most 16 nonempty ID fragments, plus one closing-bracket-only row.
+    for(var j=i+1;j<Math.min(i+17,limit);j++){
       var next=lines[j].normalize("NFKC");if(/\t/.test(next)||!next.trim())break;
+      if(/^[)\]】]$/.test(next)){
+        if(pair[m[2]]!==next)break;
+        joined+=next;end=j;break;
+      }
+      if(id.length>=16)break;
       var close=next.match(/^[ ]*([A-Za-z0-9][A-Za-z0-9_-]*)[ ]*([)\]】])(.*)$/);
       if(close){
         if(pair[m[2]]!==close[2])break;

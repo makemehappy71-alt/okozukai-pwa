@@ -72,7 +72,9 @@ test('merged text cannot fabricate proof missing from actual recognition records
   held(p);assert.equal(p.wrappedIdRecoveryCount || 0, 0);
 });
 
-for (const fragment of ['A \n101', 'A　\n101', 'A\n10 \n1', 'A\t\n101', 'A\n\t101', 'A\n\n101', 'A\n1\n0\n1', 'A 1\n01', 'A\nNOTE\n101']) test(`ambiguous continuation is not repaired: ${JSON.stringify(fragment)}`, () => held(parse(receipt(`${part(fragment)}\n${part('B102')}\n${refs}`))));
+test('four fragments can use their unique complete printed counterpart', () => assigned(parse(receipt(`${part('A\n1\n0\n1')}\n${part('B102')}\n${refs}`))));
+
+for (const fragment of ['A \n101', 'A　\n101', 'A\n10 \n1', 'A\t\n101', 'A\n\t101', 'A\n\n101', 'A 1\n01', 'A\nNOTE\n101']) test(`ambiguous continuation is not repaired: ${JSON.stringify(fragment)}`, () => held(parse(receipt(`${part(fragment)}\n${part('B102')}\n${refs}`))));
 test('numeric leading zeros are not guessed away during restoration', () => held(parse(receipt(`${part('00\n0101')}\n${part('B102')}\n(明細ID 101) 値引 ¥100\n(明細ID B102) 値引 ¥200`))));
 test('a broken bracket cannot delimit a folded ID', () => held(parse(receipt(foldedProducts.replace('101)', '101]')))));
 test('an unbounded token cannot be joined from neighbouring lines', () => held(parse(receipt(`明細ID A\n101\n緑茶\n${code} 1 ¥1,000\n${part('B102')}\n${refs}`))));

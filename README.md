@@ -27,6 +27,7 @@ V3.71.19を基準にした調査とローカル改善です。公開版の更新
 - [第20段階：閉じ括弧だけが別行の明細IDの調査と修正](docs/閉じ括弧だけが別行の明細IDの調査と修正.md)
 - [第21段階：閉じ括弧行の空白とタブを含む明細IDの調査と修正](docs/閉じ括弧行の空白とタブを含む明細IDの調査と修正.md)
 - [第22段階：閉じ括弧と値引額が同じ行の明細IDの調査と修正](docs/閉じ括弧と値引額が同じ行の明細IDの調査と修正.md)
+- [第23段階：閉じ括弧と値引額の間の注記を含む明細IDの調査と修正](docs/閉じ括弧と値引額の間の注記を含む明細IDの調査と修正.md)
 - 既存テスト: `node tests/run.cjs`
 - 追加回帰: `node --test tests/regression.test.cjs`
 - 改善前後の比較: `node tests/compare.cjs`
@@ -52,6 +53,7 @@ V3.71.19を基準にした調査とローカル改善です。公開版の更新
 - 閉じ括弧だけが別行のIDの回帰: `node --test tests/separate-id-close.test.cjs`
 - 閉じ括弧行の空白・タブ付きIDの回帰: `node --test tests/padded-id-close.test.cjs`
 - 閉じ括弧と値引額が同じ行のIDの回帰: `node --test tests/id-close-discount.test.cjs`
+- 閉じ括弧と値引額の間の注記の回帰: `node --test tests/id-close-note.test.cjs`
 - モバイル表示の操作テスト: `node --test tests/mobile.test.cjs`（Playwright・Chromium系ブラウザが必要）
 
 schemaVersion 12と保存形式を維持しています。Android実機のOCR速度・認識精度測定は次段階です。

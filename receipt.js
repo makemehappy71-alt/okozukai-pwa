@@ -590,15 +590,22 @@ function receiptPrintedMarker(line){
   var after=s.slice(end).trim();
   if(/^[-_−‐‑–—ー]/.test(after))valid=false;
   if(!bounded&&/^[A-Za-z0-9]/.test(after))valid=false;
-  if(/[()\[\]【】]/.test(after.charAt(0)))valid=false;
+  if(/[()\[\]【】]/.test(after.charAt(0))&&(!bounded||receiptDiscountScopeNote(after)===after))valid=false;
   return{id:valid?receiptPrintedIdValue(value,/^明細ID$/i.test(label),bounded):"",before:left.trim(),after:after};
+}
+function receiptDiscountScopeNote(text){
+  var s=String(text||""),m=s.match(/^[ \t]*([(\[【])[ \t]*(商品|単品)[ \t]*([)\]】])[ \t]*((?:(?:値引|割引)(?:額)?|値下(?:げ)?額)[ \t]*:?[ \t]*¥?[ \t]*[-−ー]?[ \t]*(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]{1,7})[ \t]*(?:円)?[ \t]*)$/);
+  if(!m||{"(":")","[":"]","【":"】"}[m[1]]!==m[3])return s;
+  // Only explicit item scope maps to an existing label; never erase free text.
+  var rest=m[2]+m[4];return discountAmountFromLine(rest)>0?rest:s;
 }
 function receiptPrintedLineInfo(line){
   var marker=receiptPrintedMarker(line);if(!marker)return null;
   var discount=/^(?:商品|単品)?(?:値引|割引|値下(?:げ)?額)/;
   if(marker.before){return !marker.after&&discount.test(marker.before)?{id:marker.id,rest:marker.before}:null}
   if(!marker.after)return{id:marker.id,rest:""};
-  return discount.test(marker.after)?{id:marker.id,rest:marker.after}:{id:"",rest:""};
+  var after=receiptDiscountScopeNote(marker.after);
+  return discount.test(after)?{id:marker.id,rest:after}:{id:"",rest:""};
 }
 function receiptPrintedProductInfo(line){
   var marker=receiptPrintedMarker(line);if(!marker)return null;
@@ -633,6 +640,8 @@ function receiptRecoverWrappedIds(text,shop){
         if(pair[m[2]]!==closeOnly[1])break;
         joined+=closeOnly[1];end=j;break;
       }
+      var noteClose=next.match(/^([ \t]*[)\]】])([ \t]*[(\[【].*)$/);
+      if(noteClose)next=noteClose[1]+receiptDiscountScopeNote(noteClose[2]);
       var closeDiscount=next.match(/^[ \t]*([)\]】])([ \t]*(?:商品|単品)?(?:(?:値引|割引)(?:額)?|値下(?:げ)?額)[ \t]*:?[ \t]*¥?[ \t]*[-−ー]?[ \t]*(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]{1,7})[ \t]*(?:円)?[ \t]*)$/);
       if(closeDiscount){
         var withDiscount=joined+closeDiscount[1]+closeDiscount[2],discountRef=receiptPrintedLineInfo(withDiscount);

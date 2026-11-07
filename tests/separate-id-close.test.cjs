@@ -66,7 +66,7 @@ for (const id of ['a101', 'A1O1', 'A_101', 'A 101']) test(`the different complet
 for (const ending of ['\n\t)', '\n )', '\n) ']) test(`closing-only padding uses the same independent complete-ID evidence: ${JSON.stringify(ending)}`, () => assigned(parse(receipt(products().replace('A101\n)', 'A101' + ending)))));
 for (const ending of ['\n]', '\n))', '\n) 注記', '\n\n)', '\n\t\n)', '\n消費税 ¥0\n)', '\nNOTE\n)', '\n明細ID C103\n)', '\n¥100\n)']) test(`unsupported closing sequence remains manual: ${JSON.stringify(ending)}`, () => held(parse(receipt(products().replace('A101\n)', 'A101' + ending)))));
 for (const fragment of ['A101 ', 'A\t101', 'A\n101 ', 'A-\n_101', 'A101\n0']) test(`invalid or mismatching fragments are not repaired: ${JSON.stringify(fragment)}`, () => held(parse(receipt(products().replace('A101\n)', fragment + '\n)')))));
-test('a closing bracket on a discount row is outside the closing-only grammar', () => held(parse(receipt(`${part('A101')}\n${part('B102')}\n(明細ID A101\n) 値引 ¥100\n(明細ID B102\n) 値引 ¥200`))));
+test('a closing bracket with an explicit deduction uses exact complete product IDs', () => assigned(parse(receipt(`${part('A101')}\n${part('B102')}\n(明細ID A101\n) 値引 ¥100\n(明細ID B102\n) 値引 ¥200`))));
 test('a seventeenth character is not discarded before a closing-only row', () => held(parse(receipt(products(['A' + '1'.repeat(16), 'B102']).replace('(明細ID A' + '1'.repeat(16) + ') 値引', '(明細ID A' + '1'.repeat(15) + ') 値引')))));
 test('a seventeenth fragment is not discarded before the closing-only row', () => {
   const id = 'A' + '1'.repeat(16), body = products([id, 'B102'], value => value.split('').join('\n')).replace(`(明細ID ${id}) 値引`, `(明細ID ${id.slice(0, 16)}) 値引`);held(parse(receipt(body)));

@@ -626,12 +626,18 @@ function receiptRecoverWrappedIds(text,shop){
     if(!m)continue;
     if(!/[-_]$/.test(m[3])&&/[ ]$/.test(first))continue;
     var joined=first.replace(/[ ]+$/,""),id=m[3],end=-1;
-    // At most 16 nonempty ID fragments, plus one closing-bracket-only row.
+    // At most 16 nonempty ID fragments, plus one closing row.
     for(var j=i+1;j<Math.min(i+17,limit);j++){
       var next=lines[j].normalize("NFKC"),closeOnly=next.match(/^[ \t]*([)\]】])[ \t]*$/);
       if(closeOnly){
         if(pair[m[2]]!==closeOnly[1])break;
         joined+=closeOnly[1];end=j;break;
+      }
+      var closeDiscount=next.match(/^[ \t]*([)\]】])([ \t]*(?:商品|単品)?(?:(?:値引|割引)(?:額)?|値下(?:げ)?額)[ \t]*:?[ \t]*¥?[ \t]*[-−ー]?[ \t]*(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]{1,7})[ \t]*(?:円)?[ \t]*)$/);
+      if(closeDiscount){
+        var withDiscount=joined+closeDiscount[1]+closeDiscount[2],discountRef=receiptPrintedLineInfo(withDiscount);
+        if(pair[m[2]]!==closeDiscount[1]||!discountRef||discountRef.id!==id||!discountRef.rest||!discountAmountFromLine(discountRef.rest))break;
+        joined=withDiscount;end=j;break;
       }
       if(/\t/.test(next)||!next.trim())break;
       if(id.length>=16)break;

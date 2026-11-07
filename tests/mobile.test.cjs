@@ -54,11 +54,14 @@ const mobileCases = [
   { width: 412, amount: 1700, adjustment: 'separate-close-id-ambiguous', lineIds: ['A101', 'A 101'], body: 'テスト"緑茶 (明細ID A101)\n2200083271771 1 ¥1,000\nテスト"緑茶 (明細ID A 101)\n2200083271771 1 ¥1,000\n値引 ¥100 (明細ID A\n101\n)\n(明細ID A 101) 値引 ¥200\n小計 2点 ¥1,700\n合計 ¥1,700\n楽天ペイ ¥1,700' },
   { width: 412, amount: 1700, adjustment: 'padded-close-product-id', lineIds: ['A101', 'B102'], originalIdFold: 'A101\n\t ) \t', body: 'テスト"緑茶 (明細ID A101\n\t ) \t\n2200083271771 1 ¥1,000\nテスト"緑茶 (明細ID B102\n\t ) \t\n2200083271771 1 ¥1,000\n(明細ID A101) 値引 ¥100\n(明細ID B102) 値引 ¥200\n小計 2点 ¥1,700\n合計 ¥1,700\n楽天ペイ ¥1,700' },
   { width: 412, amount: 1700, adjustment: 'padded-close-reference-id', lineIds: ['A101', 'B102'], originalIdFold: 'A\n101\n\t ) \t', body: 'テスト"緑茶 (明細ID A101)\n2200083271771 1 ¥1,000\nテスト"緑茶 (明細ID B102)\n2200083271771 1 ¥1,000\n値引 ¥100 (明細ID A\n101\n\t ) \t\n値引 ¥200 (明細ID B\n102\n\t ) \t\n小計 2点 ¥1,700\n合計 ¥1,700\n楽天ペイ ¥1,700' },
-  { width: 412, amount: 1700, adjustment: 'padded-close-id-ambiguous', lineIds: ['A101', 'A 101'], body: 'テスト"緑茶 (明細ID A101)\n2200083271771 1 ¥1,000\nテスト"緑茶 (明細ID A 101)\n2200083271771 1 ¥1,000\n値引 ¥100 (明細ID A\n101\n\t ) \t\n(明細ID A 101) 値引 ¥200\n小計 2点 ¥1,700\n合計 ¥1,700\n楽天ペイ ¥1,700' }
+  { width: 412, amount: 1700, adjustment: 'padded-close-id-ambiguous', lineIds: ['A101', 'A 101'], body: 'テスト"緑茶 (明細ID A101)\n2200083271771 1 ¥1,000\nテスト"緑茶 (明細ID A 101)\n2200083271771 1 ¥1,000\n値引 ¥100 (明細ID A\n101\n\t ) \t\n(明細ID A 101) 値引 ¥200\n小計 2点 ¥1,700\n合計 ¥1,700\n楽天ペイ ¥1,700' },
+  { width: 412, amount: 1700, adjustment: 'discount-close-reference-id', lineIds: ['A101', 'B102'], originalIdFold: 'A101\n) 値引 ¥100', body: 'テスト"緑茶 (明細ID A101)\n2200083271771 1 ¥1,000\nテスト"緑茶 (明細ID B102)\n2200083271771 1 ¥1,000\n(明細ID A101\n) 値引 ¥100\n(明細ID B102\n) 値引 ¥200\n小計 2点 ¥1,700\n合計 ¥1,700\n楽天ペイ ¥1,700' },
+  { width: 412, amount: 1700, adjustment: 'discount-close-padded-id', lineIds: ['A101', 'B102'], originalIdFold: 'A\n101\n\t)\t値引\t¥100\t', body: 'テスト"緑茶 (明細ID A101)\n2200083271771 1 ¥1,000\nテスト"緑茶 (明細ID B102)\n2200083271771 1 ¥1,000\n(明細ID A\n101\n\t)\t値引\t¥100\t\n(明細ID B\n102\n\t)\t値引\t¥200\t\n小計 2点 ¥1,700\n合計 ¥1,700\n楽天ペイ ¥1,700' },
+  { width: 412, amount: 1700, adjustment: 'discount-close-id-ambiguous', lineIds: ['A101', 'A 101'], body: 'テスト"緑茶 (明細ID A101)\n2200083271771 1 ¥1,000\nテスト"緑茶 (明細ID A 101)\n2200083271771 1 ¥1,000\n(明細ID A\n101\n) 値引 ¥100\n(明細ID A 101) 値引 ¥200\n小計 2点 ¥1,700\n合計 ¥1,700\n楽天ペイ ¥1,700' }
 ];
 for (const { width, amount, body, mixedTax = false, codePrice = false, adjustment, lineIds, originalIdFold } of mobileCases) {
   const caseName = `${width}${adjustment ? '-' + adjustment : mixedTax ? '-mixed-tax' : codePrice ? '-product-code' : ''}`;
-  const separateCloseId = /^(?:separate|padded)-close-/.test(adjustment || '');
+  const separateCloseId = /^(?:separate|padded|discount)-close-/.test(adjustment || '');
   const separateCloseResolved = separateCloseId && !adjustment.endsWith('-ambiguous');
   const unresolvedSplitReference = (separateCloseId && !separateCloseResolved) || ['control-tab-reference', 'recovered-id-ambiguous', 'unmarked-id-ambiguous', 'longfold-id-ambiguous'].includes(adjustment);
   test(`mobile Chromium ${caseName}px: image crop, OCR review, apply, data safety`, { timeout: 60000 }, async () => {

@@ -29,6 +29,7 @@ V3.71.19を基準にした調査とローカル改善です。公開版の更新
 - [第22段階：閉じ括弧と値引額が同じ行の明細IDの調査と修正](docs/閉じ括弧と値引額が同じ行の明細IDの調査と修正.md)
 - [第23段階：閉じ括弧と値引額の間の注記を含む明細IDの調査と修正](docs/閉じ括弧と値引額の間の注記を含む明細IDの調査と修正.md)
 - [第24段階：括弧のない商品と単品の注記を含む明細IDの調査と修正](docs/括弧のない商品と単品の注記を含む明細IDの調査と修正.md)
+- [第25段階：商品と単品の注記と値引額が別行の明細IDの調査と修正](docs/商品と単品の注記と値引額が別行の明細IDの調査と修正.md)
 - 既存テスト: `node tests/run.cjs`
 - 追加回帰: `node --test tests/regression.test.cjs`
 - 改善前後の比較: `node tests/compare.cjs`
@@ -56,6 +57,7 @@ V3.71.19を基準にした調査とローカル改善です。公開版の更新
 - 閉じ括弧と値引額が同じ行のIDの回帰: `node --test tests/id-close-discount.test.cjs`
 - 閉じ括弧と値引額の間の注記の回帰: `node --test tests/id-close-note.test.cjs`
 - 括弧のない商品・単品の注記の回帰: `node --test tests/bare-id-scope.test.cjs`
+- 商品・単品の注記と値引額が別行の回帰: `node --test tests/split-id-scope.test.cjs`
 - モバイル表示の操作テスト: `node --test tests/mobile.test.cjs`（Playwright・Chromium系ブラウザが必要）
 
 schemaVersion 12と保存形式を維持しています。Android実機のOCR速度・認識精度測定は次段階です。

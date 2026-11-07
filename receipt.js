@@ -600,6 +600,22 @@ function receiptDiscountScopeNote(text){
   // Only explicit item scope maps to an existing label; never erase free text.
   var rest=(m[2]||m[4])+m[5];return discountAmountFromLine(rest)>0?rest:s;
 }
+function receiptDiscountScopeWord(text){
+  var m=String(text||"").match(/^[ \t]*(?:([(\[【])[ \t]*(商品|単品)[ \t]*([)\]】])|(商品|単品))[ \t]*$/);
+  if(!m||(m[1]&&{"(":")","[":"]","【":"】"}[m[1]]!==m[3]))return"";
+  return m[2]||m[4];
+}
+function receiptScopeContinuation(lines,index,limit,note){
+  // Read at most one scope row and one labelled amount row; never skip rows.
+  var scope=receiptDiscountScopeWord(note),amountIndex=index+1;
+  if(!scope){
+    if(!/^[ \t]*$/.test(note)||index+2>=limit)return null;
+    scope=receiptDiscountScopeWord(lines[index+1].normalize("NFKC"));amountIndex=index+2;
+  }
+  if(!scope||amountIndex>=limit)return null;
+  var text=scope+" "+lines[amountIndex].normalize("NFKC"),rest=receiptDiscountScopeNote(text);
+  return rest!==text?{text:rest,end:amountIndex}:null;
+}
 function receiptPrintedLineInfo(line){
   var marker=receiptPrintedMarker(line);if(!marker)return null;
   var discount=/^(?:商品|単品)?(?:値引|割引|値下(?:げ)?額)/;
@@ -615,7 +631,9 @@ function receiptPrintedProductInfo(line){
 }
 function receiptRecoverWrappedIds(text,shop){
   var original=normalize(text),result={text:original,ids:[]};
-  if(!/明細[IＩ][DＤ]/i.test(original)||!/(?:[(\[【]\s*明細ID|明細ID\s*:?\s*[(\[【])[^\n)\]】]*[A-Za-z0-9_-][ ]*\n/i.test(original.normalize("NFKC")))return result;
+  if(!/明細[IＩ][DＤ]/i.test(original))return result;
+  var hint=original.normalize("NFKC");
+  if(!/(?:[(\[【]\s*明細ID|明細ID\s*:?\s*[(\[【])[^\n)\]】]*[A-Za-z0-9_-][ ]*\n/i.test(hint)&&!/(?:商品|単品)[ \t]*[)\]】]?[ \t]*\n/.test(hint))return result;
   var lines=original.split("\n"),limit=lines.length,pair={"(":")","[":"]","【":"】"};
   for(var li=0;li<lines.length;li++){
     if(receiptBrokenTotalLabel(lines[li])||/(?:^|\s)(?:小\s*計|合\s*計|総\s*合\s*計)(?:\s|[:：]|¥|￥|\d)|消費税|お支払|楽天\s*(?:ペイ|ペー|ベイ)/i.test(lines[li])){limit=li;break}
@@ -628,39 +646,59 @@ function receiptRecoverWrappedIds(text,shop){
   });
   var proposals=[];
   for(var i=0;i<limit;i++){
-    var first=lines[i].normalize("NFKC"),m=first.match(/^(.*?)([(\[【])\s*明細ID\s*:?\s*([A-Za-z0-9][A-Za-z0-9_-]*)[ ]*$/i);
-    if(!m)m=first.match(/^(.*?)明細ID\s*:?\s*([(\[【])\s*([A-Za-z0-9][A-Za-z0-9_-]*)[ ]*$/i);
-    if(!m)continue;
-    if(!/[-_]$/.test(m[3])&&/[ ]$/.test(first))continue;
-    var joined=first.replace(/[ ]+$/,""),id=m[3],end=-1;
-    // At most 16 nonempty ID fragments, plus one closing row.
-    for(var j=i+1;j<Math.min(i+17,limit);j++){
-      var next=lines[j].normalize("NFKC"),closeOnly=next.match(/^[ \t]*([)\]】])[ \t]*$/);
-      if(closeOnly){
-        if(pair[m[2]]!==closeOnly[1])break;
-        joined+=closeOnly[1];end=j;break;
+    var first=lines[i].normalize("NFKC"),joined="",id="",end=-1;
+    var scopeTail=first.match(/^(.*[)\]】])([ \t]*(?:(?:商品|単品)[ \t]*|[(\[【][ \t]*(?:商品|単品)[ \t]*[)\]】][ \t]*))$/);
+    var base=scopeTail?scopeTail[1]:first,complete=/[)\]】][ \t]*$/.test(base)?receiptPrintedLineInfo(base):null;
+    var continuation=complete&&complete.id&&!complete.rest?receiptScopeContinuation(lines,i,limit,scopeTail?scopeTail[2]:""):null;
+    if(continuation){joined=base+" "+continuation.text;id=complete.id;end=continuation.end}
+    if(end<0){
+      var m=first.match(/^(.*?)([(\[【])\s*明細ID\s*:?\s*([A-Za-z0-9][A-Za-z0-9_-]*)[ ]*$/i);
+      if(!m)m=first.match(/^(.*?)明細ID\s*:?\s*([(\[【])\s*([A-Za-z0-9][A-Za-z0-9_-]*)[ ]*$/i);
+      if(!m)continue;
+      if(!/[-_]$/.test(m[3])&&/[ ]$/.test(first))continue;
+      joined=first.replace(/[ ]+$/,""),id=m[3];
+      // At most 16 ID fragments and a closing row, then up to two scope/amount rows.
+      for(var j=i+1;j<Math.min(i+17,limit);j++){
+        var next=lines[j].normalize("NFKC"),scopeClose=next.match(/^[ \t]*([)\]】])(.*)$/);
+        var splitScope=scopeClose&&pair[m[2]]===scopeClose[1]?receiptScopeContinuation(lines,j,limit,scopeClose[2]):null;
+        if(splitScope){
+          var splitText=joined+scopeClose[1]+" "+splitScope.text,splitRef=receiptPrintedLineInfo(splitText);
+          if(!splitRef||splitRef.id!==id||!splitRef.rest)break;
+          joined=splitText;end=splitScope.end;break;
+        }
+        var closeOnly=next.match(/^[ \t]*([)\]】])[ \t]*$/);
+        if(closeOnly){
+          if(pair[m[2]]!==closeOnly[1])break;
+          joined+=closeOnly[1];end=j;break;
+        }
+        var noteClose=next.match(/^([ \t]*[)\]】])(.*)$/);
+        if(noteClose)next=noteClose[1]+receiptDiscountScopeNote(noteClose[2]);
+        var closeDiscount=next.match(/^[ \t]*([)\]】])([ \t]*(?:商品|単品)?(?:(?:値引|割引)(?:額)?|値下(?:げ)?額)[ \t]*:?[ \t]*¥?[ \t]*[-−ー]?[ \t]*(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]{1,7})[ \t]*(?:円)?[ \t]*)$/);
+        if(closeDiscount){
+          var withDiscount=joined+closeDiscount[1]+closeDiscount[2],discountRef=receiptPrintedLineInfo(withDiscount);
+          if(pair[m[2]]!==closeDiscount[1]||!discountRef||discountRef.id!==id||!discountRef.rest||!discountAmountFromLine(discountRef.rest))break;
+          joined=withDiscount;end=j;break;
+        }
+        if(/\t/.test(next)||!next.trim())break;
+        if(id.length>=16)break;
+        var close=next.match(/^[ ]*([A-Za-z0-9][A-Za-z0-9_-]*)[ ]*([)\]】])(.*)$/);
+        if(close){
+          if(pair[m[2]]!==close[2])break;
+          if(id.length+close[1].length>16)break;
+          var finalScope=receiptScopeContinuation(lines,j,limit,close[3]);
+          if(finalScope){
+            var finalText=joined+close[1]+close[2]+" "+finalScope.text,finalRef=receiptPrintedLineInfo(finalText);
+            if(!finalRef||finalRef.id!==id+close[1]||!finalRef.rest)break;
+            id+=close[1];joined=finalText;end=finalScope.end;break;
+          }
+          id+=close[1];joined+=close[1]+close[2]+close[3];end=j;break;
+        }
+        var middle=next.match(/^[ ]*([A-Za-z0-9][A-Za-z0-9_-]*)[ ]*$/);
+        if(!middle)break;
+        if(!/[-_]$/.test(middle[1])&&/[ ]$/.test(next))break;
+        if(id.length+middle[1].length>16)break;
+        id+=middle[1];joined+=middle[1];
       }
-      var noteClose=next.match(/^([ \t]*[)\]】])(.*)$/);
-      if(noteClose)next=noteClose[1]+receiptDiscountScopeNote(noteClose[2]);
-      var closeDiscount=next.match(/^[ \t]*([)\]】])([ \t]*(?:商品|単品)?(?:(?:値引|割引)(?:額)?|値下(?:げ)?額)[ \t]*:?[ \t]*¥?[ \t]*[-−ー]?[ \t]*(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]{1,7})[ \t]*(?:円)?[ \t]*)$/);
-      if(closeDiscount){
-        var withDiscount=joined+closeDiscount[1]+closeDiscount[2],discountRef=receiptPrintedLineInfo(withDiscount);
-        if(pair[m[2]]!==closeDiscount[1]||!discountRef||discountRef.id!==id||!discountRef.rest||!discountAmountFromLine(discountRef.rest))break;
-        joined=withDiscount;end=j;break;
-      }
-      if(/\t/.test(next)||!next.trim())break;
-      if(id.length>=16)break;
-      var close=next.match(/^[ ]*([A-Za-z0-9][A-Za-z0-9_-]*)[ ]*([)\]】])(.*)$/);
-      if(close){
-        if(pair[m[2]]!==close[2])break;
-        if(id.length+close[1].length>16)break;
-        id+=close[1];joined+=close[1]+close[2]+close[3];end=j;break;
-      }
-      var middle=next.match(/^[ ]*([A-Za-z0-9][A-Za-z0-9_-]*)[ ]*$/);
-      if(!middle)break;
-      if(!/[-_]$/.test(middle[1])&&/[ ]$/.test(next))break;
-      if(id.length+middle[1].length>16)break;
-      id+=middle[1];joined+=middle[1];
     }
     if(end<0||id.length>16||!receiptPrintedIdValue(id,true,true))continue;
     var marker=receiptPrintedMarker(joined);if(!marker||marker.id!==id)continue;
@@ -3573,7 +3611,7 @@ function renderResult(p,errorText){
   var balanceHtml='<div class="receipt-balance-review" role="status"><strong>'+e(receiptBalanceDisplay(p))+'</strong>'+(balance.hasRows?'<div class="receipt-balance-note">商品名：'+e(balance.itemStatus)+(balance.provisional?' / 商品単価は仮置き':'')+'</div>':'')+'</div>';
   var confidenceWarn=(!Number(p.amount||0)?'<div class="warning">合計金額を特定できませんでした。金額一致とは扱わず、手入力が必要です。</div>':"")+(p.amountConfidence==="low"?'<div class="warning">金額候補の信頼度が低いため、合計金額を確認してください。</div>':"");
   if(p.discountReviewRequired)confidenceWarn+='<div class="warning receipt-discount-warning">'+(p.discountStatus==="total_only"?'値引合計は会計と一致していますが、商品ごとの割当を確認できません。':'複数の値引を会計と照合できません。')+'商品別の自動分割は行いません。原本の値引内容を確認してください。</div>';
-  if(p.wrappedIdRecoveryCount&&p.discountAttributionConfirmed)confidenceWarn+='<div class="small receipt-wrapped-id-note">折り返しIDは、同じ認識元の完全な印字と照合しました。原本の値引先も確認してください。</div>';
+  if(p.wrappedIdRecoveryCount&&p.discountAttributionConfirmed)confidenceWarn+='<div class="small receipt-wrapped-id-note">複数行の明細参照は、同じ認識元の完全な印字と照合しました。原本の値引先も確認してください。</div>';
   if(!p.date)confidenceWarn+='<div class="warning">レシートの日付を読み取れませんでした。登録前に必ず購入日を入力してください。</div>';
   if(p.reviewTarget&&!p.itemSetComplete)confidenceWarn+='<div class="warning">小計が判読できません。'+(balance.numberMatches?'商品候補と支払額は数値上のみ一致しますが、商品単価・会計構造の独立照合は未完了です。':'支払額 '+e(yen(p.reviewTarget))+' は参考上限です。商品明細の確認が必要です。')+'</div>';
   if(!p.itemSetComplete&&p.merchandiseTarget){

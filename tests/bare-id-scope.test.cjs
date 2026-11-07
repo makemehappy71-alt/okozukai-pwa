@@ -56,7 +56,7 @@ test('complete bare references preserve multiple deductions for one unique item'
 test('complete bare references corroborate independently folded merchandise', () => assigned(parse(receipt(`${part('A101\n')}\n${part('B102\n')}\n${ref('A101', 100, '単品 ', false)}\n${ref('B102', 200, '商品 ', false)}`))));
 
 for (const folded of [true, false]) for (const note of ['商品対象外 ', '単品取消 ', '商品 次回用 ', '単品 注記 ', '商品2点 ', '商品 ¥50 ', '単品 10% ', '商品 明細ID C103 ', '商品 単品 ', '商品 (単品) ', '会員 ', '注記 ']) test(`${folded ? 'wrapped' : 'complete'} uncertain bare scope stays manual: ${note}`, () => held(parse(receipt(body({ note, folded })))));
-for (const row of [') 商品 ¥100', ') 単品 値引後価格 ¥100', ') 商品 値引合計 ¥100', ') 商品 値引 10%', ') 単品 値引 ¥0', ') 単品 値引 ¥1000001', ') 商品 値引 ¥1,00', ') 商品 値引 ¥100 注記', ') 商品 値引 ¥100 ¥200', ') 商品 値引 ¥100 (明細ID C103)', ') 単品\n値引 ¥100', ') 単\n品 値引 ¥100', '\n) 単品 値引 ¥100', '\t\n) 単品 値引 ¥100', '] 単品 値引 ¥100', ') 単品\v値引 ¥100', ') 単品\u200b値引 ¥100']) test(`bare scope cannot repair an uncertain row: ${JSON.stringify(row)}`, () => held(parse(receipt(body().replace(') 単品 値引 ¥100', row)))));
+for (const row of [') 商品 ¥100', ') 単品 値引後価格 ¥100', ') 商品 値引合計 ¥100', ') 商品 値引 10%', ') 単品 値引 ¥0', ') 単品 値引 ¥1000001', ') 商品 値引 ¥1,00', ') 商品 値引 ¥100 注記', ') 商品 値引 ¥100 ¥200', ') 商品 値引 ¥100 (明細ID C103)', ') 単\n品 値引 ¥100', '\n) 単品 値引 ¥100', '\t\n) 単品 値引 ¥100', '] 単品 値引 ¥100', ') 単品\v値引 ¥100', ') 単品\u200b値引 ¥100']) test(`bare scope cannot repair an uncertain row: ${JSON.stringify(row)}`, () => held(parse(receipt(body().replace(') 単品 値引 ¥100', row)))));
 for (const fragment of ['A\t101', 'A\n\t101', 'A101 ', 'A\n101 ', 'A-\n_101']) test(`bare scope cannot repair ID fragments: ${JSON.stringify(fragment)}`, () => held(parse(receipt(body().replace('明細ID A101\n', '明細ID ' + fragment + '\n')))));
 test('unbounded ID labels do not gain the new spaced-scope exception', () => held(parse(receipt(body({ folded: false }).replace(/\(明細ID (A101|B102)\) 単品 値引/g, '明細ID $1 単品 値引')))));
 test('folded references cannot bootstrap folded merchandise', () => held(parse(receipt(`${part('A101\n')}\n${part('B102\n')}\n${ref('A101', 100)}\n${ref('B102', 200)}`))));
@@ -92,3 +92,5 @@ for (const [name, items, valid, folded] of [['wrapped bare scope', body(), true,
   const ocr = await a.runOCR({ gray: canvas, slices: [{ role: 'top', canvas }, { role: 'middle', canvas }, { role: 'bottom', canvas }], shopSlices: [], itemSlices: Array.from({ length: 7 }, () => ({ canvas })), amountSlices: [], paymentSlices: [] });
   const p = parse(ocr, r);if (valid) assigned(p, { folded });else held(p);assert.equal(terminated, 1);assert.equal(r.writes.length, 0);
 });
+
+test('a bare scope followed by an explicit deduction uses the full ID witness', () => assigned(parse(receipt(body().replace(') 単品 値引 ¥100', ') 単品\n値引 ¥100')))));

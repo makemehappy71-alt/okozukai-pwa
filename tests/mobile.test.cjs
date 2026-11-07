@@ -65,11 +65,15 @@ const mobileCases = [
   { width: 412, amount: 1700, adjustment: 'bare-close-reference-id', lineIds: ['A101', 'B102'], originalIdFold: 'A101\n) 単品\t値引 ¥100', body: 'テスト"緑茶 (明細ID A101)\n2200083271771 1 ¥1,000\nテスト"緑茶 (明細ID B102)\n2200083271771 1 ¥1,000\n(明細ID A101\n) 単品\t値引 ¥100\n(明細ID B102\n) 商品 値引 ¥200\n小計 2点 ¥1,700\n合計 ¥1,700\n楽天ペイ ¥1,700' },
   { width: 412, amount: 1700, adjustment: 'bare-close-complete-id', lineIds: ['A101', 'B102'], unwrappedId: true, originalIdFold: '(明細ID A101) 単品 値引 ¥100', body: 'テスト"緑茶 (明細ID A101)\n2200083271771 1 ¥1,000\nテスト"緑茶 (明細ID B102)\n2200083271771 1 ¥1,000\n(明細ID A101) 単品 値引 ¥100\n(明細ID B102) 商品 値引 ¥200\n小計 2点 ¥1,700\n合計 ¥1,700\n楽天ペイ ¥1,700' },
   { width: 412, amount: 1700, adjustment: 'bare-close-id-ambiguous', lineIds: ['A101', 'A 101'], body: 'テスト"緑茶 (明細ID A101)\n2200083271771 1 ¥1,000\nテスト"緑茶 (明細ID A 101)\n2200083271771 1 ¥1,000\n(明細ID A\n101\n) 単品 値引 ¥100\n(明細ID A 101) 値引 ¥200\n小計 2点 ¥1,700\n合計 ¥1,700\n楽天ペイ ¥1,700' },
-  { width: 412, amount: 1700, adjustment: 'bare-close-unknown', lineIds: ['A101', 'B102'], body: 'テスト"緑茶 (明細ID A101)\n2200083271771 1 ¥1,000\nテスト"緑茶 (明細ID B102)\n2200083271771 1 ¥1,000\n(明細ID A101\n) 商品対象外 値引 ¥100\n(明細ID B102\n) 単品 値引 ¥200\n小計 2点 ¥1,700\n合計 ¥1,700\n楽天ペイ ¥1,700' }
+  { width: 412, amount: 1700, adjustment: 'bare-close-unknown', lineIds: ['A101', 'B102'], body: 'テスト"緑茶 (明細ID A101)\n2200083271771 1 ¥1,000\nテスト"緑茶 (明細ID B102)\n2200083271771 1 ¥1,000\n(明細ID A101\n) 商品対象外 値引 ¥100\n(明細ID B102\n) 単品 値引 ¥200\n小計 2点 ¥1,700\n合計 ¥1,700\n楽天ペイ ¥1,700' },
+  { width: 412, amount: 1700, adjustment: 'split-close-reference-id', lineIds: ['A101', 'B102'], originalIdFold: 'A\n101) 単品\n値引 ¥100', body: 'テスト"緑茶 (明細ID A101)\n2200083271771 1 ¥1,000\nテスト"緑茶 (明細ID B102)\n2200083271771 1 ¥1,000\n(明細ID A\n101) 単品\n値引 ¥100\n(明細ID B102\n) 商品\n値引 ¥200\n小計 2点 ¥1,700\n合計 ¥1,700\n楽天ペイ ¥1,700' },
+  { width: 412, amount: 1700, adjustment: 'split-close-complete-id', lineIds: ['A101', 'B102'], originalIdFold: '(明細ID A101)\n単品\n値引 ¥100', body: 'テスト"緑茶 (明細ID A101)\n2200083271771 1 ¥1,000\nテスト"緑茶 (明細ID B102)\n2200083271771 1 ¥1,000\n(明細ID A101)\n単品\n値引 ¥100\n(明細ID B102)\n(商品)\n値引 ¥200\n小計 2点 ¥1,700\n合計 ¥1,700\n楽天ペイ ¥1,700' },
+  { width: 412, amount: 1700, adjustment: 'split-close-id-ambiguous', lineIds: ['A101', 'A 101'], body: 'テスト"緑茶 (明細ID A101)\n2200083271771 1 ¥1,000\nテスト"緑茶 (明細ID A 101)\n2200083271771 1 ¥1,000\n(明細ID A\n101\n) 単品\n値引 ¥100\n(明細ID A 101) 値引 ¥200\n小計 2点 ¥1,700\n合計 ¥1,700\n楽天ペイ ¥1,700' },
+  { width: 412, amount: 1700, adjustment: 'split-close-unknown', lineIds: ['A101', 'B102'], body: 'テスト"緑茶 (明細ID A101)\n2200083271771 1 ¥1,000\nテスト"緑茶 (明細ID B102)\n2200083271771 1 ¥1,000\n(明細ID A101\n) 商品対象外\n値引 ¥100\n(明細ID B102\n) 単品\n値引 ¥200\n小計 2点 ¥1,700\n合計 ¥1,700\n楽天ペイ ¥1,700' }
 ];
 for (const { width, amount, body, mixedTax = false, codePrice = false, adjustment, lineIds, originalIdFold, unwrappedId = false } of mobileCases) {
   const caseName = `${width}${adjustment ? '-' + adjustment : mixedTax ? '-mixed-tax' : codePrice ? '-product-code' : ''}`;
-  const separateCloseId = /^(?:separate|padded|discount|note|bare)-close-/.test(adjustment || '');
+  const separateCloseId = /^(?:separate|padded|discount|note|bare|split)-close-/.test(adjustment || '');
   const separateCloseResolved = separateCloseId && !/-(?:ambiguous|unknown)$/.test(adjustment);
   const unresolvedSplitReference = (separateCloseId && !separateCloseResolved) || ['control-tab-reference', 'recovered-id-ambiguous', 'unmarked-id-ambiguous', 'longfold-id-ambiguous'].includes(adjustment);
   test(`mobile Chromium ${caseName}px: image crop, OCR review, apply, data safety`, { timeout: 60000 }, async () => {
@@ -153,6 +157,7 @@ for (const { width, amount, body, mixedTax = false, codePrice = false, adjustmen
         }
         if ((separateCloseResolved && !unwrappedId) || ['recovered-product-id', 'recovered-reference-id', 'control-cr-reference', 'unmarked-product-id', 'unmarked-reference-id', 'longfold-product-id', 'longfold-reference-id'].includes(adjustment)) {
           assert.equal(await page.locator('.receipt-wrapped-id-note').isVisible(), true);
+          assert((await page.locator('.receipt-wrapped-id-note').textContent()).includes('複数行の明細参照'));
           const originalFold = ['control-cr-reference', 'unmarked-product-id', 'unmarked-reference-id'].includes(adjustment) ? 'A\n101' : 'A-\n101';
           assert((await page.locator('#receiptRawText').inputValue()).includes(originalIdFold || originalFold));
         }

@@ -605,16 +605,36 @@ function receiptDiscountScopeWord(text){
   if(!m||(m[1]&&{"(":")","[":"]","【":"】"}[m[1]]!==m[3]))return"";
   return m[2]||m[4];
 }
-function receiptScopeContinuation(lines,index,limit,note){
-  // Read at most one scope row and one labelled amount row; never skip rows.
-  var scope=receiptDiscountScopeWord(note),amountIndex=index+1;
-  if(!scope){
-    if(!/^[ \t]*$/.test(note)||index+2>=limit)return null;
-    scope=receiptDiscountScopeWord(lines[index+1].normalize("NFKC"));amountIndex=index+2;
+function receiptDiscountLabelOnly(text){
+  var m=String(text||"").match(/^[ \t]*(?:([(\[【])[ \t]*(商品|単品)[ \t]*([)\]】])[ \t]*|(商品|単品)[ \t]*)?((?:値引|割引)(?:額)?|値下(?:げ)?額)[ \t]*:?[ \t]*$/);
+  if(!m||(m[1]&&{"(":")","[":"]","【":"】"}[m[1]]!==m[3]))return"";
+  return(m[2]||m[4]||"")+m[5];
+}
+function receiptDiscountCurrencyOnly(text){
+  var m=String(text||"").match(/^[ \t]*(?:¥[ \t]*[-−ー]?[ \t]*([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{1,7})[ \t]*(?:円)?|[-−ー]?[ \t]*([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{1,7})[ \t]*円)[ \t]*$/);
+  if(!m)return 0;
+  var n=Number((m[1]||m[2]).replace(/,/g,""));return n>0&&n<=100000?n:0;
+}
+function receiptDiscountContinuation(lines,index,limit,note){
+  // Read at most a scope, label and currency row; never skip rows.
+  var scope=receiptDiscountScopeWord(note),label=receiptDiscountLabelOnly(note),amountIndex=index+1;
+  if(!scope&&!label){
+    if(!/^[ \t]*$/.test(note)||amountIndex>=limit)return null;
+    var following=lines[amountIndex].normalize("NFKC");
+    scope=receiptDiscountScopeWord(following);label=receiptDiscountLabelOnly(following);amountIndex++;
   }
-  if(!scope||amountIndex>=limit)return null;
-  var text=scope+" "+lines[amountIndex].normalize("NFKC"),rest=receiptDiscountScopeNote(text);
-  return rest!==text?{text:rest,end:amountIndex}:null;
+  if(scope){
+    if(amountIndex>=limit)return null;
+    var amountLine=lines[amountIndex].normalize("NFKC"),text=scope+" "+amountLine,rest=receiptDiscountScopeNote(text);
+    if(rest!==text)return{text:rest,end:amountIndex};
+    var nextLabel=receiptDiscountLabelOnly(amountLine);
+    if(!nextLabel||/^(?:商品|単品)/.test(nextLabel))return null;
+    label=scope+nextLabel;amountIndex++;
+  }
+  if(!label||amountIndex>=limit)return null;
+  if(amountIndex+1<limit&&/^[ \t]*(?:¥[ \t]*[-−ー]?[ \t]*[0-9][0-9, \t]*(?:円)?|[-−ー]?[ \t]*[0-9][0-9, \t]*(?:円)?)[ \t]*$/.test(lines[amountIndex+1].normalize("NFKC")))return null;
+  var amount=receiptDiscountCurrencyOnly(lines[amountIndex].normalize("NFKC"));
+  return amount?{text:label+" ¥"+amount,end:amountIndex}:null;
 }
 function receiptPrintedLineInfo(line){
   var marker=receiptPrintedMarker(line);if(!marker)return null;
@@ -633,7 +653,7 @@ function receiptRecoverWrappedIds(text,shop){
   var original=normalize(text),result={text:original,ids:[]};
   if(!/明細[IＩ][DＤ]/i.test(original))return result;
   var hint=original.normalize("NFKC");
-  if(!/(?:[(\[【]\s*明細ID|明細ID\s*:?\s*[(\[【])[^\n)\]】]*[A-Za-z0-9_-][ ]*\n/i.test(hint)&&!/(?:商品|単品)[ \t]*[)\]】]?[ \t]*\n/.test(hint))return result;
+  if(!/(?:[(\[【]\s*明細ID|明細ID\s*:?\s*[(\[【])[^\n)\]】]*[A-Za-z0-9_-][ ]*\n/i.test(hint)&&!/(?:商品|単品)[ \t]*[)\]】]?[ \t]*\n/.test(hint)&&!/(?:(?:値引|割引)(?:額)?|値下(?:げ)?額)[ \t]*:?[ \t]*\n/.test(hint))return result;
   var lines=original.split("\n"),limit=lines.length,pair={"(":")","[":"]","【":"】"};
   for(var li=0;li<lines.length;li++){
     if(receiptBrokenTotalLabel(lines[li])||/(?:^|\s)(?:小\s*計|合\s*計|総\s*合\s*計)(?:\s|[:：]|¥|￥|\d)|消費税|お支払|楽天\s*(?:ペイ|ペー|ベイ)/i.test(lines[li])){limit=li;break}
@@ -647,9 +667,9 @@ function receiptRecoverWrappedIds(text,shop){
   var proposals=[];
   for(var i=0;i<limit;i++){
     var first=lines[i].normalize("NFKC"),joined="",id="",end=-1;
-    var scopeTail=first.match(/^(.*[)\]】])([ \t]*(?:(?:商品|単品)[ \t]*|[(\[【][ \t]*(?:商品|単品)[ \t]*[)\]】][ \t]*))$/);
+    var scopeTail=first.match(/^(.*?[)\]】])(.*)$/);
     var base=scopeTail?scopeTail[1]:first,complete=/[)\]】][ \t]*$/.test(base)?receiptPrintedLineInfo(base):null;
-    var continuation=complete&&complete.id&&!complete.rest?receiptScopeContinuation(lines,i,limit,scopeTail?scopeTail[2]:""):null;
+    var continuation=complete&&complete.id&&!complete.rest?receiptDiscountContinuation(lines,i,limit,scopeTail?scopeTail[2]:""):null;
     if(continuation){joined=base+" "+continuation.text;id=complete.id;end=continuation.end}
     if(end<0){
       var m=first.match(/^(.*?)([(\[【])\s*明細ID\s*:?\s*([A-Za-z0-9][A-Za-z0-9_-]*)[ ]*$/i);
@@ -657,10 +677,10 @@ function receiptRecoverWrappedIds(text,shop){
       if(!m)continue;
       if(!/[-_]$/.test(m[3])&&/[ ]$/.test(first))continue;
       joined=first.replace(/[ ]+$/,""),id=m[3];
-      // At most 16 ID fragments and a closing row, then up to two scope/amount rows.
+      // At most 16 ID fragments and a closing row, then up to three scope/label/amount rows.
       for(var j=i+1;j<Math.min(i+17,limit);j++){
         var next=lines[j].normalize("NFKC"),scopeClose=next.match(/^[ \t]*([)\]】])(.*)$/);
-        var splitScope=scopeClose&&pair[m[2]]===scopeClose[1]?receiptScopeContinuation(lines,j,limit,scopeClose[2]):null;
+        var splitScope=scopeClose&&pair[m[2]]===scopeClose[1]?receiptDiscountContinuation(lines,j,limit,scopeClose[2]):null;
         if(splitScope){
           var splitText=joined+scopeClose[1]+" "+splitScope.text,splitRef=receiptPrintedLineInfo(splitText);
           if(!splitRef||splitRef.id!==id||!splitRef.rest)break;
@@ -685,7 +705,7 @@ function receiptRecoverWrappedIds(text,shop){
         if(close){
           if(pair[m[2]]!==close[2])break;
           if(id.length+close[1].length>16)break;
-          var finalScope=receiptScopeContinuation(lines,j,limit,close[3]);
+          var finalScope=receiptDiscountContinuation(lines,j,limit,close[3]);
           if(finalScope){
             var finalText=joined+close[1]+close[2]+" "+finalScope.text,finalRef=receiptPrintedLineInfo(finalText);
             if(!finalRef||finalRef.id!==id+close[1]||!finalRef.rest)break;

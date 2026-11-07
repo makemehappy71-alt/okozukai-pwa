@@ -57,7 +57,7 @@ test('original note, amount, tabs, line breaks and caller objects remain intact'
 
 for (const note of ['商品対象外', '単品取消', '商品 次回用', '商品2点', '単品 10%', '商品 ¥50', '(注記)', '(対象外)', '(単品]', '((単品))', '商品 単品', '商品 明細ID C103', '会員']) test(`uncertain note does not authorize joining: ${note}`, () => held(parse(receipt(body({ note })))));
 for (const gap of ['\n', '\t\n', '注記\n', '歯ブラシ ¥100\n', '(明細ID C103)\n', '消費税 ¥0\n', '¥100\n']) test(`a barrier between scope and amount is not skipped: ${JSON.stringify(gap)}`, () => held(parse(receipt(body().replace('単品\n値引 ¥100', '単品\n' + gap + '値引 ¥100')))));
-for (const amount of ['¥100', '値引後価格 ¥100', '値引合計 ¥100', '値引 10%', '値引 ¥0', '値引 ¥1000001', '値引 ¥1,00', '値引 ¥100 注記', '値引 ¥100 ¥200', '値引 ¥100 (明細ID C103)', '値引\n¥100', '商品値引 ¥100']) test(`uncertain following amount remains manual: ${JSON.stringify(amount)}`, () => held(parse(receipt(body().replace('値引 ¥100', amount)))));
+for (const amount of ['¥100', '値引後価格 ¥100', '値引合計 ¥100', '値引 10%', '値引 ¥0', '値引 ¥1000001', '値引 ¥1,00', '値引 ¥100 注記', '値引 ¥100 ¥200', '値引 ¥100 (明細ID C103)', '商品値引 ¥100']) test(`uncertain following amount remains manual: ${JSON.stringify(amount)}`, () => held(parse(receipt(body().replace('値引 ¥100', amount)))));
 for (const fragment of ['A\t101', 'A\n\t101', 'A101 ', 'A\n101 ', 'A-\n_101']) test(`split scope does not repair ID fragments: ${JSON.stringify(fragment)}`, () => held(parse(receipt(body().replace('明細ID A101\n', '明細ID ' + fragment + '\n')))));
 test('wrong ID closing bracket remains manual', () => held(parse(receipt(body().replace('A101\n)', 'A101\n]')))));
 test('a note and amount without an ID cannot infer the target', () => held(parse(receipt(`${part('A101')}\n${part('B102')}\n単品\n値引 ¥100\n単品\n値引 ¥200`))));
@@ -95,3 +95,5 @@ for (const [name, options, valid] of [['folded note', {}, true], ['complete ID w
   const ocr = await a.runOCR({ gray: canvas, slices: [{ role: 'top', canvas }, { role: 'middle', canvas }, { role: 'bottom', canvas }], shopSlices: [], itemSlices: Array.from({ length: 7 }, () => ({ canvas })), amountSlices: [], paymentSlices: [] });
   const p = parse(ocr, r);if (valid) assigned(p);else held(p);assert.equal(terminated, 1);assert.equal(r.writes.length, 0);
 });
+
+test('scope and label followed by currency use the full ID witness', () => assigned(parse(receipt(body().replace('値引 ¥100', '値引\n¥100')))));

@@ -59,7 +59,7 @@ test('merged sources cannot invent same-source proof', () => {
 });
 test('a spaced complete spelling competing with the compact token remains ambiguous', () => held(parse(receipt(`${part('A101')}\n${part('A 101')}\n${ref('A\n101', 100)}\n(明細ID A 101) 値引 ¥200`))));
 for (const id of ['a101', 'A1O1', 'A_101', 'A 101']) test(`the different complete spelling ${id} is not repaired`, () => held(parse(receipt(body().replace('緑茶 (明細ID A101)', `緑茶 (明細ID ${id})`)))));
-for (const row of ['] 値引 ¥100', ')) 値引 ¥100', ') ¥100', ') 値引後価格 ¥100', ') 値引前 ¥100', ') 値下 ¥100', ') 値引合計 ¥100', ') クーポンをGET ¥100', ') 値引 10%', ') 値引 ¥0', ') 値引 ¥1000001', ') 値引 ¥100 注記', ') 値引 ¥100 ¥200', ') 値引 ¥1,00', ') 値引 ¥100 (明細ID C103)', ') 注記 値引 ¥100', ') 値引\n¥100', ')\n値引 ¥100', '\n) 値引 ¥100', '\t\n) 値引 ¥100', '消費税 ¥0\n) 値引 ¥100', '¥100\n) 値引 ¥100', '\v) 値引 ¥100']) test(`uncertain or malformed closing row remains manual: ${JSON.stringify(row)}`, () => held(parse(receipt(body().replace(') 値引 ¥100', row)))));
+for (const row of ['] 値引 ¥100', ')) 値引 ¥100', ') ¥100', ') 値引後価格 ¥100', ') 値引前 ¥100', ') 値下 ¥100', ') 値引合計 ¥100', ') クーポンをGET ¥100', ') 値引 10%', ') 値引 ¥0', ') 値引 ¥1000001', ') 値引 ¥100 注記', ') 値引 ¥100 ¥200', ') 値引 ¥1,00', ') 値引 ¥100 (明細ID C103)', ') 注記 値引 ¥100', ')\n値引 ¥100', '\n) 値引 ¥100', '\t\n) 値引 ¥100', '消費税 ¥0\n) 値引 ¥100', '¥100\n) 値引 ¥100', '\v) 値引 ¥100']) test(`uncertain or malformed closing row remains manual: ${JSON.stringify(row)}`, () => held(parse(receipt(body().replace(') 値引 ¥100', row)))));
 for (const fragment of ['A\t101', 'A\n\t101', 'A101 ', 'A\n101 ', 'A-\n_101', 'A101\n0']) test(`the amount row does not repair ID fragments: ${JSON.stringify(fragment)}`, () => held(parse(receipt(body().replace('明細ID A101\n', '明細ID ' + fragment + '\n')))));
 test('product text before a folded marker cannot be reinterpreted as a deduction reference', () => held(parse(receipt(body().replace('(明細ID A101\n', '緑茶 (明細ID A101\n')))));
 test('two printed amount claims on opposite sides of one marker remain manual', () => held(parse(receipt(body().replace('(明細ID A101\n', '値引 ¥50 (明細ID A101\n')))));
@@ -90,3 +90,5 @@ for (const [name, items, valid] of [['explicit deduction', body(), true], ['padd
   const ocr = await a.runOCR({ gray: canvas, slices: [{ role: 'top', canvas }, { role: 'middle', canvas }, { role: 'bottom', canvas }], shopSlices: [], itemSlices: Array.from({ length: 7 }, () => ({ canvas })), amountSlices: [], paymentSlices: [] });
   const p = parse(ocr, r);if (valid) assigned(p);else held(p);assert.equal(terminated, 1);assert.equal(r.writes.length, 0);
 });
+
+test('an exact label followed by currency uses the full ID witness', () => assigned(parse(receipt(body().replace(') 値引 ¥100', ') 値引\n¥100')))));

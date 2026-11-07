@@ -19,6 +19,7 @@ V3.71.19を基準にした調査とローカル改善です。公開版の更新
 - [第12段階：同一行と商品後の明細番号と値引帰属の調査と修正](docs/同一行と商品後の明細番号と値引帰属の調査と修正.md)
 - [第13段階：括弧付き明細番号と英数字IDの値引帰属の調査と修正](docs/括弧付き明細番号と英数字IDの値引帰属の調査と修正.md)
 - [第14段階：ハイフンとアンダースコア付き明細IDの調査と修正](docs/ハイフンとアンダースコア付き明細IDの調査と修正.md)
+- [第15段階：空白と連続記号を含む明細IDの調査と修正](docs/空白と連続記号を含む明細IDの調査と修正.md)
 - 既存テスト: `node tests/run.cjs`
 - 追加回帰: `node --test tests/regression.test.cjs`
 - 改善前後の比較: `node tests/compare.cjs`
@@ -36,6 +37,7 @@ V3.71.19を基準にした調査とローカル改善です。公開版の更新
 - 同一行・商品後の明細番号・値引帰属の回帰: `node --test tests/printed-id-layout.test.cjs`
 - 括弧付き明細番号・英数字IDの回帰: `node --test tests/wrapped-alpha-id.test.cjs`
 - ハイフン・アンダースコア付き明細IDの回帰: `node --test tests/separator-id.test.cjs`
+- 境界付きの空白・連続記号IDの回帰: `node --test tests/bounded-complex-id.test.cjs`
 - モバイル表示の操作テスト: `node --test tests/mobile.test.cjs`（Playwright・Chromium系ブラウザが必要）
 
 schemaVersion 12と保存形式を維持しています。Android実機のOCR速度・認識精度測定は次段階です。

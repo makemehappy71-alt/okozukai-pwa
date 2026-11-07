@@ -480,7 +480,14 @@ async function prepareImage(file){
   renderCropConfirm();
   return pendingReceipt;
 }
-function normalize(text){return String(text||"").replace(/\r/g,"").replace(/[￥]/g,"¥").replace(/[，]/g,",").replace(/[ \t]+/g," ").replace(/\n{3,}/g,"\n\n").trim()}
+function normalize(text){
+  var s=String(text||"").replace(/\r/g,"").replace(/[￥]/g,"¥").replace(/[，]/g,",");
+  if(!/明細[IＩ][DＤ]/i.test(s))return s.replace(/[ \t]+/g," ").replace(/\n{3,}/g,"\n\n").trim();
+  return s.split("\n").map(function(line){
+    // Whitespace inside an explicitly labelled ID is data, not OCR spacing.
+    return /明細[IＩ][DＤ]/i.test(line)?line:line.replace(/[ \t]+/g," ");
+  }).join("\n").replace(/\n{3,}/g,"\n\n").trim();
+}
 function numberFromLine(line){
   var s=ocrMoneyClean(line),vals=[],m;
   var cre=/(?:¥|￥|\\|Y)\s*([0-9OoＯ〇Il｜][0-9OoＯ〇Il｜,，.．\s]{0,20})/g;
@@ -546,11 +553,12 @@ function taxAmountFromLine(line){
 function moneyLineExcluded(line){
   return /(ポイント|通常P|合計P|今回P|前回累計|累計P|当月お買上累計額|お買上累計額|お買上|取引金額|残高|お?預り|お\s*(?:釣|つ|的)\s*り?|釣銭|消費税|内消費[税千笑]|内税|外税|税率|登録番号|取引ID|POS\s*取引番号|注文番号|決済番号|受付番号|カードNo|TEL|電話|〒|レジ|バーコード|QR\s*コード|対象金額)/i.test(String(line||""));
 }
-function receiptPrintedIdValue(value,allowAlpha){
+function receiptPrintedIdValue(value,allowAlpha,allowBounded){
   var s=String(value||"");
   if(/^[0-9]{1,6}$/.test(s)&&Number(s)>0)return String(Number(s));
   // IDs are case-sensitive tokens, never money: do not repair O/0 or I/1.
   if(allowAlpha&&s.length>=2&&s.length<=16&&/^[A-Za-z0-9]+(?:[-_][A-Za-z0-9]+)*$/.test(s)&&/[0-9]/.test(s)&&/[A-Za-z_-]/.test(s))return s;
+  if(allowAlpha&&allowBounded&&s.length>=2&&s.length<=16&&/^[A-Za-z0-9]+(?:[ _-]+[A-Za-z0-9]+)*$/.test(s)&&/[0-9]/.test(s)&&/[A-Za-z _-]/.test(s))return s;
   return"";
 }
 function receiptPrintedMarker(line){
@@ -565,22 +573,24 @@ function receiptPrintedMarker(line){
   function invalid(){return{id:"",before:left.trim(),after:""}}
   if(re.exec(s))return invalid();
   var lead=tail.match(/^\s*:?\s*/)[0];tail=tail.slice(lead.length);end=s.length-tail.length;
-  var inner=tail.match(/^([(\[【])\s*([A-Za-z0-9_-]+)\s*([)\]】])/);
+  var bounded=!!outer,inner=tail.match(/^([(\[【])\s*([A-Za-z0-9][A-Za-z0-9 _-]*?)\s*([)\]】])/);
   if(inner){
     if(outer||pair[inner[1]]!==inner[3])return invalid();
-    value=inner[2];end+=inner[0].length;
+    value=inner[2];end+=inner[0].length;bounded=true;
+  }else if(outer){
+    var enclosed=tail.match(/^([A-Za-z0-9][A-Za-z0-9 _-]*?)\s*([)\]】])/);
+    if(!enclosed||pair[outer]!==enclosed[2])return invalid();
+    value=enclosed[1];end+=enclosed[0].length;
   }else{
     var token=tail.match(/^([A-Za-z0-9_-]+)/);if(!token)return invalid();
     value=token[1];end+=token[0].length;
-    if(outer){
-      var close=s.slice(end).match(/^\s*([)\]】])/);if(!close||pair[outer]!==close[1])return invalid();
-      end+=close[0].length;
-    }else if(end<s.length&&!/\s/.test(s.charAt(end)))return invalid();
+    if(end<s.length&&!/\s/.test(s.charAt(end)))return invalid();
   }
   var after=s.slice(end).trim();
   if(/^[-_−‐‑–—ー]/.test(after))valid=false;
+  if(!bounded&&/^[A-Za-z0-9]/.test(after))valid=false;
   if(/[()\[\]【】]/.test(after.charAt(0)))valid=false;
-  return{id:valid?receiptPrintedIdValue(value,/^明細ID$/i.test(label)):"",before:left.trim(),after:after};
+  return{id:valid?receiptPrintedIdValue(value,/^明細ID$/i.test(label),bounded):"",before:left.trim(),after:after};
 }
 function receiptPrintedLineInfo(line){
   var marker=receiptPrintedMarker(line);if(!marker)return null;
@@ -612,7 +622,11 @@ function receiptMarkdownPriceLine(line){
 }
 function mergeOCRTexts(a,b){
   var seen={},out=[];
-  [a,b].forEach(function(txt){normalize(txt).split("\n").forEach(function(line){var x=line.trim(),key=x.replace(/\s+/g,"").toLowerCase();if(!x||!key||seen[key])return;seen[key]=1;out.push(x)})});
+  [a,b].forEach(function(txt){normalize(txt).split("\n").forEach(function(line){
+    var x=line.trim();if(!x)return;
+    var marker=receiptPrintedMarker(x),key=marker?(marker.id?"ID|"+JSON.stringify([marker.id,marker.before.replace(/\s+/g,"").toLowerCase(),marker.after.replace(/\s+/g,"").toLowerCase()]):"invalid-ID|"+x):x.replace(/\s+/g,"").toLowerCase();
+    if(seen[key])return;seen[key]=1;out.push(x);
+  })});
   return out.join("\n");
 }
 function maskReceiptDebugText(text){
@@ -1157,7 +1171,7 @@ function isQuantityDescriptorName(name){
 function mergeProductRows(rows){
   rows=(rows||[]).map(function(row){
     var copy={name:normalizeProductName(row.name),rawName:row.rawName||row.name,unitPrice:Number(row.unitPrice||0),qty:Number(row.qty||1),total:Number(row.total||0),productCode:normalizeProductCodeToken(row.productCode),quality:Number(row.quality||productNameQuality(row.rawName||row.name)),sourceIndex:Number(row.sourceIndex||0),sourcePriority:Number(row.sourcePriority||1)};
-    var id=receiptPrintedIdValue(row.receiptLineId,true);if(id&&id===String(row.receiptLineId))copy.receiptLineId=id;
+    var id=receiptPrintedIdValue(row.receiptLineId,true,true);if(id&&id===String(row.receiptLineId))copy.receiptLineId=id;
     if(row.markdownOriginalTotal){copy.markdownOriginalTotal=Number(row.markdownOriginalTotal);copy.markdownDiscount=Number(row.markdownDiscount||0)}
     return copy;
   }).filter(function(x){return x.name&&!isQuantityDescriptorName(x.name)});
@@ -3493,7 +3507,7 @@ function renderResult(p,errorText){
     else{if(x.qty>1)tail+="×"+x.qty;if(x.total)tail+=(tail?" = ":"= ")+yen(x.total)}
     var label=x.autoConfirmed?(x.candidateSource==="verified_sample"?"確認済み辞書: ":x.candidateSource==="learned"?"学習済み商品: ":"自動確認: "):x.lowConfidence?"要確認: ":x.candidateOnly?(x.candidateSource==="learned"?"学習済み候補: ":x.candidateSource==="verified_sample"?"辞書候補: ":"OCR候補: "):"";
     var codeLabel=x.productCode&&rows.some(function(other){return other!==x&&other.productCode&&other.total===x.total})?'<span class="small receipt-product-code" data-index="'+i+'" style="overflow-wrap:anywhere">商品コード: '+e(x.productCode)+'</span>':"";
-    var printedId=x.receiptLineId?'<span class="small receipt-line-id" data-index="'+i+'">明細番号: '+e(x.receiptLineId)+'</span>':"";
+    var printedId=x.receiptLineId?'<span class="small receipt-line-id" data-index="'+i+'" style="white-space:pre-wrap;overflow-wrap:anywhere">明細番号: '+e(x.receiptLineId)+'</span>':"";
     return'<div style="display:flex;flex-direction:column;align-items:flex-start;gap:6px"><span class="receipt-analysis-name" data-index="'+i+'" data-prefix="'+e(label)+'" style="width:100%;overflow-wrap:anywhere">'+e(label+x.name)+'</span>'+printedId+codeLabel+'<strong style="width:100%;line-height:1.5">'+e(tail.trim())+'</strong></div>';
   }).join("");
   var rowHtml="";

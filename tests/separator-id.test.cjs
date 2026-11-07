@@ -76,13 +76,15 @@ test('contradictory separator assignments across OCR passes remain manual', () =
 
 test('duplicate separated IDs cannot identify two purchases', () => held(parse(receipt(body(formats.inline, ['A-101', 'A-101'])))));
 
-for (const id of ['-A101', '_A101', 'A101-', 'A101_', 'A--101', 'A__101', 'A-_101', 'A_-101', 'A/101', 'A−101', 'A‐101', 'A–101', 'Aー101', 'A12345678901234-5', 'AB-CD']) test(`unsupported separator token ${id} is not repaired or truncated`, () => held(parse(receipt(body(formats.inline, [id, 'B_102'])))));
+for (const id of ['A--101', 'A__101', 'A-_101', 'A_-101']) test(`bounded consecutive separators ${id} are preserved literally`, () => assigned(parse(receipt(body(formats.inline, [id, 'B_102']))), [id, 'B_102']));
+
+for (const id of ['-A101', '_A101', 'A101-', 'A101_', 'A/101', 'A−101', 'A‐101', 'A–101', 'Aー101', 'A12345678901234-5', 'AB-CD']) test(`unsupported separator token ${id} is not repaired or truncated`, () => held(parse(receipt(body(formats.inline, [id, 'B_102'])))));
 
 for (const id of ['A1 -01', 'A1 _01', 'A- 101', 'A_ 101', 'A - 101']) test(`internal whitespace is not joined: ${id}`, () => held(parse(receipt(body(formats.plain, [id, 'B_102'])))));
 
 for (const label of ['明細番号', '明細No.', '会員ID', '取引ID', 'No.']) test(`${label} cannot promote separated tokens into a merchandise ID`, () => held(parse(receipt(body().replace(/明細ID/g, label)))));
 
-test('a single malformed reference cannot fall back to proportional allocation', () => held(parse(receipt(`${formats.inline('A-101')}\n${formats.inline('A_101')}\n値引 ¥100 (明細ID A--101)`, { net: 1900 }))));
+test('an unknown consecutive-separator reference cannot fall back to proportional allocation', () => held(parse(receipt(`${formats.inline('A-101')}\n${formats.inline('A_101')}\n値引 ¥100 (明細ID A--101)`, { net: 1900 }))));
 
 test('a separator ID between two products has no inferred direction', () => held(parse(receipt(`${merchandise}\n(明細ID A-101)\n${merchandise}\n(明細ID A_101)\n(明細ID A-101) 値引 ¥100\n(明細ID A_101) 値引 ¥200`))));
 
@@ -99,7 +101,7 @@ test('a price-free separator ID cannot create a synthetic original price', () =>
 test('learning cannot bypass a malformed separator ID', () => {
   const r = runtime();
   r.storage.set('okozukaiReceiptProductDictionaryV1', JSON.stringify([{ shopKey: 'テスト商', name: '緑茶', aliases: ['緑茶'], priceHints: [1000], source: 'learned', confirmedCount: 6 }]));
-  held(parse(receipt(body(formats.inline, ['A--101', 'A_101'])), r));
+  held(parse(receipt(body(formats.inline, ['A//101', 'A_101'])), r));
   assert.equal(r.writes.length, 0);
 });
 
@@ -110,7 +112,7 @@ test('separator IDs preserve ledger, dictionary and schema', () => {
   r.storage.set('okozukaiReceiptProductDictionaryV1', dictionary);
   const before = r.evaluate('JSON.stringify(state)');
   assigned(parse(receipt(body()), r));
-  held(parse(receipt(body(formats.inline, ['A--101', 'A_101'])), r));
+  held(parse(receipt(body(formats.inline, ['A//101', 'A_101'])), r));
   assert.equal(r.evaluate('JSON.stringify(state)'), before);
   assert.equal(r.storage.get('okozukaiReceiptProductDictionaryV1'), dictionary);
   assert.equal(r.writes.length, 0);

@@ -10,12 +10,12 @@ function receipt(items, { net = 1700 } = {}) {
 }
 const goodBody = `${part('A101')}\n商品値引 ¥100\n${part('B102')}\n商品値引 ¥200`;
 const parse = (text, r = runtime()) => r.context.receiptFeature.parseReceiptText(text, '2026-11-07');
-function assigned(p) {
+function assigned(p, discounts = [100, 200], gross = [900, 800]) {
   assert.equal(p.discountAttributionConfirmed, true);
   assert.equal(p.discountReviewRequired, false);
   assert.equal(p.itemSetComplete, true);
   assert.deepEqual(Array.from(p.itemRows, r => [r.name, r.receiptLineId, r.qty, r.total]), [['緑茶', 'A101', 1, 1000], ['緑茶', 'B102', 1, 1000]]);
-  assert.deepEqual(Array.from(p.splitRows, r => [r.discount, r.gross]), [[100, 900], [200, 800]]);
+  assert.deepEqual(Array.from(p.splitRows, r => [r.discount, r.gross]), discounts.map((d, i) => [d, gross[i]]));
 }
 function held(p) {
   assert.equal(p.discountAttributionConfirmed, false);
@@ -28,11 +28,21 @@ function held(p) {
 const breaks = [['TAB', '\t'], ['LF', '\n'], ['CR', '\r'], ['CRLF', '\r\n'], ['blank line', '\n\n']];
 for (const [name, separator] of breaks) {
   const split = `A${separator}101`;
+  const corroborated = ['LF', 'CR', 'CRLF'].includes(name);
   test(`${name} inside an inline ID is not joined`, () => held(parse(receipt(`${part(split)}\n商品値引 ¥100\n${part('B102')}\n商品値引 ¥200`))));
   test(`${name} inside a value-only bracket is not joined`, () => held(parse(receipt(`明細ID [${split}]\n${merchandise}\n商品値引 ¥100\n${part('B102')}\n商品値引 ¥200`))));
-  test(`${name} inside a prefix discount reference is not joined`, () => held(parse(receipt(`${part('A101')}\n${part('B102')}\n(明細ID ${split}) 値引 ¥100\n(明細ID B102) 値引 ¥200`))));
-  test(`${name} inside a suffix discount reference is not joined`, () => held(parse(receipt(`${part('A101')}\n${part('B102')}\n値引 ¥100 (明細ID ${split})\n(明細ID B102) 値引 ¥200`))));
-  test(`${name} in a lone reference cannot fall back to general allocation`, () => held(parse(receipt(`${part('A101')}\n${part('B102')}\n値引 ¥100 (明細ID ${split})`, { net: 1900 }))));
+  test(`${name} in a prefix reference requires a complete unique product ID`, () => {
+    const p = parse(receipt(`${part('A101')}\n${part('B102')}\n(明細ID ${split}) 値引 ¥100\n(明細ID B102) 値引 ¥200`));
+    if (corroborated) assigned(p); else held(p);
+  });
+  test(`${name} in a suffix reference requires a complete unique product ID`, () => {
+    const p = parse(receipt(`${part('A101')}\n${part('B102')}\n値引 ¥100 (明細ID ${split})\n(明細ID B102) 値引 ¥200`));
+    if (corroborated) assigned(p); else held(p);
+  });
+  test(`${name} in a lone reference requires exact attribution without general allocation`, () => {
+    const p = parse(receipt(`${part('A101')}\n${part('B102')}\n値引 ¥100 (明細ID ${split})`, { net: 1900 }));
+    if (corroborated) assigned(p, [100, 0], [900, 1000]); else held(p);
+  });
 }
 
 for (const [name, separator] of [['LF', '\n'], ['CR', '\r'], ['CRLF', '\r\n']]) test(`normal receipt rows separated by ${name} keep valid IDs`, () => {
@@ -79,10 +89,10 @@ test('source filtering never changes a split identifier into A101', () => {
   assert.equal(rows.some(r => r.receiptLineId === 'A101'), false);
 });
 
-test('learning cannot bypass a CR-split reference', () => {
+test('learning cannot replace the missing complete ID for a CR-split reference', () => {
   const r = runtime();
   r.storage.set('okozukaiReceiptProductDictionaryV1', JSON.stringify([{ shopKey: 'テスト商', name: '緑茶', aliases: ['緑茶'], priceHints: [1000], source: 'learned', confirmedCount: 6 }]));
-  held(parse(receipt(`${part('A101')}\n${part('B102')}\n(明細ID A\r101) 値引 ¥100\n(明細ID B102) 値引 ¥200`), r));
+  held(parse(receipt(`${part('A101')}\n${part('B102')}\n(明細ID A\r999) 値引 ¥100\n(明細ID B102) 値引 ¥200`), r));
   assert.equal(r.writes.length, 0);
 });
 

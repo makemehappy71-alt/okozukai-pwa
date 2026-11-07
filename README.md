@@ -22,6 +22,7 @@ V3.71.19を基準にした調査とローカル改善です。公開版の更新
 - [第15段階：空白と連続記号を含む明細IDの調査と修正](docs/空白と連続記号を含む明細IDの調査と修正.md)
 - [第16段階：タブと改行で分断された明細IDの調査と修正](docs/タブと改行で分断された明細IDの調査と修正.md)
 - [第17段階：複数行に折り返された明細IDの安全な復元と値引帰属](docs/複数行に折り返された明細IDの安全な復元と値引帰属.md)
+- [第18段階：継続記号のない複数行明細IDの調査と修正](docs/継続記号のない複数行明細IDの調査と修正.md)
 - 既存テスト: `node tests/run.cjs`
 - 追加回帰: `node --test tests/regression.test.cjs`
 - 改善前後の比較: `node tests/compare.cjs`
@@ -42,6 +43,7 @@ V3.71.19を基準にした調査とローカル改善です。公開版の更新
 - 境界付きの空白・連続記号IDの回帰: `node --test tests/bounded-complex-id.test.cjs`
 - タブ・改行で分断された明細IDの回帰: `node --test tests/split-control-id.test.cjs`
 - 条件付きの折り返しID復元の回帰: `node --test tests/wrapped-id-recovery.test.cjs`
+- 継続記号のない折り返しIDの回帰: `node --test tests/unmarked-id-wrap.test.cjs`
 - モバイル表示の操作テスト: `node --test tests/mobile.test.cjs`（Playwright・Chromium系ブラウザが必要）
 
 schemaVersion 12と保存形式を維持しています。Android実機のOCR速度・認識精度測定は次段階です。

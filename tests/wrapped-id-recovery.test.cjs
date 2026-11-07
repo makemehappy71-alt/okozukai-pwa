@@ -47,7 +47,7 @@ test('postfix folded IDs can be corroborated by complete references', () => assi
 
 test('suffix references can wrap when the product ID is complete', () => assigned(parse(receipt(`${part('A-101')}\n${part('B_102')}\n値引 ¥100 (明細ID A-\n101)\n値引 ¥200 (明細ID B_\n102)`))));
 
-test('each intermediate line must retain its printed separator', () => {
+test('three-line fragments preserve their printed separators', () => {
   const body = `${part('A-\n10_\n1')}\n${part('B_\n102')}\n(明細ID A-10_1) 値引 ¥100\n(明細ID B_102) 値引 ¥200`;
   assigned(parse(receipt(body)), ['A-10_1', 'B_102']);
 });
@@ -102,7 +102,9 @@ test('a spaced complete ID makes an otherwise matching compact spelling ambiguou
 
 test('a witness with an internal space cannot justify deleting the fold', () => held(parse(receipt(`${part('A-\n101')}\n${part('B_102')}\n(明細ID A- 101) 値引 ¥100\n(明細ID B_102) 値引 ¥200`))));
 
-for (const split of ['A\n101', 'A-1\n01', 'A \n101', 'A\t101', 'A-\t\n101', 'A-\n\t101', 'A-\n\n101', 'A-\n10\n1', 'A-\n1_\n0_\n1']) test(`insufficient continuation evidence stays manual: ${JSON.stringify(split)}`, () => {
+for (const split of ['A-1\n01', 'A-\n10\n1']) test(`unmarked continuation with an exact complete witness is recovered: ${JSON.stringify(split)}`, () => assigned(parse(receipt(`${part(split)}\n${part('B_102')}\n${refs}`))));
+
+for (const split of ['A\n101', 'A \n101', 'A\t101', 'A-\t\n101', 'A-\n\t101', 'A-\n\n101', 'A-\n1_\n0_\n1']) test(`insufficient continuation evidence stays manual: ${JSON.stringify(split)}`, () => {
   held(parse(receipt(`${part(split)}\n${part('B_102')}\n${refs}`)));
 });
 

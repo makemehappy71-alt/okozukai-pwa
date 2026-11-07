@@ -483,7 +483,7 @@ async function prepareImage(file){
 function normalize(text){
   var s=String(text||"").replace(/\r\n?/g,"\n").replace(/[￥]/g,"¥").replace(/[，]/g,",");
   if(!/明細[IＩ][DＤ]/i.test(s))return s.replace(/[ \t]+/g," ").replace(/\n{3,}/g,"\n\n").trim();
-  var possibleIdFold=/[-_－＿][ ]*\n/.test(s);
+  var possibleIdFold=/明細ID[^\n)\]】]*[A-Za-z0-9_-][ ]*\n/i.test(s.normalize("NFKC"));
   return s.split("\n").map(function(line){
     // Preserve continuation tabs too, so they cannot become eligible spaces.
     return possibleIdFold||/明細[IＩ][DＤ]/i.test(line)?line:line.replace(/[ \t]+/g," ");
@@ -608,7 +608,7 @@ function receiptPrintedProductInfo(line){
 }
 function receiptRecoverWrappedIds(text,shop){
   var original=normalize(text),result={text:original,ids:[]};
-  if(!/明細[IＩ][DＤ]/i.test(original)||!(/[-_－＿][ \t]*\n/.test(original)))return result;
+  if(!/明細[IＩ][DＤ]/i.test(original)||!/(?:[(\[【]\s*明細ID|明細ID\s*:?\s*[(\[【])[^\n)\]】]*[A-Za-z0-9_-][ ]*\n/i.test(original.normalize("NFKC")))return result;
   var lines=original.split("\n"),limit=lines.length,pair={"(":")","[":"]","【":"】"};
   for(var li=0;li<lines.length;li++){
     if(receiptBrokenTotalLabel(lines[li])||/(?:^|\s)(?:小\s*計|合\s*計|総\s*合\s*計)(?:\s|[:：]|¥|￥|\d)|消費税|お支払|楽天\s*(?:ペイ|ペー|ベイ)/i.test(lines[li])){limit=li;break}
@@ -621,9 +621,10 @@ function receiptRecoverWrappedIds(text,shop){
   });
   var proposals=[];
   for(var i=0;i<limit;i++){
-    var first=lines[i].normalize("NFKC"),m=first.match(/^(.*?)([(\[【])\s*明細ID\s*:?\s*([A-Za-z0-9][A-Za-z0-9_-]*[-_])[ ]*$/i);
-    if(!m)m=first.match(/^(.*?)明細ID\s*:?\s*([(\[【])\s*([A-Za-z0-9][A-Za-z0-9_-]*[-_])[ ]*$/i);
+    var first=lines[i].normalize("NFKC"),m=first.match(/^(.*?)([(\[【])\s*明細ID\s*:?\s*([A-Za-z0-9][A-Za-z0-9_-]*)[ ]*$/i);
+    if(!m)m=first.match(/^(.*?)明細ID\s*:?\s*([(\[【])\s*([A-Za-z0-9][A-Za-z0-9_-]*)[ ]*$/i);
     if(!m)continue;
+    if(!/[-_]$/.test(m[3])&&/[ ]$/.test(first))continue;
     var joined=first.replace(/[ ]+$/,""),id=m[3],end=-1;
     for(var j=i+1;j<Math.min(i+3,limit);j++){
       var next=lines[j].normalize("NFKC");if(/\t/.test(next)||!next.trim())break;
@@ -632,8 +633,9 @@ function receiptRecoverWrappedIds(text,shop){
         if(pair[m[2]]!==close[2])break;
         id+=close[1];joined+=close[1]+close[2]+close[3];end=j;break;
       }
-      var middle=next.match(/^[ ]*([A-Za-z0-9][A-Za-z0-9_-]*[-_])[ ]*$/);
+      var middle=next.match(/^[ ]*([A-Za-z0-9][A-Za-z0-9_-]*)[ ]*$/);
       if(!middle)break;
+      if(!/[-_]$/.test(middle[1])&&/[ ]$/.test(next))break;
       id+=middle[1];joined+=middle[1];
     }
     if(end<0||id.length>16||!receiptPrintedIdValue(id,true,true))continue;

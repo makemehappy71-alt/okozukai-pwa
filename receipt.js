@@ -669,6 +669,16 @@ function receiptOmittedQuantityDetail(codeLine,unitLine){
   if(total<10||total>1000000||value<1||value>1000000||!Number.isInteger(qty)||qty<1||qty>99)return null;
   return{code:price[1],qty:qty,total:total,unit:value,text:String(codeLine).normalize("NFKC").trim().replace(/^([0-9]{10,14})[ \t]+/,"$1 "+qty+" ")};
 }
+function receiptQuantityScopeMarker(line){
+  var s=String(line||"").normalize("NFKC").replace(/^[ \t]+|[ \t]+$/g,"");
+  if(!/商品|単品/.test(s)||!/明細ID/i.test(s))return null;
+  var before=s.match(/^((?:商品|単品)|[(\[【][ \t]*(?:商品|単品)[ \t]*[)\]】])[ \t]*(.+)$/);
+  var after=before?null:s.match(/^(.*?[)\]】])[ \t]*((?:商品|単品)|[(\[【][ \t]*(?:商品|単品)[ \t]*[)\]】])$/);
+  var scope=before?before[1]:after?after[2]:"",idText=before?before[2]:after?after[1]:"";
+  if(!receiptDiscountScopeWord(scope)||!/^[ \t]*(?:[(\[【][ \t]*)?明細ID[ \t]*:?[ \t]*(?:[(\[【][ \t]*)?0[0-9]{1,5}[ \t]*[)\]】][ \t]*$/i.test(idText))return null;
+  var marker=receiptPrintedMarker(idText);
+  return marker&&marker.id&&!marker.before&&!marker.after&&/^0[0-9]{1,5}$/.test(marker.printedValue)?marker:null;
+}
 function receiptQuantityEvidenceMatches(target,evidence){
   return !!(evidence&&evidence.code===target.productCode&&evidence.qty===target.qty&&evidence.total===target.total&&evidence.unit===target.unitPrice);
 }
@@ -810,17 +820,26 @@ function receiptRecoverWrappedIds(text,shop){
   // occurrence, even if an unprocessed unit label temporarily looked like a product.
   var physical=proposals.filter(function(p){return !proposals.some(function(parent){return parent.foldedProduct&&parent.reference&&parent.id===p.id&&parent.reference.start===p.start&&parent.reference.end===p.end})});
   var selected=physical.filter(function(p){return physical.filter(function(other){return other.id===p.id}).length===1});
+  var scopeMarkers=Object.create(null),fullIdCounts=Object.create(null);
+  for(var si=0;si<limit;si++){
+    var scopeMarker=receiptQuantityScopeMarker(lines[si]),fullMarker=scopeMarker||receiptPrintedMarker(lines[si]);
+    if(scopeMarker)scopeMarkers[si]=scopeMarker;
+    if(fullMarker&&fullMarker.id)fullIdCounts[fullMarker.id]=(fullIdCounts[fullMarker.id]||0)+1;
+  }
   while(selected.length){
     var trial=lines.slice(),omittedDetails=Object.create(null);
     selected.forEach(function(p){
       [p,p.reference].filter(Boolean).forEach(function(change){trial[change.start]=change.text;for(var k=change.start+1;k<=change.end;k++)trial[k]=null});
       if(p.foldedProduct){
-        var second=p.end+2;
-        // Only a single formatting-only row BETWEEN the two literal fields is
-        // allowed. Never skip annotations or gaps at either ID boundary.
-        if(second<limit&&/^[ \t]*$/.test(lines[second].normalize("NFKC")))second++;
+        var second=p.end+2,product=receiptPrintedMarker(p.text),scope=scopeMarkers[second];
+        // A single scope note must identify this exact printed product and be
+        // the only full occurrence besides its independent discount reference.
+        var scoped=scope&&scope.id===p.id&&scope.printedValue===product.printedValue&&fullIdCounts[p.id]===2;
+        // Only this identified scope or one formatting row BETWEEN the fields
+        // is allowed. Never skip free text or gaps at either ID boundary.
+        if(second<limit&&(/^[ \t]*$/.test(lines[second].normalize("NFKC"))||scoped))second++;
         var detail=second<limit&&(receiptOmittedQuantityDetail(lines[p.end+1],lines[second])||receiptOmittedQuantityDetail(lines[second],lines[p.end+1])),at=second+1;
-        var following=at<limit?receiptPrintedMarker(lines[at]):null,inline=at<limit?receiptPrintedLineInfo(lines[at]):null,product=receiptPrintedMarker(p.text);
+        var following=at<limit?receiptPrintedMarker(lines[at]):null,inline=at<limit?receiptPrintedLineInfo(lines[at]):null;
         var adjacent=p.reference?p.reference.start===at:inline&&inline.id===p.id&&inline.rest&&!receiptDiscountSummaryLine(inline.rest)&&!receiptIsPromotionalCoupon(inline.rest)&&discountAmountFromLine(inline.rest)>0&&following&&following.printedValue===product.printedValue;
         // A literal unit field belongs to this folded ID only when its original
         // complete individual reference immediately follows this bounded pair.

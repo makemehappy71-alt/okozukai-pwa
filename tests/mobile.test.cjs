@@ -222,9 +222,25 @@ for (const [role, position, note, order, qty, money, resolved] of [
   mobileCases.push({ width: 412, amount: 1700, adjustment: `scope-close-${role}${resolved ? '' : '-unknown'}`, lineIds: ['100', '200'], originalIdFold: '00\n0200', originalPriceBlock: block, itemQuantities: [1, qty], expectedUnits: [1000, 1000 / qty],
     body: `${items}\n小計 ${qty + 1}点 ¥1700\n合計 ¥1700\n楽天ペイ ¥1700` });
 }
+for (const [role, note, order, qty, money, resolved] of [
+  ['product', '商品 (明細ID 000200)', 'unit-first', 2, 'yen', true],
+  ['single', '単品 (明細ID 000200)', 'total-first', 2, 'yen', true],
+  ['inverse', '(明細ID 000200) (商品)', 'unit-first', 2, 'bare', true],
+  ['one', '(単品) [明細ID 000200]', 'unit-first', 1, 'yen', true],
+  ['zeros', '商品 (明細ID 200)', 'unit-first', 2, 'yen', false],
+  ['condition', '商品 (明細ID 000200) 税込', 'total-first', 2, 'yen', false],
+  ['duplicate', '単品 (明細ID 000200)\n単品 (明細ID 000200)', 'unit-first', 2, 'yen', false],
+  ['different-id', '商品 (明細ID 000201)', 'total-first', 2, 'bare', false]
+]) {
+  const ref = (id, value) => `(明細ID ${id}) ${money === 'bare' ? '値引額（円）\n' : '値引\n¥'}${value}`;
+  const pair = [`単価 ¥${1000 / qty}`, '2200083271771 ¥1,000'];if (order === 'total-first') pair.reverse();const block = pair.join('\n' + note + '\n');
+  const items = `テスト"緑茶 (明細ID 00\n0100)\n2200083271771 1 ¥1,000\n${ref('000100', 100)}\nテスト"緑茶 (明細ID 00\n0200)\n${block}\n${ref('000200', 200)}`;
+  mobileCases.push({ width: 412, amount: 1700, adjustment: `identified-close-${role}${resolved ? '' : '-unknown'}`, lineIds: ['100', '200'], originalIdFold: '00\n0200', originalPriceBlock: block, itemQuantities: [1, qty], expectedUnits: [1000, 1000 / qty],
+    body: `${items}\n小計 ${qty + 1}点 ¥1700\n合計 ¥1700\n楽天ペイ ¥1700` });
+}
 for (const { width, amount, body, mixedTax = false, codePrice = false, adjustment, lineIds, originalIdFold, originalPriceBlock, unwrappedId = false, itemQuantity = 1, itemQuantities = [itemQuantity, itemQuantity], expectedUnits, productCodes = ['2200083271771', '2200083271771'], deductions = [100, 200] } of mobileCases) {
   const caseName = `${width}${adjustment ? '-' + adjustment : mixedTax ? '-mixed-tax' : codePrice ? '-product-code' : ''}`;
-  const separateCloseId = /^(?:separate|padded|discount|note|bare|split|amount|numeric|collision|identity|zero|witness|boundary|quantity|preceding|gap|scope)-close-/.test(adjustment || '');
+  const separateCloseId = /^(?:separate|padded|discount|note|bare|split|amount|numeric|collision|identity|zero|witness|boundary|quantity|preceding|gap|scope|identified)-close-/.test(adjustment || '');
   const separateCloseResolved = separateCloseId && !/-(?:ambiguous|unknown)$/.test(adjustment);
   const unresolvedSplitReference = (separateCloseId && !separateCloseResolved) || ['control-tab-reference', 'recovered-id-ambiguous', 'unmarked-id-ambiguous', 'longfold-id-ambiguous'].includes(adjustment);
   test(`mobile Chromium ${caseName}px: image crop, OCR review, apply, data safety`, { timeout: browserTestTimeout }, async () => {
@@ -426,6 +442,7 @@ for (const { width, amount, body, mixedTax = false, codePrice = false, adjustmen
         assert.equal(plan.rows.some(row => Object.hasOwn(row, 'reference')), false);
         assert.equal(plan.rows.some(row => Object.hasOwn(row, 'bareReference') || Object.hasOwn(row, 'foldedProduct')), false);
         assert.equal(plan.rows.some(row => Object.hasOwn(row, 'quantityEvidence')), false);
+        assert.equal(plan.rows.some(row => Object.hasOwn(row, 'scopeMarker') || Object.hasOwn(row, 'fullIdCounts')), false);
       } else if (unresolvedSplitReference || ['multi-unassigned', 'repeat-unassigned', 'printed-id-unknown', 'post-id-unknown', 'alpha-id-unknown', 'separator-id-unknown', 'bounded-space-unknown', 'control-tab-reference', 'recovered-id-ambiguous', 'unmarked-id-ambiguous', 'longfold-id-ambiguous'].includes(adjustment)) {
         assert.equal(await page.locator('#receiptSplitPlan').count(), 0);
       }

@@ -686,10 +686,11 @@ function receiptWrappedQuantityScopeMarker(lines,start,limit){
   var first=String(lines[start]||"").normalize("NFKC");
   if(!/商品|単品|明細ID/i.test(first)||!/[:-][ \t]*$/.test(first))return null;
   var parts=[first];
-  // Each original seam prints punctuation on both sides. Only punctuation-only
-  // intermediate rows may continue; stop at the first other row or purchase end.
+  // Nonblank rows print punctuation at each seam. Formatting-only rows may
+  // occur inside that run; never cross another field or the purchase end.
   for(var at=start+1;at<limit;at++){
     var next=String(lines[at]||"").normalize("NFKC");
+    if(/^[ \t]*$/.test(next)){parts.push(next);continue}
     if(!/^[ \t]*[:-]/.test(next))return null;
     parts.push(next);
     if(/^[ \t]*(?:[:-][ \t]*)+$/.test(next))continue;

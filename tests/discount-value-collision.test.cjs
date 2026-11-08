@@ -15,11 +15,11 @@ function receipt(items, { count = 2, net = 1700, tax = 0, paid = true } = {}) {
   return `テスト商店\n2026年11月08日\n${items}\n小計 ${count ? count + '点 ' : ''}¥${net}\n${tax ? '消費税 ¥' + tax + '\n' : ''}${paid ? '合計 ¥' + (net + tax) + '\n楽天ペイ ¥' + (net + tax) : ''}`;
 }
 const parse = (input, r = runtime()) => r.context.receiptFeature.parseReceiptText(input, '2026-11-08');
-function assigned(p, { qty = 1, codes = [code, code], values = [100, 200], gross = [900, 800] } = {}) {
+function assigned(p, { qty = 1, codes = [code, code], values = [100, 200], gross = [900, 800], ids = ['A101', 'B102'] } = {}) {
   assert.equal(p.discountAttributionConfirmed, true);
   assert.equal(p.discountReviewRequired, false);
   assert.equal(p.itemSetComplete, true);
-  assert.deepEqual(Array.from(p.itemRows, r => [r.receiptLineId, r.qty, r.productCode, r.total]), ['A101', 'B102'].map((id, i) => [id, qty, codes[i], 1000]));
+  assert.deepEqual(Array.from(p.itemRows, r => [r.receiptLineId, r.qty, r.productCode, r.total]), ids.map((id, i) => [id, qty, codes[i], 1000]));
   assert.deepEqual(Array.from(p.splitRows, r => [r.discount, r.gross]), values.map((n, i) => [n, gross[i]]));
   assert(p.wrappedIdRecoveryCount > 0);
 }
@@ -78,7 +78,9 @@ for (const transform of [
 ]) test(`the local unit cannot replace original unique product proof #${[...transform.toString()].length}`, () => held(parse(receipt(transform(body({ qty: 10 })), { count: 20 }))));
 test('a fractional derived unit price still lacks literal role evidence', () => held(parse(receipt(body({ qty: 3 }), { count: 6 }))));
 test('an amount equal to the entire product price stays manual', () => held(parse(receipt(body({ values: [1000, 200] }), { net: 800 }))));
-test('numeric IDs matching bare amounts stay conservative', () => held(parse(receipt(body({ ids: ['100', '200'] })))));
+test('numeric IDs matching bare amounts are distinct when the exact label prints a yen unit', () => {
+  const ids = ['100', '200'];assigned(parse(receipt(body({ ids }))), { ids });
+});
 test('duplicate folded references cannot use the unit to select or sum', () => held(parse(receipt(body({ qty: 10 }) + '\n' + ref('A101', 50), { count: 20, net: 1650 }))));
 for (const accounting of [{ count: 0 }, { net: 1699, count: 20 }, { count: 20, paid: false }, { count: 19 }]) test(`the unit does not replace accounting ${JSON.stringify(accounting)}`, () => held(parse(receipt(body({ qty: 10 }), accounting))));
 test('a crop edge does not give an amount boundary even with local units', () => {

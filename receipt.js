@@ -650,10 +650,10 @@ function receiptBareDiscountEvidence(target,rows,source,amount){
   var detail=(printed[target.sourceIndex+1]||"").normalize("NFKC").match(/^([0-9]{10,14})[ \t]+([1-9][0-9]?)[ \t]+¥[ \t]*([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{1,7})[ \t]*(?:円)?[ \t]*(?:内|外|軽|[A-Z※*])?[ \t]*$/);
   if(!detail||detail[1]!==target.productCode||Number(detail[2])!==target.qty||Number(detail[3].replace(/,/g,""))!==target.total||target.unitPrice*target.qty!==target.total)return false;
   var knownQty=rows.reduce(function(sum,row){return sum+Number(row.qty||0)},0);
-  if(amount>=target.total||rows.some(function(row){return /^[0-9]+$/.test(row.receiptLineId||"")&&Number(row.receiptLineId)===amount}))return false;
+  if(amount>=target.total)return false;
   // Only a yen unit printed on this exact discount label resolves value collisions.
   if(!source.bareYenUnit&&(amount===source.count||amount===knownQty||rows.some(function(row){
-    return amount===row.qty||amount===row.unitPrice||amount===row.total||Number(row.productCode||0)===amount;
+    return amount===row.qty||amount===row.unitPrice||amount===row.total||Number(row.productCode||0)===amount||(/^[0-9]+$/.test(row.receiptLineId||"")&&Number(row.receiptLineId)===amount);
   })))return false;
   var following=String(source.following||"").normalize("NFKC"),nextProduct=receiptPrintedProductInfo(following);
   var nextReference=/^[ \t]*(?:[(\[【][ \t]*明細ID|明細ID[ \t]*:?[ \t]*[(\[【])/i.test(following);

@@ -95,9 +95,24 @@ for (const [role, qty, codes, values, label, resolved] of [
     itemQuantity: qty, productCodes: codes, deductions: values,
     body: `テスト"緑茶 (明細ID A101)\n${codes[0]} ${qty} ¥1,000\nテスト"緑茶 (明細ID B102)\n${codes[1]} ${qty} ¥1,000\n${first}\n${second}\n小計 ${qty * 2}点 ¥${net}\n合計 ¥${net}\n楽天ペイ ¥${net}` });
 }
+for (const [role, ids, values, label, resolved, foldedProducts = false] of [
+  ['matching', ['100', '200'], [100, 200], '値引額（円）', true],
+  ['crossed', ['100', '200'], [200, 100], '値引額（円）', true],
+  ['quantity', ['1', '2'], [1, 2], '値引額（円）', true],
+  ['missing-unit', ['100', '200'], [100, 200], '値引額', false],
+  ['duplicate', ['100', '000100'], [100, 200], '値引額（円）', false],
+  ['folded-products', ['100', '200'], [100, 200], '値引額（円）', false, true],
+  ['unknown-reference', ['100', '200'], [100, 200], '値引額（円）', false]
+]) {
+  const products = ids.map(id => `テスト"緑茶 (明細ID ${foldedProducts ? id[0] + '\n' + id.slice(1) : id})\n2200083271771 1 ¥1,000`).join('\n');
+  const first = `(明細ID ${role === 'unknown-reference' ? '300' : ids[0]}\n) ${label}\n${values[0]}`, second = `(明細ID ${ids[1]}\n) ${label}\n${values[1]}`;
+  const net = 2000 - values[0] - values[1];
+  mobileCases.push({ width: 412, amount: net, adjustment: `identity-close-${role}${resolved ? '' : '-unknown'}`, lineIds: ids, originalIdFold: first, deductions: values,
+    body: `${products}\n${first}\n${second}\n小計 2点 ¥${net}\n合計 ¥${net}\n楽天ペイ ¥${net}` });
+}
 for (const { width, amount, body, mixedTax = false, codePrice = false, adjustment, lineIds, originalIdFold, unwrappedId = false, itemQuantity = 1, productCodes = ['2200083271771', '2200083271771'], deductions = [100, 200] } of mobileCases) {
   const caseName = `${width}${adjustment ? '-' + adjustment : mixedTax ? '-mixed-tax' : codePrice ? '-product-code' : ''}`;
-  const separateCloseId = /^(?:separate|padded|discount|note|bare|split|amount|numeric|collision)-close-/.test(adjustment || '');
+  const separateCloseId = /^(?:separate|padded|discount|note|bare|split|amount|numeric|collision|identity)-close-/.test(adjustment || '');
   const separateCloseResolved = separateCloseId && !/-(?:ambiguous|unknown)$/.test(adjustment);
   const unresolvedSplitReference = (separateCloseId && !separateCloseResolved) || ['control-tab-reference', 'recovered-id-ambiguous', 'unmarked-id-ambiguous', 'longfold-id-ambiguous'].includes(adjustment);
   test(`mobile Chromium ${caseName}px: image crop, OCR review, apply, data safety`, { timeout: 60000 }, async () => {

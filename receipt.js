@@ -592,7 +592,7 @@ function receiptPrintedMarker(line){
   if(!bounded&&/^[A-Za-z0-9]/.test(after))valid=false;
   if(bounded&&after)after=receiptDiscountScopeNote(after);
   if(/[()\[\]【】]/.test(after.charAt(0)))valid=false;
-  return{id:valid?receiptPrintedIdValue(value,/^明細ID$/i.test(label),bounded):"",before:left.trim(),after:after};
+  return{id:valid?receiptPrintedIdValue(value,/^明細ID$/i.test(label),bounded):"",printedValue:valid?value:"",before:left.trim(),after:after};
 }
 function receiptDiscountScopeNote(text){
   var s=String(text||""),m=s.match(/^[ \t]*(?:([(\[【])[ \t]*(商品|単品)[ \t]*([)\]】])[ \t]*|(商品|単品)[ \t]+)((?:(?:値引|割引)(?:額)?|値下(?:げ)?額)[ \t]*:?[ \t]*¥?[ \t]*[-−ー]?[ \t]*(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]{1,7})[ \t]*(?:円)?[ \t]*)$/);
@@ -689,7 +689,7 @@ function receiptRecoverWrappedIds(text,shop){
   purchase.split("\n").forEach(function(line){
     var marker=receiptPrintedMarker(line),ref=receiptPrintedLineInfo(line);
     if(marker&&marker.id)known.push(marker.id);
-    if(ref&&ref.id&&ref.rest&&!receiptDiscountSummaryLine(ref.rest)&&!receiptIsPromotionalCoupon(ref.rest)&&discountAmountFromLine(ref.rest)>0)references.push(ref.id);
+    if(ref&&ref.id&&ref.rest&&!receiptDiscountSummaryLine(ref.rest)&&!receiptIsPromotionalCoupon(ref.rest)&&discountAmountFromLine(ref.rest)>0)references.push({id:ref.id,printedValue:marker.printedValue});
   });
   var proposals=[];
   for(var i=0;i<limit;i++){
@@ -710,7 +710,7 @@ function receiptRecoverWrappedIds(text,shop){
         var splitScope=scopeClose&&pair[m[2]]===scopeClose[1]?receiptDiscountContinuation(lines,j,limit,scopeClose[2]):null;
         if(splitScope){
           var splitText=joined+scopeClose[1]+" "+splitScope.text,splitRef=receiptPrintedLineInfo(splitText);
-          if(!splitRef||splitRef.id!==id||!splitRef.rest)break;
+          if(!splitRef||splitRef.id!==receiptPrintedIdValue(id,true,true)||!splitRef.rest)break;
           joined=splitText;end=splitScope.end;bareAmount=splitScope.bareAmount||0;bareYenUnit=!!splitScope.bareYenUnit;break;
         }
         var closeOnly=next.match(/^[ \t]*([)\]】])[ \t]*$/);
@@ -723,7 +723,7 @@ function receiptRecoverWrappedIds(text,shop){
         var closeDiscount=next.match(/^[ \t]*([)\]】])([ \t]*(?:商品|単品)?(?:(?:値引|割引)(?:額)?|値下(?:げ)?額)[ \t]*:?[ \t]*¥?[ \t]*[-−ー]?[ \t]*(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]{1,7})[ \t]*(?:円)?[ \t]*)$/);
         if(closeDiscount){
           var withDiscount=joined+closeDiscount[1]+closeDiscount[2],discountRef=receiptPrintedLineInfo(withDiscount);
-          if(pair[m[2]]!==closeDiscount[1]||!discountRef||discountRef.id!==id||!discountRef.rest||!discountAmountFromLine(discountRef.rest))break;
+          if(pair[m[2]]!==closeDiscount[1]||!discountRef||discountRef.id!==receiptPrintedIdValue(id,true,true)||!discountRef.rest||!discountAmountFromLine(discountRef.rest))break;
           joined=withDiscount;end=j;break;
         }
         if(/\t/.test(next)||!next.trim())break;
@@ -735,7 +735,7 @@ function receiptRecoverWrappedIds(text,shop){
           var finalScope=receiptDiscountContinuation(lines,j,limit,close[3]);
           if(finalScope){
             var finalText=joined+close[1]+close[2]+" "+finalScope.text,finalRef=receiptPrintedLineInfo(finalText);
-            if(!finalRef||finalRef.id!==id+close[1]||!finalRef.rest)break;
+            if(!finalRef||finalRef.id!==receiptPrintedIdValue(id+close[1],true,true)||!finalRef.rest)break;
             id+=close[1];joined=finalText;end=finalScope.end;bareAmount=finalScope.bareAmount||0;bareYenUnit=!!finalScope.bareYenUnit;break;
           }
           id+=close[1];joined+=close[1]+close[2]+close[3];end=j;break;
@@ -747,23 +747,31 @@ function receiptRecoverWrappedIds(text,shop){
         id+=middle[1];joined+=middle[1];
       }
     }
-    if(end<0||id.length>16||!receiptPrintedIdValue(id,true,true))continue;
-    var marker=receiptPrintedMarker(joined);if(!marker||marker.id!==id)continue;
+    var canonicalId=receiptPrintedIdValue(id,true,true),paddedNumeric=id!==canonicalId&&/^0[0-9]{1,5}$/.test(id);
+    if(end<0||id.length>16||!canonicalId)continue;
+    var marker=receiptPrintedMarker(joined);if(!marker||marker.id!==canonicalId)continue;
     // A complete printed token must corroborate this spelling. A spaced
     // variant with the same compact spelling makes the fold ambiguous.
-    if(known.some(function(k){return k!==id&&k.replace(/ /g,"")===id}))continue;
+    if(known.some(function(k){return k!==canonicalId&&(k.replace(/ /g,"")===id||(paddedNumeric&&receiptPrintedIdValue(k.replace(/ /g,""),true,true)===canonicalId))}))continue;
     var ref=receiptPrintedLineInfo(joined),isReference=!!(ref&&ref.rest&&discountAmountFromLine(ref.rest)>0);
     if(isReference){
-      var targets=priced.filter(function(row){return row.receiptLineId===id&&!row.candidateOnly});
+      var targets=priced.filter(function(row){return row.receiptLineId===canonicalId&&!row.candidateOnly});
       if(targets.length!==1)continue;
+      if(paddedNumeric){
+        // Numeric lookup IDs are canonical, but a new fold needs this exact printed spelling.
+        var targetLine=purchase.split("\n").map(function(line){return line.trim()}).filter(Boolean)[targets[0].sourceIndex]||"";
+        var targetMarker=receiptPrintedMarker(targetLine),targetProduct=receiptPrintedProductInfo(targetLine);
+        if(!targetProduct||targetProduct.id!==canonicalId||!targetMarker||targetMarker.printedValue!==id)continue;
+      }
       if(bareAmount){
         var evidence={purchase:purchase,text:lines.slice(0,limit).join("\n"),count:receiptItemCountFromText(original),following:end+1<limit?lines[end+1]:"",accountingBoundary:end+1===limit&&limit<lines.length,bareYenUnit:bareYenUnit};
         if(!receiptBareDiscountEvidence(targets[0],priced,evidence,bareAmount))continue;
       }
     }else{
-      if(references.filter(function(k){return k===id}).length!==1)continue;
+      var witnesses=references.filter(function(k){return k.id===canonicalId});
+      if(witnesses.length!==1||(paddedNumeric&&witnesses[0].printedValue!==id))continue;
     }
-    proposals.push({start:i,end:end,text:joined,id:id});i=end;
+    proposals.push({start:i,end:end,text:joined,id:canonicalId});i=end;
   }
   var selected=proposals.filter(function(p){return proposals.filter(function(other){return other.id===p.id}).length===1});
   while(selected.length){

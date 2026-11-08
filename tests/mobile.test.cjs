@@ -110,9 +110,26 @@ for (const [role, ids, values, label, resolved, foldedProducts = false] of [
   mobileCases.push({ width: 412, amount: net, adjustment: `identity-close-${role}${resolved ? '' : '-unknown'}`, lineIds: ids, originalIdFold: first, deductions: values,
     body: `${products}\n${first}\n${second}\n小計 2点 ¥${net}\n合計 ¥${net}\n楽天ペイ ¥${net}` });
 }
+for (const [role, printedIds, witnesses, values, bare, resolved] of [
+  ['reference', ['000100', '000200'], ['000100', '000200'], [100, 200], false, true],
+  ['product', ['000100', '000200'], ['000100', '000200'], [100, 200], false, true],
+  ['crossed', ['000100', '000200'], ['000100', '000200'], [200, 100], true, true],
+  ['different-zeros', ['000100', '000200'], ['100', '200'], [100, 200], false, false],
+  ['duplicate', ['000100', '100'], ['000100', '100'], [100, 200], false, false],
+  ['both', ['000100', '000200'], ['000100', '000200'], [100, 200], false, false],
+  ['missing-unit', ['000100', '000200'], ['000100', '000200'], [100, 200], true, false]
+]) {
+  const fold = id => id.slice(0, 2) + '\n' + id.slice(2);
+  const productFolded = role === 'product' || role === 'both';
+  const products = (productFolded ? printedIds.map(fold) : witnesses).map(id => `テスト"緑茶 (明細ID ${id})\n2200083271771 1 ¥1,000`).join('\n');
+  const refs = (role === 'product' ? witnesses : printedIds.map(fold)).map((id, i) => `(明細ID ${id}) ${bare ? (role === 'missing-unit' ? '値引額' : '値引額（円）') + '\n' : '値引 ¥'}${values[i]}`);
+  const net = 2000 - values[0] - values[1];
+  mobileCases.push({ width: 412, amount: net, adjustment: `zero-close-${role}${resolved ? '' : '-unknown'}`, lineIds: ['100', '200'], originalIdFold: productFolded ? fold(printedIds[0]) : refs[0], deductions: values,
+    body: `${products}\n${refs.join('\n')}\n小計 2点 ¥${net}\n合計 ¥${net}\n楽天ペイ ¥${net}` });
+}
 for (const { width, amount, body, mixedTax = false, codePrice = false, adjustment, lineIds, originalIdFold, unwrappedId = false, itemQuantity = 1, productCodes = ['2200083271771', '2200083271771'], deductions = [100, 200] } of mobileCases) {
   const caseName = `${width}${adjustment ? '-' + adjustment : mixedTax ? '-mixed-tax' : codePrice ? '-product-code' : ''}`;
-  const separateCloseId = /^(?:separate|padded|discount|note|bare|split|amount|numeric|collision|identity)-close-/.test(adjustment || '');
+  const separateCloseId = /^(?:separate|padded|discount|note|bare|split|amount|numeric|collision|identity|zero)-close-/.test(adjustment || '');
   const separateCloseResolved = separateCloseId && !/-(?:ambiguous|unknown)$/.test(adjustment);
   const unresolvedSplitReference = (separateCloseId && !separateCloseResolved) || ['control-tab-reference', 'recovered-id-ambiguous', 'unmarked-id-ambiguous', 'longfold-id-ambiguous'].includes(adjustment);
   test(`mobile Chromium ${caseName}px: image crop, OCR review, apply, data safety`, { timeout: 60000 }, async () => {
@@ -306,6 +323,7 @@ for (const { width, amount, body, mixedTax = false, codePrice = false, adjustmen
         assert.equal(plan.total, amount);
         assert.deepEqual(plan.rows.map(row => [row.name, row.discount, row.gross]), deductions.map(value => ['テスト緑茶', value, 1000 - value]));
         assert.equal(plan.rows.some(row => row.receiptLineId), false);
+        assert.equal(JSON.stringify(plan).includes('printedValue'), false);
       } else if (unresolvedSplitReference || ['multi-unassigned', 'repeat-unassigned', 'printed-id-unknown', 'post-id-unknown', 'alpha-id-unknown', 'separator-id-unknown', 'bounded-space-unknown', 'control-tab-reference', 'recovered-id-ambiguous', 'unmarked-id-ambiguous', 'longfold-id-ambiguous'].includes(adjustment)) {
         assert.equal(await page.locator('#receiptSplitPlan').count(), 0);
       }

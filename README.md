@@ -34,6 +34,7 @@ V3.71.19を基準にした調査とローカル改善です。公開版の更新
 - [第27段階：数字だけの値引額と明細IDの帰属判断の調査と修正](docs/数字だけの値引額と明細IDの帰属判断の調査と修正.md)
 - [第28段階：数量・単価・コードと一致する値引額の調査と修正](docs/数量単価コードと一致する値引額の調査と修正.md)
 - [第29段階：数字だけの明細IDと値引額が一致する場合の調査と修正](docs/数字だけの明細IDと値引額が一致する場合の調査と修正.md)
+- [第30段階：先頭ゼロ付き数字IDの折り返しと値引帰属の調査と修正](docs/先頭ゼロ付き数字IDの折り返しと値引帰属の調査と修正.md)
 - 既存テスト: `node tests/run.cjs`
 - 追加回帰: `node --test tests/regression.test.cjs`
 - 改善前後の比較: `node tests/compare.cjs`
@@ -66,6 +67,7 @@ V3.71.19を基準にした調査とローカル改善です。公開版の更新
 - 数字だけの値引額と帰属判断の回帰: `node --test tests/bare-discount-amount.test.cjs`
 - 数量・単価・コードと一致する値引額の回帰: `node --test tests/discount-value-collision.test.cjs`
 - 数字だけの明細IDと値引額が一致する場合の回帰: `node --test tests/numeric-id-discount.test.cjs`
+- 先頭ゼロ付き数字IDの折り返しと値引帰属の回帰: `node --test tests/padded-numeric-id-wrap.test.cjs`
 - モバイル表示の操作テスト: `node --test tests/mobile.test.cjs`（Playwright・Chromium系ブラウザが必要）
 
 schemaVersion 12と保存形式を維持しています。Android実機のOCR速度・認識精度測定は次段階です。

@@ -661,10 +661,21 @@ function receiptLiteralProductDetail(target,line){
   var detail=String(line||"").normalize("NFKC").trim().match(/^([0-9]{10,14})[ \t]+([1-9][0-9]?)[ \t]+¥[ \t]*([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{1,7})[ \t]*(?:円)?[ \t]*(?:内|外|軽|[A-Z※*])?[ \t]*$/);
   return !!(detail&&detail[1]===target.productCode&&Number(detail[2])===target.qty&&Number(detail[3].replace(/,/g,""))===target.total&&target.unitPrice*target.qty===target.total);
 }
+function receiptOmittedQuantityDetail(codeLine,unitLine){
+  var price=String(codeLine||"").normalize("NFKC").trim().match(/^([0-9]{10,14})[ \t]+¥[ \t]*([0-9]{1,3}(?:,[0-9]{3})+|[1-9][0-9]{0,6})[ \t]*(?:円)?[ \t]*(?:内|外|軽|[A-Z※*])?[ \t]*$/);
+  var unit=String(unitLine||"").normalize("NFKC").trim().match(/^(?:単価[ \t]*:?[ \t]*(?:¥[ \t]*([0-9]{1,3}(?:,[0-9]{3})+|[1-9][0-9]{0,6})[ \t]*(?:円)?|([0-9]{1,3}(?:,[0-9]{3})+|[1-9][0-9]{0,6})[ \t]*円)|@[ \t]*¥?[ \t]*([0-9]{1,3}(?:,[0-9]{3})+|[1-9][0-9]{0,6})[ \t]*(?:円)?)$/);
+  if(!price||!unit)return null;
+  var total=Number(price[2].replace(/,/g,"")),value=Number((unit[1]||unit[2]||unit[3]).replace(/,/g,"")),qty=total/value;
+  if(total<10||total>1000000||value<1||value>1000000||!Number.isInteger(qty)||qty<1||qty>99)return null;
+  return{code:price[1],qty:qty,total:total,unit:value,text:String(codeLine).normalize("NFKC").trim().replace(/^([0-9]{10,14})[ \t]+/,"$1 "+qty+" ")};
+}
+function receiptQuantityEvidenceMatches(target,evidence){
+  return !!(evidence&&evidence.code===target.productCode&&evidence.qty===target.qty&&evidence.total===target.total&&evidence.unit===target.unitPrice);
+}
 function receiptBareDiscountEvidence(target,rows,source,amount,deferBoundary){
   var printed=source.purchase.split("\n").map(function(line){return line.trim()}).filter(Boolean);
   var inline=receiptPrintedProductInfo(printed[target.sourceIndex]||"");
-  if(!inline||inline.id!==target.receiptLineId||!receiptLiteralProductDetail(target,printed[target.sourceIndex+1]))return false;
+  if(!inline||inline.id!==target.receiptLineId||!(source.quantityEvidence?receiptQuantityEvidenceMatches(target,source.quantityEvidence):receiptLiteralProductDetail(target,printed[target.sourceIndex+1])))return false;
   var knownQty=rows.reduce(function(sum,row){return sum+Number(row.qty||0)},0);
   if(amount>=target.total)return false;
   // Only a yen unit printed on this exact discount label resolves value collisions.
@@ -795,11 +806,22 @@ function receiptRecoverWrappedIds(text,shop){
     }
     proposals.push({start:i,end:end,text:joined,id:canonicalId,reference:attachedReference,bareReference:bareAmount&&!attachedReference?{end:end,bareAmount:bareAmount,bareYenUnit:bareYenUnit}:null,foldedProduct:paddedNumeric&&!isReference});i=end;
   }
-  var selected=proposals.filter(function(p){return proposals.filter(function(other){return other.id===p.id}).length===1});
+  // The attached reference and its standalone normalization are the same physical
+  // occurrence, even if an unprocessed unit label temporarily looked like a product.
+  var physical=proposals.filter(function(p){return !proposals.some(function(parent){return parent.foldedProduct&&parent.reference&&parent.id===p.id&&parent.reference.start===p.start&&parent.reference.end===p.end})});
+  var selected=physical.filter(function(p){return physical.filter(function(other){return other.id===p.id}).length===1});
   while(selected.length){
-    var trial=lines.slice();
+    var trial=lines.slice(),omittedDetails=Object.create(null);
     selected.forEach(function(p){
       [p,p.reference].filter(Boolean).forEach(function(change){trial[change.start]=change.text;for(var k=change.start+1;k<=change.end;k++)trial[k]=null});
+      if(p.foldedProduct){
+        var detail=receiptOmittedQuantityDetail(lines[p.end+1],lines[p.end+2]),at=p.end+3;
+        var following=at<limit?receiptPrintedMarker(lines[at]):null,inline=at<limit?receiptPrintedLineInfo(lines[at]):null,product=receiptPrintedMarker(p.text);
+        var adjacent=p.reference?p.reference.start===at:inline&&inline.id===p.id&&inline.rest&&!receiptDiscountSummaryLine(inline.rest)&&!receiptIsPromotionalCoupon(inline.rest)&&discountAmountFromLine(inline.rest)>0&&following&&following.printedValue===product.printedValue;
+        // A literal unit field belongs to this folded ID only when its original
+        // complete individual reference immediately follows the price/unit pair.
+        if(detail&&adjacent){trial[p.end+1]=detail.text;trial[p.end+2]=null;omittedDetails[p.start]=detail}
+      }
     });
     var rewritten=trial.filter(function(line){return line!==null}).join("\n"),finalRows=itemRowsFromText(productSourceText(rewritten),1,shop);
     var grounded=[],boundaries={};
@@ -819,7 +841,7 @@ function receiptRecoverWrappedIds(text,shop){
           var next=grounded.filter(function(other){
             if(other.start!==ref.end+1||!other.foldedProduct)return false;
             var product=receiptPrintedProductInfo(other.text),row=targetFor(other);
-            return product&&row&&product.id===other.id&&normalizeProductName(product.text)===row.name&&receiptLiteralProductDetail(row,lines[other.end+1]);
+            return product&&row&&product.id===other.id&&normalizeProductName(product.text)===row.name&&(receiptLiteralProductDetail(row,lines[other.end+1])||receiptQuantityEvidenceMatches(row,omittedDetails[other.start]));
           });
           if(next.length!==1)return;
           boundary.following=next[0].text;
@@ -832,9 +854,9 @@ function receiptRecoverWrappedIds(text,shop){
       var target=targetFor(p);if(!target||grounded.indexOf(p)<0)return false;
       var ref=p.reference||p.bareReference;
       if(ref&&ref.bareAmount){
-        // The original full reference attests the ID; check untouched price/quantity
-        // fields and the original amount boundary after applying only these ID folds.
-        var evidence={purchase:productSourceText(rewritten),text:lines.slice(0,limit).join("\n"),count:receiptItemCountFromText(original),following:boundaries[p.start].following,accountingBoundary:boundaries[p.start].accountingBoundary,bareYenUnit:ref.bareYenUnit};
+        // The original full reference attests the ID. Check literal merchandise
+        // fields or the original unit/total proof, plus the grounded amount boundary.
+        var evidence={purchase:productSourceText(rewritten),text:lines.slice(0,limit).join("\n"),count:receiptItemCountFromText(original),following:boundaries[p.start].following,accountingBoundary:boundaries[p.start].accountingBoundary,bareYenUnit:ref.bareYenUnit,quantityEvidence:omittedDetails[p.start]};
         if(!receiptBareDiscountEvidence(target,finalRows,evidence,ref.bareAmount))return false;
       }
       return true;

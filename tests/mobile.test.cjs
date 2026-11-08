@@ -159,9 +159,23 @@ for (const [role, money, firstComplete, refs, values, resolved] of [
   mobileCases.push({ width: 412, amount: net, adjustment: `boundary-close-${role}${resolved ? '' : '-unknown'}`, lineIds: ['100', '200'], originalIdFold: '00\n0200', deductions: values,
     body: `${items.join('\n')}\n小計 2点 ¥${net}\n合計 ¥${net}\n楽天ペイ ¥${net}` });
 }
-for (const { width, amount, body, mixedTax = false, codePrice = false, adjustment, lineIds, originalIdFold, unwrappedId = false, itemQuantity = 1, productCodes = ['2200083271771', '2200083271771'], deductions = [100, 200] } of mobileCases) {
+for (const [role, unitLine, qty, money, count, resolved] of [
+  ['one', '単価 ¥1,000', 1, 'yen', 2, true],
+  ['two', '単価 ¥500', 2, 'yen', 3, true],
+  ['bare', '@500', 2, 'bare', 3, true],
+  ['missing-unit', '', 1, 'yen', 2, false],
+  ['unknown-unit', '単価 500', 2, 'yen', 3, false],
+  ['fractional', '単価 ¥333', 1, 'yen', 2, false],
+  ['count-mismatch', '単価 ¥500', 2, 'yen', 2, false]
+]) {
+  const ref = (id, value) => `(明細ID ${id}) ${money === 'bare' ? '値引額（円）\n' : '値引\n¥'}${value}`;
+  const items = `テスト"緑茶 (明細ID 00\n0100)\n2200083271771 1 ¥1,000\n${ref('000100', 100)}\nテスト"緑茶 (明細ID 00\n0200)\n2200083271771 ¥1,000\n${unitLine ? unitLine + '\n' : ''}${ref('000200', 200)}`;
+  mobileCases.push({ width: 412, amount: 1700, adjustment: `quantity-close-${role}${resolved ? '' : '-unknown'}`, lineIds: ['100', '200'], originalIdFold: '00\n0200', itemQuantities: [1, qty], expectedUnits: [1000, 1000 / qty],
+    body: `${items}\n小計 ${count}点 ¥1700\n合計 ¥1700\n楽天ペイ ¥1700` });
+}
+for (const { width, amount, body, mixedTax = false, codePrice = false, adjustment, lineIds, originalIdFold, unwrappedId = false, itemQuantity = 1, itemQuantities = [itemQuantity, itemQuantity], expectedUnits, productCodes = ['2200083271771', '2200083271771'], deductions = [100, 200] } of mobileCases) {
   const caseName = `${width}${adjustment ? '-' + adjustment : mixedTax ? '-mixed-tax' : codePrice ? '-product-code' : ''}`;
-  const separateCloseId = /^(?:separate|padded|discount|note|bare|split|amount|numeric|collision|identity|zero|witness|boundary)-close-/.test(adjustment || '');
+  const separateCloseId = /^(?:separate|padded|discount|note|bare|split|amount|numeric|collision|identity|zero|witness|boundary|quantity)-close-/.test(adjustment || '');
   const separateCloseResolved = separateCloseId && !/-(?:ambiguous|unknown)$/.test(adjustment);
   const unresolvedSplitReference = (separateCloseId && !separateCloseResolved) || ['control-tab-reference', 'recovered-id-ambiguous', 'unmarked-id-ambiguous', 'longfold-id-ambiguous'].includes(adjustment);
   test(`mobile Chromium ${caseName}px: image crop, OCR review, apply, data safety`, { timeout: 60000 }, async () => {
@@ -239,7 +253,8 @@ for (const { width, amount, body, mixedTax = false, codePrice = false, adjustmen
           assert.equal(await page.locator('#receiptOCRPanel').getAttribute('data-product-candidate-auto-confirmed'), '');
           assert.equal(await page.locator('.receipt-line-id').count(), 0);
         } else {
-          assert.deepEqual(rows.map(row => [row.receiptLineId, row.productCode, row.qty, row.total]), ids.map((id, i) => [id, productCodes[i], itemQuantity, 1000]));
+          assert.deepEqual(rows.map(row => [row.receiptLineId, row.productCode, row.qty, row.total]), ids.map((id, i) => [id, productCodes[i], itemQuantities[i], 1000]));
+          if (expectedUnits) assert.deepEqual(rows.map(row => row.unitPrice), expectedUnits);
           assert.deepEqual(await page.locator('.receipt-line-id').allTextContents(), ids.map(id => '明細番号: ' + id));
           if (lineIds) assert.equal(await page.locator('.receipt-line-id').first().evaluate(el => getComputedStyle(el).whiteSpace), 'pre-wrap');
         }
@@ -358,6 +373,7 @@ for (const { width, amount, body, mixedTax = false, codePrice = false, adjustmen
         assert.equal(JSON.stringify(plan).includes('printedValue'), false);
         assert.equal(plan.rows.some(row => Object.hasOwn(row, 'reference')), false);
         assert.equal(plan.rows.some(row => Object.hasOwn(row, 'bareReference') || Object.hasOwn(row, 'foldedProduct')), false);
+        assert.equal(plan.rows.some(row => Object.hasOwn(row, 'quantityEvidence')), false);
       } else if (unresolvedSplitReference || ['multi-unassigned', 'repeat-unassigned', 'printed-id-unknown', 'post-id-unknown', 'alpha-id-unknown', 'separator-id-unknown', 'bounded-space-unknown', 'control-tab-reference', 'recovered-id-ambiguous', 'unmarked-id-ambiguous', 'longfold-id-ambiguous'].includes(adjustment)) {
         assert.equal(await page.locator('#receiptSplitPlan').count(), 0);
       }

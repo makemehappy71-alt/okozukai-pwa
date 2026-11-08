@@ -857,17 +857,21 @@ function receiptRecoverWrappedIds(text,shop){
     selected.forEach(function(p){
       [p,p.reference].filter(Boolean).forEach(function(change){trial[change.start]=change.text;for(var k=change.start+1;k<=change.end;k++)trial[k]=null});
       if(p.foldedProduct){
-        var second=p.end+2,scopeAt=second,product=receiptPrintedMarker(p.text);
+        var firstPrice=p.end+1;
+        // Only formatting rows after the CLOSED original product ID may precede
+        // the literal pair. Its full independent reference must still follow it.
+        while(firstPrice<limit&&/^[ \t]*$/.test(lines[firstPrice].normalize("NFKC")))firstPrice++;
+        var second=firstPrice+1,scopeAt=second,product=receiptPrintedMarker(p.text);
         while(scopeAt<limit&&/^[ \t]*$/.test(lines[scopeAt].normalize("NFKC")))scopeAt++;
         var scope=scopeMarkers[scopeAt];
         // A single scope note must identify this exact printed product and be
         // the only full occurrence besides its independent discount reference.
         var scoped=scope&&scope.id===p.id&&scope.printedValue===product.printedValue&&fullIdCounts[p.id]===2;
         // Formatting rows may surround this one identified scope BETWEEN the
-        // price fields. Never cross other text or gaps at either ID boundary.
+        // price fields. Never cross other text or gaps before the reference.
         if(scoped){second=scope.end+1;while(second<limit&&/^[ \t]*$/.test(lines[second].normalize("NFKC")))second++}
         else if(second<limit&&/^[ \t]*$/.test(lines[second].normalize("NFKC")))second++;
-        var detail=second<limit&&(receiptOmittedQuantityDetail(lines[p.end+1],lines[second])||receiptOmittedQuantityDetail(lines[second],lines[p.end+1])),at=second+1;
+        var detail=second<limit&&(receiptOmittedQuantityDetail(lines[firstPrice],lines[second])||receiptOmittedQuantityDetail(lines[second],lines[firstPrice])),at=second+1;
         var following=at<limit?receiptPrintedMarker(lines[at]):null,inline=at<limit?receiptPrintedLineInfo(lines[at]):null;
         var adjacent=p.reference?p.reference.start===at:inline&&inline.id===p.id&&inline.rest&&!receiptDiscountSummaryLine(inline.rest)&&!receiptIsPromotionalCoupon(inline.rest)&&discountAmountFromLine(inline.rest)>0&&following&&following.printedValue===product.printedValue;
         // A literal unit field belongs to this folded ID only when its original

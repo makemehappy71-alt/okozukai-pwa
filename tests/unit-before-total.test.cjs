@@ -58,7 +58,10 @@ for (const money of ['yen', 'bare']) {
   for (const barrier of ['', '\t', '注記', '数量 3', '@1000', '(明細ID 000300)']) test(`${money} ${JSON.stringify(barrier)} after total does not preserve reference adjacency`, () => {
     held(parse(receipt(body({ money }).replace(code + ' ¥1,000\n', code + ' ¥1,000\n' + barrier + '\n'))));
   });
-  for (const barrier of ['', '\t', '注記', '@1000']) test(`${money} ${JSON.stringify(barrier)} before unit does not belong to the product`, () => {
+  for (const gap of ['', '\t']) test(`${money} original formatting rows after the closed ID keep literal unit evidence`, () => {
+    assigned(parse(receipt(body({ money }).replace('単価 ¥500', gap + '\n単価 ¥500'))));
+  });
+  for (const barrier of ['注記', '@1000']) test(`${money} ${JSON.stringify(barrier)} before unit does not belong to the product`, () => {
     held(parse(receipt(body({ money }).replace('単価 ¥500', barrier + '\n単価 ¥500'))));
   });
   for (const accounting of [{ count: 0 }, { count: 2 }, { count: 4 }, { net: 1699 }, { paid: false }]) test(`${money} unit order does not replace accounting ${JSON.stringify(accounting)}`, () => held(parse(receipt(body({ money }), accounting))));

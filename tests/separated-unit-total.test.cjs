@@ -28,9 +28,9 @@ for (const order of ['unit-first', 'total-first']) for (const money of ['yen', '
   test(`${order}/${money} original complete first ID remains usable`, () => assigned(parse(fixture({ order, money, firstComplete: true }))));
   test(`${order}/${money} inline original reference bounds the price block`, () => assigned(parse(fixture({ order, money, inline: true }))));
   test(`${order}/${money} external tax remains accounted`, () => assigned(parse(fixture({ order, money, tax: 136 })), 2, [972, 864]));
-  for (const position of ['before', 'after']) test(`${order}/${money} a blank outside the price pair remains a barrier: ${position}`, () => {
+  for (const position of ['before', 'after']) test(`${order}/${money} formatting beside the price pair keeps the reference boundary: ${position}`, () => {
     const text = fixture({ order, money });
-    held(parse(position === 'before' ? text.replace('00\n0200)\n', '00\n0200)\n\n') : text.replace(`\n(明細ID 000200)`, '\n\n(明細ID 000200)')));
+    const p = parse(position === 'before' ? text.replace('00\n0200)\n', '00\n0200)\n\n') : text.replace(`\n(明細ID 000200)`, '\n\n(明細ID 000200)'));if (position === 'before') assigned(p);else held(p);
   });
   test(`${order}/${money} extra nonblank rows after an empty row are not scanned past`, () => held(parse(fixture({ order, money, gap: '\n注記' }))));
   test(`${order}/${money} repeated whitespace rows exceed the bounded gap`, () => held(parse(fixture({ order, money, gap: ' \n\t' }))));

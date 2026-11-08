@@ -868,16 +868,19 @@ function receiptRecoverWrappedIds(text,shop){
         // the only full occurrence besides its independent discount reference.
         var scoped=scope&&scope.id===p.id&&scope.printedValue===product.printedValue&&fullIdCounts[p.id]===2;
         // Formatting rows may surround this one identified scope BETWEEN the
-        // price fields. Never cross other text or gaps before the reference.
+        // price fields. Never cross other text.
         if(scoped){second=scope.end+1;while(second<limit&&/^[ \t]*$/.test(lines[second].normalize("NFKC")))second++}
         else if(second<limit&&/^[ \t]*$/.test(lines[second].normalize("NFKC")))second++;
         var detail=second<limit&&(receiptOmittedQuantityDetail(lines[firstPrice],lines[second])||receiptOmittedQuantityDetail(lines[second],lines[firstPrice])),at=second+1;
+        // Formatting rows may precede the ORIGINAL complete reference, but never
+        // skip another field, join its ID, or change its label/amount boundaries.
+        while(at<limit&&/^[ \t]*$/.test(lines[at].normalize("NFKC")))at++;
         var following=at<limit?receiptPrintedMarker(lines[at]):null,inline=at<limit?receiptPrintedLineInfo(lines[at]):null;
         var adjacent=p.reference?p.reference.start===at:inline&&inline.id===p.id&&inline.rest&&!receiptDiscountSummaryLine(inline.rest)&&!receiptIsPromotionalCoupon(inline.rest)&&discountAmountFromLine(inline.rest)>0&&following&&following.printedValue===product.printedValue;
         // A literal unit field belongs to this folded ID only when its original
-        // complete individual reference immediately follows this bounded pair.
+        // complete individual reference follows this bounded pair and formatting.
         // The pair may print unit before total; only the analysis copy is reordered.
-        if(detail&&adjacent){trial[p.end+1]=detail.text;for(var dk=p.end+2;dk<=second;dk++)trial[dk]=null;omittedDetails[p.start]=detail}
+        if(detail&&adjacent){trial[p.end+1]=detail.text;for(var dk=p.end+2;dk<at;dk++)trial[dk]=null;omittedDetails[p.start]=detail}
       }
     });
     var rewritten=trial.filter(function(line){return line!==null}).join("\n"),finalRows=itemRowsFromText(productSourceText(rewritten),1,shop);

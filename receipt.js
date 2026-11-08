@@ -672,10 +672,10 @@ function receiptOmittedQuantityDetail(codeLine,unitLine){
 function receiptQuantityScopeMarker(line){
   var s=String(line||"").normalize("NFKC").replace(/^[ \t]+|[ \t]+$/g,"");
   if(!/商品|単品/.test(s)||!/明細ID/i.test(s))return null;
-  // Without ID brackets, horizontal whitespace must delimit the scope word;
-  // the literal numeric ID then ends at this boundary or at the row end.
-  var plainBefore=s.match(/^((?:商品|単品)|[(\[【][ \t]*(?:商品|単品)[ \t]*[)\]】])[ \t]+(明細ID[ \t]*:?[ \t]*0[0-9]{1,5})$/i);
-  var plainAfter=s.match(/^(明細ID[ \t]*:?[ \t]*0[0-9]{1,5})[ \t]+((?:商品|単品)|[(\[【][ \t]*(?:商品|単品)[ \t]*[)\]】])$/i);
+  // Exact scope/ID labels and the numeric run delimit the fields, with or
+  // without whitespace. The entire row must contain only this fixed grammar.
+  var plainBefore=s.match(/^((?:商品|単品)|[(\[【][ \t]*(?:商品|単品)[ \t]*[)\]】])[ \t]*(明細ID[ \t]*:?[ \t]*0[0-9]{1,5})$/i);
+  var plainAfter=s.match(/^(明細ID[ \t]*:?[ \t]*0[0-9]{1,5})[ \t]*((?:商品|単品)|[(\[【][ \t]*(?:商品|単品)[ \t]*[)\]】])$/i);
   var before=plainBefore||s.match(/^((?:商品|単品)|[(\[【][ \t]*(?:商品|単品)[ \t]*[)\]】])[ \t]*(.+)$/);
   var after=before?null:plainAfter||s.match(/^(.*?[)\]】])[ \t]*((?:商品|単品)|[(\[【][ \t]*(?:商品|単品)[ \t]*[)\]】])$/);
   var scope=before?before[1]:after?after[2]:"",idText=before?before[2]:after?after[1]:"";

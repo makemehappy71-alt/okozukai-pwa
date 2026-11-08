@@ -10,6 +10,8 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE_PATH || 'playwright')
 const root = path.resolve(__dirname, '..');
 const output = path.join(root, '.test-artifacts');
 fs.mkdirSync(output, { recursive: true });
+const browserTestTimeout = Number(process.env.BROWSER_TEST_TIMEOUT_MS || 60000);
+assert(Number.isInteger(browserTestTimeout) && browserTestTimeout >= 60000 && browserTestTimeout <= 180000);
 
 const mobileCases = [
   { width: 360, amount: 108, body: 'テスト"緑茶 ¥100\n小計 1点 ¥100\n消費税 ¥8\n合計 ¥108\n楽天ペイ ¥108' },
@@ -173,12 +175,26 @@ for (const [role, unitLine, qty, money, count, resolved] of [
   mobileCases.push({ width: 412, amount: 1700, adjustment: `quantity-close-${role}${resolved ? '' : '-unknown'}`, lineIds: ['100', '200'], originalIdFold: '00\n0200', itemQuantities: [1, qty], expectedUnits: [1000, 1000 / qty],
     body: `${items}\n小計 ${count}点 ¥1700\n合計 ¥1700\n楽天ペイ ¥1700` });
 }
+for (const [role, unitLine, qty, money, referenceId, count, resolved] of [
+  ['one', '単価 ¥1,000', 1, 'yen', '000200', 2, true],
+  ['two', '単価 ¥500', 2, 'yen', '000200', 3, true],
+  ['bare', '@500', 2, 'bare', '000200', 3, true],
+  ['barrier', '単価 ¥500\n注記', 2, 'yen', '000200', 3, false],
+  ['missing-unit', '', 1, 'yen', '000200', 2, false],
+  ['fractional', '単価 ¥333', 1, 'yen', '000200', 2, false],
+  ['different-zeros', '単価 ¥500', 2, 'yen', '200', 3, false]
+]) {
+  const ref = (id, value) => `(明細ID ${id}) ${money === 'bare' ? '値引額（円）\n' : '値引\n¥'}${value}`;
+  const items = `テスト"緑茶 (明細ID 00\n0100)\n2200083271771 1 ¥1,000\n${ref('000100', 100)}\nテスト"緑茶 (明細ID 00\n0200)\n${unitLine ? unitLine + '\n' : ''}2200083271771 ¥1,000\n${ref(referenceId, 200)}`;
+  mobileCases.push({ width: 412, amount: 1700, adjustment: `preceding-close-${role}${resolved ? '' : '-unknown'}`, lineIds: ['100', '200'], originalIdFold: '00\n0200', itemQuantities: [1, qty], expectedUnits: [1000, 1000 / qty],
+    body: `${items}\n小計 ${count}点 ¥1700\n合計 ¥1700\n楽天ペイ ¥1700` });
+}
 for (const { width, amount, body, mixedTax = false, codePrice = false, adjustment, lineIds, originalIdFold, unwrappedId = false, itemQuantity = 1, itemQuantities = [itemQuantity, itemQuantity], expectedUnits, productCodes = ['2200083271771', '2200083271771'], deductions = [100, 200] } of mobileCases) {
   const caseName = `${width}${adjustment ? '-' + adjustment : mixedTax ? '-mixed-tax' : codePrice ? '-product-code' : ''}`;
-  const separateCloseId = /^(?:separate|padded|discount|note|bare|split|amount|numeric|collision|identity|zero|witness|boundary|quantity)-close-/.test(adjustment || '');
+  const separateCloseId = /^(?:separate|padded|discount|note|bare|split|amount|numeric|collision|identity|zero|witness|boundary|quantity|preceding)-close-/.test(adjustment || '');
   const separateCloseResolved = separateCloseId && !/-(?:ambiguous|unknown)$/.test(adjustment);
   const unresolvedSplitReference = (separateCloseId && !separateCloseResolved) || ['control-tab-reference', 'recovered-id-ambiguous', 'unmarked-id-ambiguous', 'longfold-id-ambiguous'].includes(adjustment);
-  test(`mobile Chromium ${caseName}px: image crop, OCR review, apply, data safety`, { timeout: 60000 }, async () => {
+  test(`mobile Chromium ${caseName}px: image crop, OCR review, apply, data safety`, { timeout: browserTestTimeout }, async () => {
     const allowed = new Set(['index.html', 'app.js', 'receipt.js', 'styles.css', 'sw.js', 'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png']);
     const server = http.createServer((request, response) => {
       const name = new URL(request.url, 'http://localhost').pathname.slice(1) || 'index.html';
@@ -391,7 +407,7 @@ for (const { width, amount, body, mixedTax = false, codePrice = false, adjustmen
   });
 }
 
-test('deferred OCR crops preserve baseline bitmap pixels in Chromium', { timeout: 60000 }, async () => {
+test('deferred OCR crops preserve baseline bitmap pixels in Chromium', { timeout: browserTestTimeout }, async () => {
   const before = execFileSync('git', ['show', 'fd3d18a4138be0d3a1f13800047e0091914c064e:receipt.js'], { cwd: root, encoding: 'utf8', maxBuffer: 2 * 1024 * 1024 });
   const after = fs.readFileSync(path.join(root, 'receipt.js'), 'utf8');
   const browser = await chromium.launch({ headless: true, ...(process.env.BROWSER_PATH ? { executablePath: process.env.BROWSER_PATH } : {}) });

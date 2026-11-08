@@ -815,11 +815,12 @@ function receiptRecoverWrappedIds(text,shop){
     selected.forEach(function(p){
       [p,p.reference].filter(Boolean).forEach(function(change){trial[change.start]=change.text;for(var k=change.start+1;k<=change.end;k++)trial[k]=null});
       if(p.foldedProduct){
-        var detail=receiptOmittedQuantityDetail(lines[p.end+1],lines[p.end+2]),at=p.end+3;
+        var detail=receiptOmittedQuantityDetail(lines[p.end+1],lines[p.end+2])||receiptOmittedQuantityDetail(lines[p.end+2],lines[p.end+1]),at=p.end+3;
         var following=at<limit?receiptPrintedMarker(lines[at]):null,inline=at<limit?receiptPrintedLineInfo(lines[at]):null,product=receiptPrintedMarker(p.text);
         var adjacent=p.reference?p.reference.start===at:inline&&inline.id===p.id&&inline.rest&&!receiptDiscountSummaryLine(inline.rest)&&!receiptIsPromotionalCoupon(inline.rest)&&discountAmountFromLine(inline.rest)>0&&following&&following.printedValue===product.printedValue;
         // A literal unit field belongs to this folded ID only when its original
-        // complete individual reference immediately follows the price/unit pair.
+        // complete individual reference immediately follows the adjacent pair.
+        // The pair may print unit before total; only the analysis copy is reordered.
         if(detail&&adjacent){trial[p.end+1]=detail.text;trial[p.end+2]=null;omittedDetails[p.start]=detail}
       }
     });

@@ -38,6 +38,7 @@ V3.71.19を基準にした調査とローカル改善です。公開版の更新
 - [第31段階：折り返し商品IDと別行値引参照の調査と修正](docs/折り返し商品IDと別行値引参照の調査と修正.md)
 - [第32段階：値引額直後の折り返し商品IDと終端判断の調査と修正](docs/値引額直後の折り返し商品IDと終端判断の調査と修正.md)
 - [第33段階：数量省略の次商品と値引終端判断の調査と修正](docs/数量省略の次商品と値引終端判断の調査と修正.md)
+- [第34段階：単価先行の次商品と値引終端判断の調査と修正](docs/単価先行の次商品と値引終端判断の調査と修正.md)
 - 既存テスト: `node tests/run.cjs`
 - 追加回帰: `node --test tests/regression.test.cjs`
 - 改善前後の比較: `node tests/compare.cjs`
@@ -74,6 +75,7 @@ V3.71.19を基準にした調査とローカル改善です。公開版の更新
 - 折り返し商品IDと別行値引参照の回帰: `node --test tests/padded-product-split-discount.test.cjs`
 - 値引額直後の折り返し商品IDと終端判断の回帰: `node --test tests/next-folded-product-boundary.test.cjs`
 - 数量省略の次商品と値引終端判断の回帰: `node --test tests/omitted-next-quantity.test.cjs`
+- 単価先行の次商品と値引終端判断の回帰: `node --test tests/unit-before-total.test.cjs`
 - モバイル表示の操作テスト: `node --test tests/mobile.test.cjs`（Playwright・Chromium系ブラウザが必要）
 
 schemaVersion 12と保存形式を維持しています。Android実機のOCR速度・認識精度測定は次段階です。

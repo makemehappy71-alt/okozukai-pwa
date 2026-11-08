@@ -44,6 +44,7 @@ V3.71.19を基準にした調査とローカル改善です。公開版の更新
 - [第37段階：完全ID付き商品・単品注記と値引終端判断の調査と修正](docs/完全ID付き商品・単品注記と値引終端判断の調査と修正.md)
 - [第38段階：括弧なし完全ID付き注記と値引終端判断の調査と修正](docs/括弧なし完全ID付き注記と値引終端判断の調査と修正.md)
 - [第39段階：空白なし注記と括弧なし完全IDの調査と修正](docs/空白なし注記と括弧なし完全IDの調査と修正.md)
+- [第40段階：コロン・ハイフン付き注記と括弧なし完全IDの調査と修正](docs/コロン・ハイフン付き注記と括弧なし完全IDの調査と修正.md)
 - 既存テスト: `node tests/run.cjs`
 - 追加回帰: `node --test tests/regression.test.cjs`
 - 改善前後の比較: `node tests/compare.cjs`
@@ -86,6 +87,7 @@ V3.71.19を基準にした調査とローカル改善です。公開版の更新
 - 完全ID付き商品・単品注記と値引終端判断の回帰: `node --test tests/identified-scope-gap.test.cjs`
 - 括弧なし完全ID付き注記と値引終端判断の回帰: `node --test tests/unbracketed-scope-id.test.cjs`
 - 空白なし注記と括弧なし完全IDの回帰: `node --test tests/joined-scope-id.test.cjs`
+- コロン・ハイフン付き注記と括弧なし完全IDの回帰: `node --test tests/scope-id-punctuation.test.cjs`
 - モバイル表示の操作テスト: `node --test tests/mobile.test.cjs`（Playwright・Chromium系ブラウザが必要）
 
 schemaVersion 12と保存形式を維持しています。Android実機のOCR速度・認識精度測定は次段階です。

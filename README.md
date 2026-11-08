@@ -40,6 +40,7 @@ V3.71.19を基準にした調査とローカル改善です。公開版の更新
 - [第33段階：数量省略の次商品と値引終端判断の調査と修正](docs/数量省略の次商品と値引終端判断の調査と修正.md)
 - [第34段階：単価先行の次商品と値引終端判断の調査と修正](docs/単価先行の次商品と値引終端判断の調査と修正.md)
 - [第35段階：空行を挟む単価と商品計の調査と修正](docs/空行を挟む単価と商品計の調査と修正.md)
+- [第36段階：商品・単品注記と数量省略明細の再検証](docs/商品・単品注記と数量省略明細の再検証.md)
 - 既存テスト: `node tests/run.cjs`
 - 追加回帰: `node --test tests/regression.test.cjs`
 - 改善前後の比較: `node tests/compare.cjs`
@@ -78,6 +79,7 @@ V3.71.19を基準にした調査とローカル改善です。公開版の更新
 - 数量省略の次商品と値引終端判断の回帰: `node --test tests/omitted-next-quantity.test.cjs`
 - 単価先行の次商品と値引終端判断の回帰: `node --test tests/unit-before-total.test.cjs`
 - 空行を挟む単価と商品計の回帰: `node --test tests/separated-unit-total.test.cjs`
+- 商品・単品注記と数量省略明細の回帰: `node --test tests/product-scope-gap.test.cjs`
 - モバイル表示の操作テスト: `node --test tests/mobile.test.cjs`（Playwright・Chromium系ブラウザが必要）
 
 schemaVersion 12と保存形式を維持しています。Android実機のOCR速度・認識精度測定は次段階です。

@@ -82,9 +82,22 @@ const mobileCases = [
   { width: 412, amount: 1700, adjustment: 'numeric-close-id-ambiguous', lineIds: ['A101', 'A 101'], body: 'テスト"緑茶 (明細ID A101)\n2200083271771 1 ¥1,000\nテスト"緑茶 (明細ID A 101)\n2200083271771 1 ¥1,000\n(明細ID A\n101) 値引額\n100\n(明細ID A 101) 値引額 ¥200\n小計 2点 ¥1,700\n合計 ¥1,700\n楽天ペイ ¥1,700' },
   { width: 412, amount: 1700, adjustment: 'numeric-close-suffix-unknown', lineIds: ['A101', 'B102'], body: 'テスト"緑茶 (明細ID A101)\n2200083271771 1 ¥1,000\nテスト"緑茶 (明細ID B102)\n2200083271771 1 ¥1,000\n(明細ID A101\n) 値引額\n100\n個\n(明細ID B102\n) 値引額\n200\n小計 2点 ¥1,700\n合計 ¥1,700\n楽天ペイ ¥1,700' }
 ];
-for (const { width, amount, body, mixedTax = false, codePrice = false, adjustment, lineIds, originalIdFold, unwrappedId = false } of mobileCases) {
+for (const [role, qty, codes, values, label, resolved] of [
+  ['quantity', 2, ['2200083271771', '2200083271771'], [2, 2], '値引額（円）', true],
+  ['unit', 10, ['2200083271771', '2200083271771'], [100, 200], '値引額（円）', true],
+  ['code', 1, ['0000000000100', '0000000000200'], [100, 200], '値引額（円）', true],
+  ['wrong-unit', 10, ['2200083271771', '2200083271771'], [100, 200], '値引額(個)', false],
+  ['missing-local', 10, ['2200083271771', '2200083271771'], [100, 200], '値引額', false]
+]) {
+  const first = `(明細ID A101\n) ${label}\n${values[0]}`, second = `(明細ID B102\n) 値引額（円）\n${values[1]}`;
+  const net = 2000 - values[0] - values[1];
+  mobileCases.push({ width: 412, amount: net, adjustment: `collision-close-${role}${resolved ? '' : '-unknown'}`, lineIds: ['A101', 'B102'], originalIdFold: first,
+    itemQuantity: qty, productCodes: codes, deductions: values,
+    body: `テスト"緑茶 (明細ID A101)\n${codes[0]} ${qty} ¥1,000\nテスト"緑茶 (明細ID B102)\n${codes[1]} ${qty} ¥1,000\n${first}\n${second}\n小計 ${qty * 2}点 ¥${net}\n合計 ¥${net}\n楽天ペイ ¥${net}` });
+}
+for (const { width, amount, body, mixedTax = false, codePrice = false, adjustment, lineIds, originalIdFold, unwrappedId = false, itemQuantity = 1, productCodes = ['2200083271771', '2200083271771'], deductions = [100, 200] } of mobileCases) {
   const caseName = `${width}${adjustment ? '-' + adjustment : mixedTax ? '-mixed-tax' : codePrice ? '-product-code' : ''}`;
-  const separateCloseId = /^(?:separate|padded|discount|note|bare|split|amount|numeric)-close-/.test(adjustment || '');
+  const separateCloseId = /^(?:separate|padded|discount|note|bare|split|amount|numeric|collision)-close-/.test(adjustment || '');
   const separateCloseResolved = separateCloseId && !/-(?:ambiguous|unknown)$/.test(adjustment);
   const unresolvedSplitReference = (separateCloseId && !separateCloseResolved) || ['control-tab-reference', 'recovered-id-ambiguous', 'unmarked-id-ambiguous', 'longfold-id-ambiguous'].includes(adjustment);
   test(`mobile Chromium ${caseName}px: image crop, OCR review, apply, data safety`, { timeout: 60000 }, async () => {
@@ -162,7 +175,7 @@ for (const { width, amount, body, mixedTax = false, codePrice = false, adjustmen
           assert.equal(await page.locator('#receiptOCRPanel').getAttribute('data-product-candidate-auto-confirmed'), '');
           assert.equal(await page.locator('.receipt-line-id').count(), 0);
         } else {
-          assert.deepEqual(rows.map(row => [row.receiptLineId, row.productCode, row.qty, row.total]), ids.map(id => [id, '2200083271771', 1, 1000]));
+          assert.deepEqual(rows.map(row => [row.receiptLineId, row.productCode, row.qty, row.total]), ids.map((id, i) => [id, productCodes[i], itemQuantity, 1000]));
           assert.deepEqual(await page.locator('.receipt-line-id').allTextContents(), ids.map(id => '明細番号: ' + id));
           if (lineIds) assert.equal(await page.locator('.receipt-line-id').first().evaluate(el => getComputedStyle(el).whiteSpace), 'pre-wrap');
         }
@@ -178,7 +191,7 @@ for (const { width, amount, body, mixedTax = false, codePrice = false, adjustmen
         }
         if (separateCloseResolved || ['printed-id', 'inline-id', 'post-id', 'wrapped-id', 'alpha-id', 'separator-id', 'separator-post-id', 'bounded-space-id', 'bounded-repeat-id', 'control-tab-layout', 'control-cr-receipt', 'control-cr-reference', 'recovered-product-id', 'recovered-reference-id', 'unmarked-product-id', 'unmarked-reference-id', 'longfold-product-id', 'longfold-reference-id'].includes(adjustment)) {
           const split = await page.locator('#receiptOCRPanel').evaluate(el => JSON.parse(el.dataset.splitRows));
-          assert.deepEqual(split.map(row => [row.discount, row.gross]), [[100, 900], [200, 800]]);
+          assert.deepEqual(split.map(row => [row.discount, row.gross]), deductions.map(value => [value, 1000 - value]));
         } else {
           assert.equal(await page.locator('.receipt-discount-warning').isVisible(), true);
           assert.equal(await page.locator('#receiptSplitEnabled').count(), 0);
@@ -275,8 +288,8 @@ for (const { width, amount, body, mixedTax = false, codePrice = false, adjustmen
         assert.deepEqual(plan.rows.map(row => [row.name, row.discount, row.gross]), [['テスト緑茶', 100, 900], ['歯ブラシ', 200, 300]]);
       } else if (separateCloseResolved || ['repeat-code', 'printed-id', 'inline-id', 'post-id', 'wrapped-id', 'alpha-id', 'separator-id', 'separator-post-id', 'bounded-space-id', 'bounded-repeat-id', 'control-tab-layout', 'control-cr-receipt', 'control-cr-reference', 'recovered-product-id', 'recovered-reference-id', 'unmarked-product-id', 'unmarked-reference-id', 'longfold-product-id', 'longfold-reference-id'].includes(adjustment)) {
         const plan = JSON.parse(await page.locator('#receiptSplitPlan').inputValue());
-        assert.equal(plan.total, 1700);
-        assert.deepEqual(plan.rows.map(row => [row.name, row.discount, row.gross]), [['テスト緑茶', 100, 900], ['テスト緑茶', 200, 800]]);
+        assert.equal(plan.total, amount);
+        assert.deepEqual(plan.rows.map(row => [row.name, row.discount, row.gross]), deductions.map(value => ['テスト緑茶', value, 1000 - value]));
         assert.equal(plan.rows.some(row => row.receiptLineId), false);
       } else if (unresolvedSplitReference || ['multi-unassigned', 'repeat-unassigned', 'printed-id-unknown', 'post-id-unknown', 'alpha-id-unknown', 'separator-id-unknown', 'bounded-space-unknown', 'control-tab-reference', 'recovered-id-ambiguous', 'unmarked-id-ambiguous', 'longfold-id-ambiguous'].includes(adjustment)) {
         assert.equal(await page.locator('#receiptSplitPlan').count(), 0);

@@ -672,8 +672,7 @@ function receiptOmittedQuantityDetail(codeLine,unitLine){
 function receiptQuantityScopeMarker(line){
   var s=String(line||"").normalize("NFKC").replace(/^[ \t]+|[ \t]+$/g,"");
   if(!/商品|単品/.test(s)||!/明細ID/i.test(s))return null;
-  // Only horizontal space may split boundary colons/hyphens. Never join rows
-  // or whitespace inside the numeric ID; the whole row must fit this grammar.
+  // The whole scope must fit this grammar; whitespace inside an ID is never erased.
   var plainBefore=s.match(/^((?:商品|単品)|[(\[【][ \t]*(?:商品|単品)[ \t]*[)\]】])[ \t]*(?:[:-][ \t]*)*(明細ID[ \t]*:?[ \t]*0[0-9]{1,5})$/i);
   var plainAfter=s.match(/^(明細ID[ \t]*:?[ \t]*0[0-9]{1,5})[ \t]*(?:[:-][ \t]*)*((?:商品|単品)|[(\[【][ \t]*(?:商品|単品)[ \t]*[)\]】])$/i);
   var before=plainBefore||s.match(/^((?:商品|単品)|[(\[【][ \t]*(?:商品|単品)[ \t]*[)\]】])[ \t]*(.+)$/);
@@ -682,6 +681,13 @@ function receiptQuantityScopeMarker(line){
   if(!receiptDiscountScopeWord(scope)||(!(plainBefore||plainAfter)&&!/^[ \t]*(?:[(\[【][ \t]*)?明細ID[ \t]*:?[ \t]*(?:[(\[【][ \t]*)?0[0-9]{1,5}[ \t]*[)\]】][ \t]*$/i.test(idText)))return null;
   var marker=receiptPrintedMarker(idText);
   return marker&&marker.id&&!marker.before&&!marker.after&&/^0[0-9]{1,5}$/.test(marker.printedValue)?marker:null;
+}
+function receiptWrappedQuantityScopeMarker(first,second){
+  var a=String(first||"").normalize("NFKC"),b=String(second||"").normalize("NFKC");
+  // Both original rows must print continuation punctuation. The complete label
+  // and ID must still fit on one original row; only the delimiter run is joined.
+  if(!/[:-][ \t]*$/.test(a)||!/^[ \t]*[:-]/.test(b))return null;
+  return receiptQuantityScopeMarker(a+" "+b);
 }
 function receiptQuantityEvidenceMatches(target,evidence){
   return !!(evidence&&evidence.code===target.productCode&&evidence.qty===target.qty&&evidence.total===target.total&&evidence.unit===target.unitPrice);
@@ -826,9 +832,13 @@ function receiptRecoverWrappedIds(text,shop){
   var selected=physical.filter(function(p){return physical.filter(function(other){return other.id===p.id}).length===1});
   var scopeMarkers=Object.create(null),fullIdCounts=Object.create(null);
   for(var si=0;si<limit;si++){
-    var scopeMarker=receiptQuantityScopeMarker(lines[si]),fullMarker=scopeMarker||receiptPrintedMarker(lines[si]);
-    if(scopeMarker)scopeMarkers[si]=scopeMarker;
+    var scopeMarker=receiptQuantityScopeMarker(lines[si]),scopeEnd=si;
+    if(!scopeMarker&&si+1<limit){scopeMarker=receiptWrappedQuantityScopeMarker(lines[si],lines[si+1]);if(scopeMarker)scopeEnd=si+1}
+    var fullMarker=scopeMarker||receiptPrintedMarker(lines[si]);
+    if(scopeMarker){scopeMarker.end=scopeEnd;scopeMarkers[si]=scopeMarker}
     if(fullMarker&&fullMarker.id)fullIdCounts[fullMarker.id]=(fullIdCounts[fullMarker.id]||0)+1;
+    // A two-row scope contains one physical full ID, not two occurrences.
+    si=scopeEnd;
   }
   while(selected.length){
     var trial=lines.slice(),omittedDetails=Object.create(null);
@@ -841,7 +851,8 @@ function receiptRecoverWrappedIds(text,shop){
         var scoped=scope&&scope.id===p.id&&scope.printedValue===product.printedValue&&fullIdCounts[p.id]===2;
         // Only this identified scope or one formatting row BETWEEN the fields
         // is allowed. Never skip free text or gaps at either ID boundary.
-        if(second<limit&&(/^[ \t]*$/.test(lines[second].normalize("NFKC"))||scoped))second++;
+        if(scoped)second=scope.end+1;
+        else if(second<limit&&/^[ \t]*$/.test(lines[second].normalize("NFKC")))second++;
         var detail=second<limit&&(receiptOmittedQuantityDetail(lines[p.end+1],lines[second])||receiptOmittedQuantityDetail(lines[second],lines[p.end+1])),at=second+1;
         var following=at<limit?receiptPrintedMarker(lines[at]):null,inline=at<limit?receiptPrintedLineInfo(lines[at]):null;
         var adjacent=p.reference?p.reference.start===at:inline&&inline.id===p.id&&inline.rest&&!receiptDiscountSummaryLine(inline.rest)&&!receiptIsPromotionalCoupon(inline.rest)&&discountAmountFromLine(inline.rest)>0&&following&&following.printedValue===product.printedValue;

@@ -291,7 +291,7 @@ for (const [role, note, order, qty, money, resolved] of [
   ['hyphen', '明細ID000200---単品', 'total-first', 2, 'bare', true],
   ['mixed', '単品:-明細ID000200', 'unit-first', 2, 'yen', true],
   ['fullwidth', '明細ＩＤ０００２００－－（商品）', 'total-first', 1, 'yen', true],
-  ['interrupted', '商品: -明細ID000200', 'unit-first', 2, 'yen', false],
+  ['interrupted', '商品: -明細ID000200', 'unit-first', 2, 'yen', true],
   ['internal', '商品::明細ID000--200', 'total-first', 2, 'yen', false],
   ['digits', '明細ID000200--2単品', 'unit-first', 2, 'yen', false],
   ['condition', '明細ID000200::商品税込', 'total-first', 2, 'bare', false]
@@ -302,9 +302,25 @@ for (const [role, note, order, qty, money, resolved] of [
   mobileCases.push({ width: 412, amount: 1700, adjustment: `repeated-close-${role}${resolved ? '' : '-unknown'}`, lineIds: ['100', '200'], originalIdFold: '00\n0200', originalPriceBlock: block, itemQuantities: [1, qty], expectedUnits: [1000, 1000 / qty],
     body: `${items}\n小計 ${qty + 1}点 ¥1700\n合計 ¥1700\n楽天ペイ ¥1700` });
 }
-for (const { width, amount, body, mixedTax = false, codePrice = false, adjustment, lineIds, originalIdFold, originalPriceBlock, unwrappedId = false, itemQuantity = 1, itemQuantities = [itemQuantity, itemQuantity], expectedUnits, productCodes = ['2200083271771', '2200083271771'], deductions = [100, 200] } of mobileCases) {
+for (const [role, note, order, qty, money, resolved] of [
+  ['colon', '商品: :明細ID000200', 'unit-first', 2, 'yen', true],
+  ['tabs', '明細ID000200-\t-単品', 'total-first', 2, 'bare', true],
+  ['mixed', '単品:\t- :明細ID000200', 'unit-first', 2, 'yen', true],
+  ['fullwidth', '明細ＩＤ０００２００：　－（商品）', 'total-first', 1, 'yen', true],
+  ['newline', '商品:\n:明細ID000200', 'unit-first', 2, 'yen', false],
+  ['internal', '商品: :明細ID000 \t200', 'total-first', 2, 'yen', false],
+  ['vertical', '商品:\v-明細ID000200', 'unit-first', 2, 'yen', false],
+  ['digits', '明細ID000200- 2単品', 'total-first', 2, 'bare', false]
+]) {
+  const ref = (id, value) => `(明細ID ${id}) ${money === 'bare' ? '値引額（円）\n' : '値引\n¥'}${value}`;
+  const pair = [`単価 ¥${1000 / qty}`, '2200083271771 ¥1,000'];if (order === 'total-first') pair.reverse();const block = pair.join('\n' + note + '\n');
+  const items = `テスト"緑茶 (明細ID 00\n0100)\n2200083271771 1 ¥1,000\n${ref('000100', 100)}\nテスト"緑茶 (明細ID 00\n0200)\n${block}\n${ref('000200', 200)}`;
+  mobileCases.push({ width: 412, amount: 1700, adjustment: `spaced-close-${role}${resolved ? '' : '-unknown'}`, lineIds: ['100', '200'], originalIdFold: '00\n0200', originalPriceBlock: block, reviewOnlyFallback: role === 'internal', itemQuantities: [1, qty], expectedUnits: [1000, 1000 / qty],
+    body: `${items}\n小計 ${qty + 1}点 ¥1700\n合計 ¥1700\n楽天ペイ ¥1700` });
+}
+for (const { width, amount, body, mixedTax = false, codePrice = false, adjustment, lineIds, originalIdFold, originalPriceBlock, reviewOnlyFallback = false, unwrappedId = false, itemQuantity = 1, itemQuantities = [itemQuantity, itemQuantity], expectedUnits, productCodes = ['2200083271771', '2200083271771'], deductions = [100, 200] } of mobileCases) {
   const caseName = `${width}${adjustment ? '-' + adjustment : mixedTax ? '-mixed-tax' : codePrice ? '-product-code' : ''}`;
-  const separateCloseId = /^(?:separate|padded|discount|note|bare|split|amount|numeric|collision|identity|zero|witness|boundary|quantity|preceding|gap|scope|identified|unbracketed|joined|punctuation|repeated)-close-/.test(adjustment || '');
+  const separateCloseId = /^(?:separate|padded|discount|note|bare|split|amount|numeric|collision|identity|zero|witness|boundary|quantity|preceding|gap|scope|identified|unbracketed|joined|punctuation|repeated|spaced)-close-/.test(adjustment || '');
   const separateCloseResolved = separateCloseId && !/-(?:ambiguous|unknown)$/.test(adjustment);
   const unresolvedSplitReference = (separateCloseId && !separateCloseResolved) || ['control-tab-reference', 'recovered-id-ambiguous', 'unmarked-id-ambiguous', 'longfold-id-ambiguous'].includes(adjustment);
   test(`mobile Chromium ${caseName}px: image crop, OCR review, apply, data safety`, { timeout: browserTestTimeout }, async () => {
@@ -377,7 +393,11 @@ for (const { width, amount, body, mixedTax = false, codePrice = false, adjustmen
         const rows = await page.locator('#receiptOCRPanel').evaluate(el => JSON.parse(el.dataset.itemRows));
         const ids = lineIds || (adjustment.startsWith('separator') ? ['A-101', 'A_101'] : adjustment.startsWith('alpha-id') ? ['A1O1', 'A101'] : ['101', '102']);
         if (unresolvedSplitReference) {
-          assert.deepEqual(rows, []);
+          if (reviewOnlyFallback) {
+            assert.deepEqual(rows.map(row => [row.name, row.total, row.qty, row.unitPrice, row.productCode]), [['商品名要確認', 1000, 1, 1000, '2200083271771'], ['商品', 200, 1, 0, ''], ['単価', 500, 1, 0, '']]);
+            assert(rows.every(row => row.candidateOnly === true && row.lowConfidence === true && row.autoConfirmed === false && row.nameConfidence === 'low' && !row.receiptLineId));
+            assert.equal(await page.locator('#receiptOCRPanel').getAttribute('data-product-candidate-status'), 'unresolved');
+          } else assert.deepEqual(rows, []);
           assert.deepEqual(await page.locator('#receiptOCRPanel').evaluate(el => JSON.parse(el.dataset.splitRows)), []);
           assert.equal(await page.locator('#receiptOCRPanel').getAttribute('data-product-candidate-auto-confirmed'), '');
           assert.equal(await page.locator('.receipt-line-id').count(), 0);
@@ -460,8 +480,19 @@ for (const { width, amount, body, mixedTax = false, codePrice = false, adjustmen
       assert.equal(await page.evaluate(() => localStorage.getItem('okozukai_v321_mirror')), snapshot.mirror);
       assert.equal(await page.evaluate(async () => JSON.stringify(await idbReadCurrent())), snapshot.indexedDB);
       if (unresolvedSplitReference) {
-        assert.equal(await page.locator('.receipt-product-review-confirm').count(), 0);
-        await page.locator('#receiptItems').fill('テスト緑茶\nテスト緑茶');
+        if (reviewOnlyFallback) {
+          const checks = await page.locator('.receipt-product-review-confirm').all();assert.equal(checks.length, 3);
+          for (const check of checks) assert.equal(await check.isChecked(), false);
+          const dismissed = page.waitForEvent('dialog').then(async dialog => { assert(dialog.message().includes('要確認の商品名'));await dialog.dismiss(); });
+          await page.locator('#receiptApplyBtn').click();await dismissed;
+          assert.equal(await page.locator('#txAmount').inputValue(), '');assert.equal(await page.locator('#receiptSplitPlan').count(), 0);
+          assert.equal(await page.evaluate(() => localStorage.getItem('okozukaiReceiptProductDictionaryV1')), snapshot.dictionary);
+          for (let i = 0; i < checks.length; i++) { await page.locator('.receipt-product-review-name[data-index="' + i + '"]').fill('テスト緑茶' + (i + 1));await checks[i].check(); }
+          assert.equal(await page.locator('#receiptSplitEnabled').count(), 0);
+        } else {
+          assert.equal(await page.locator('.receipt-product-review-confirm').count(), 0);
+          await page.locator('#receiptItems').fill('テスト緑茶\nテスト緑茶');
+        }
       } else {
         assert(await page.locator('.receipt-product-review-confirm').count() > 0);
         const dismissed = page.waitForEvent('dialog').then(dialog => dialog.dismiss());

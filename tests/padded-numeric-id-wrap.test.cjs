@@ -107,7 +107,7 @@ test('two complete references with canonically equal IDs are not one original wi
 test('duplicate folded aliases do not share or sum a guessed reference', () => {
   held(parse(receipt(`${part(ids[0])}\n${part(ids[1])}\n${ref(fold(ids[0]), 100)}\n${ref(fold('100'), 50)}\n${ref(fold(ids[1]), 150)}`)));
 });
-test('a folded product cannot bootstrap a reference whose amount is also split', () => held(parse(receipt(body({ role: 'product', bare: true })))));
+test('a folded product uses the original complete reference ID and local yen label for a split amount', () => assigned(parse(receipt(body({ role: 'product', bare: true })))));
 for (const label of ['値引額(個)', '値引額(%)', '値引額(円/個)', '値引額（円） 対象外', '値引(円)', '数量(円)']) test(`an ambiguous label ${label} does not type a bare numeric collision`, () => held(parse(receipt(body({ bare: true, label })))));
 for (const value of ['00100', '-100', '1O0', '100 注記', '10%']) test(`restoring ID zeros does not repair the amount ${value}`, () => {
   held(parse(receipt(body({ bare: true }).replace('値引額（円）\n100', '値引額（円）\n' + value))));

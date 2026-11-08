@@ -642,6 +642,19 @@ function receiptDiscountContinuation(lines,index,limit,note){
   if(!bare||Number(bare[1])>100000)return null;
   return{text:label+" ¥"+bare[1],end:amountIndex,bareAmount:Number(bare[1]),bareYenUnit:yenUnit};
 }
+function receiptCompleteDiscountContinuation(lines,index,limit){
+  var first=lines[index].normalize("NFKC"),tail=first.match(/^(.*?[)\]】])(.*)$/),base=tail?tail[1]:first;
+  var complete=/[)\]】][ \t]*$/.test(base)?receiptPrintedLineInfo(base):null;
+  var continuation=complete&&complete.id&&!complete.rest?receiptDiscountContinuation(lines,index,limit,tail?tail[2]:""):null;
+  if(!continuation)return null;
+  var marker=receiptPrintedMarker(base);
+  return{id:complete.id,printedValue:marker.printedValue,start:index,end:continuation.end,text:base+" "+continuation.text,bareAmount:continuation.bareAmount||0,bareYenUnit:!!continuation.bareYenUnit};
+}
+function receiptDiscountAmountBoundary(source,rows){
+  var following=String(source.following||"").normalize("NFKC"),nextProduct=receiptPrintedProductInfo(following);
+  var nextReference=/^[ \t]*(?:[(\[【][ \t]*明細ID|明細ID[ \t]*:?[ \t]*[(\[【])/i.test(following);
+  return source.accountingBoundary||nextReference||!!(nextProduct&&nextProduct.id&&rows.some(function(row){return row.receiptLineId===nextProduct.id&&row.name===normalizeProductName(nextProduct.text)&&!row.candidateOnly}));
+}
 function receiptBareDiscountEvidence(target,rows,source,amount){
   var printed=source.purchase.split("\n").map(function(line){return line.trim()}).filter(Boolean);
   var inline=receiptPrintedProductInfo(printed[target.sourceIndex]||"");
@@ -655,9 +668,7 @@ function receiptBareDiscountEvidence(target,rows,source,amount){
   if(!source.bareYenUnit&&(amount===source.count||amount===knownQty||rows.some(function(row){
     return amount===row.qty||amount===row.unitPrice||amount===row.total||Number(row.productCode||0)===amount||(/^[0-9]+$/.test(row.receiptLineId||"")&&Number(row.receiptLineId)===amount);
   })))return false;
-  var following=String(source.following||"").normalize("NFKC"),nextProduct=receiptPrintedProductInfo(following);
-  var nextReference=/^[ \t]*(?:[(\[【][ \t]*明細ID|明細ID[ \t]*:?[ \t]*[(\[【])/i.test(following);
-  if(!source.accountingBoundary&&!nextReference&&!(nextProduct&&nextProduct.id&&rows.some(function(row){return row.receiptLineId===nextProduct.id&&row.name===normalizeProductName(nextProduct.text)&&!row.candidateOnly})))return false;
+  if(!receiptDiscountAmountBoundary(source,rows))return false;
   var fields=/(?:商品コード|JAN(?:コード)?|PLU|品番|数量|個数|点数|単価)[ \t]*[:#]?[ \t]*¥?[ \t]*([0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?![0-9,])/gi,m;
   var text=source.text.normalize("NFKC");
   while((m=fields.exec(text))){if(!source.bareYenUnit&&Number(m[1].replace(/,/g,""))===amount)return false}
@@ -691,13 +702,20 @@ function receiptRecoverWrappedIds(text,shop){
     if(marker&&marker.id)known.push(marker.id);
     if(ref&&ref.id&&ref.rest&&!receiptDiscountSummaryLine(ref.rest)&&!receiptIsPromotionalCoupon(ref.rest)&&discountAmountFromLine(ref.rest)>0)references.push({id:ref.id,printedValue:marker.printedValue});
   });
+  // These IDs are complete in the original source. Their currency evidence
+  // must be independent of any proposed merchandise-ID reconstruction.
+  for(var wi=0;wi<limit;wi++){
+    var witness=receiptCompleteDiscountContinuation(lines,wi,limit);
+    if(!witness)continue;
+    known.push(witness.id);
+    var boundary={following:witness.end+1<limit?lines[witness.end+1]:"",accountingBoundary:witness.end+1===limit&&limit<lines.length};
+    if(/^0[0-9]{1,5}$/.test(witness.printedValue)&&(!witness.bareAmount||witness.bareYenUnit)&&receiptDiscountAmountBoundary(boundary,priced))references.push(witness);
+  }
   var proposals=[];
   for(var i=0;i<limit;i++){
-    var first=lines[i].normalize("NFKC"),joined="",id="",end=-1,bareAmount=0,bareYenUnit=false;
-    var scopeTail=first.match(/^(.*?[)\]】])(.*)$/);
-    var base=scopeTail?scopeTail[1]:first,complete=/[)\]】][ \t]*$/.test(base)?receiptPrintedLineInfo(base):null;
-    var continuation=complete&&complete.id&&!complete.rest?receiptDiscountContinuation(lines,i,limit,scopeTail?scopeTail[2]:""):null;
-    if(continuation){joined=base+" "+continuation.text;id=complete.id;end=continuation.end;bareAmount=continuation.bareAmount||0;bareYenUnit=!!continuation.bareYenUnit}
+    var first=lines[i].normalize("NFKC"),joined="",id="",end=-1,bareAmount=0,bareYenUnit=false,attachedReference=null;
+    var continuation=receiptCompleteDiscountContinuation(lines,i,limit);
+    if(continuation){joined=continuation.text;id=continuation.id;end=continuation.end;bareAmount=continuation.bareAmount;bareYenUnit=continuation.bareYenUnit}
     if(end<0){
       var m=first.match(/^(.*?)([(\[【])\s*明細ID\s*:?\s*([A-Za-z0-9][A-Za-z0-9_-]*)[ ]*$/i);
       if(!m)m=first.match(/^(.*?)明細ID\s*:?\s*([(\[【])\s*([A-Za-z0-9][A-Za-z0-9_-]*)[ ]*$/i);
@@ -770,15 +788,29 @@ function receiptRecoverWrappedIds(text,shop){
     }else{
       var witnesses=references.filter(function(k){return k.id===canonicalId});
       if(witnesses.length!==1||(paddedNumeric&&witnesses[0].printedValue!==id))continue;
+      if(paddedNumeric&&witnesses[0].start!==undefined)attachedReference=witnesses[0];
     }
-    proposals.push({start:i,end:end,text:joined,id:canonicalId});i=end;
+    proposals.push({start:i,end:end,text:joined,id:canonicalId,reference:attachedReference});i=end;
   }
   var selected=proposals.filter(function(p){return proposals.filter(function(other){return other.id===p.id}).length===1});
   while(selected.length){
     var trial=lines.slice();
-    selected.forEach(function(p){trial[p.start]=p.text;for(var k=p.start+1;k<=p.end;k++)trial[k]=null});
+    selected.forEach(function(p){
+      [p,p.reference].filter(Boolean).forEach(function(change){trial[change.start]=change.text;for(var k=change.start+1;k<=change.end;k++)trial[k]=null});
+    });
     var rewritten=trial.filter(function(line){return line!==null}).join("\n"),finalRows=itemRowsFromText(productSourceText(rewritten),1,shop);
-    var valid=selected.filter(function(p){return finalRows.filter(function(row){return row.receiptLineId===p.id&&!row.candidateOnly&&!row.receiptLineIdInvalid}).length===1});
+    var valid=selected.filter(function(p){
+      var targets=finalRows.filter(function(row){return row.receiptLineId===p.id&&!row.candidateOnly&&!row.receiptLineIdInvalid});
+      if(targets.length!==1)return false;
+      var ref=p.reference;
+      if(ref&&ref.bareAmount){
+        // The original full reference attests the ID; check untouched price/quantity
+        // fields and the original amount boundary after applying only these ID folds.
+        var evidence={purchase:productSourceText(rewritten),text:lines.slice(0,limit).join("\n"),count:receiptItemCountFromText(original),following:ref.end+1<limit?lines[ref.end+1]:"",accountingBoundary:ref.end+1===limit&&limit<lines.length,bareYenUnit:ref.bareYenUnit};
+        if(!receiptBareDiscountEvidence(targets[0],finalRows,evidence,ref.bareAmount))return false;
+      }
+      return true;
+    });
     if(valid.length===selected.length)return{text:rewritten,ids:selected.map(function(p){return p.id})};
     selected=valid;
   }

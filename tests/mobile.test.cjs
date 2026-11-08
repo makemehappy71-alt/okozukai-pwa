@@ -143,9 +143,25 @@ for (const [role, money, ownLabel, referenceIds, values, resolved] of [
   mobileCases.push({ width: 412, amount: net, adjustment: `witness-close-${role}${resolved ? '' : '-unknown'}`, lineIds: ['100', '200'], originalIdFold: '00\n0100', deductions: values,
     body: `${products}\n${refs.join('\n')}\n小計 2点 ¥${net}\n合計 ¥${net}\n楽天ペイ ¥${net}` });
 }
+for (const [role, money, firstComplete, refs, values, resolved] of [
+  ['currency', 'yen', false, ['000100', '000200'], [100, 200], true],
+  ['bare-complete', 'bare', true, ['000100', '000200'], [100, 200], true],
+  ['crossed', 'bare', false, ['000100', '000200'], [200, 100], true],
+  ['missing-detail', 'yen', false, ['000100', '000200'], [100, 200], false],
+  ['different-zeros', 'yen', false, ['000100', '200'], [100, 200], false],
+  ['cycle', 'yen', false, ['000100', '000200'], [100, 200], false],
+  ['withdrawn-anchor', 'bare', false, ['000100', '000200'], [100, 1000], false]
+]) {
+  const products = ['000100', '000200'].map((id, i) => `テスト"緑茶 (明細ID ${firstComplete && i === 0 ? id : id.slice(0, 2) + '\n' + id.slice(2)})\n2200083271771${role === 'missing-detail' && i === 1 ? '' : ' 1'} ¥1,000`);
+  const references = refs.map((id, i) => `(明細ID ${id}) ${money === 'bare' ? '値引額（円）\n' : '値引\n¥'}${values[i]}`);
+  const items = role === 'cycle' ? [references[0], products[1], references[1], products[0]] : [products[0], references[0], products[1], references[1]];
+  const net = 2000 - values[0] - values[1];
+  mobileCases.push({ width: 412, amount: net, adjustment: `boundary-close-${role}${resolved ? '' : '-unknown'}`, lineIds: ['100', '200'], originalIdFold: '00\n0200', deductions: values,
+    body: `${items.join('\n')}\n小計 2点 ¥${net}\n合計 ¥${net}\n楽天ペイ ¥${net}` });
+}
 for (const { width, amount, body, mixedTax = false, codePrice = false, adjustment, lineIds, originalIdFold, unwrappedId = false, itemQuantity = 1, productCodes = ['2200083271771', '2200083271771'], deductions = [100, 200] } of mobileCases) {
   const caseName = `${width}${adjustment ? '-' + adjustment : mixedTax ? '-mixed-tax' : codePrice ? '-product-code' : ''}`;
-  const separateCloseId = /^(?:separate|padded|discount|note|bare|split|amount|numeric|collision|identity|zero|witness)-close-/.test(adjustment || '');
+  const separateCloseId = /^(?:separate|padded|discount|note|bare|split|amount|numeric|collision|identity|zero|witness|boundary)-close-/.test(adjustment || '');
   const separateCloseResolved = separateCloseId && !/-(?:ambiguous|unknown)$/.test(adjustment);
   const unresolvedSplitReference = (separateCloseId && !separateCloseResolved) || ['control-tab-reference', 'recovered-id-ambiguous', 'unmarked-id-ambiguous', 'longfold-id-ambiguous'].includes(adjustment);
   test(`mobile Chromium ${caseName}px: image crop, OCR review, apply, data safety`, { timeout: 60000 }, async () => {
@@ -341,6 +357,7 @@ for (const { width, amount, body, mixedTax = false, codePrice = false, adjustmen
         assert.equal(plan.rows.some(row => row.receiptLineId), false);
         assert.equal(JSON.stringify(plan).includes('printedValue'), false);
         assert.equal(plan.rows.some(row => Object.hasOwn(row, 'reference')), false);
+        assert.equal(plan.rows.some(row => Object.hasOwn(row, 'bareReference') || Object.hasOwn(row, 'foldedProduct')), false);
       } else if (unresolvedSplitReference || ['multi-unassigned', 'repeat-unassigned', 'printed-id-unknown', 'post-id-unknown', 'alpha-id-unknown', 'separator-id-unknown', 'bounded-space-unknown', 'control-tab-reference', 'recovered-id-ambiguous', 'unmarked-id-ambiguous', 'longfold-id-ambiguous'].includes(adjustment)) {
         assert.equal(await page.locator('#receiptSplitPlan').count(), 0);
       }

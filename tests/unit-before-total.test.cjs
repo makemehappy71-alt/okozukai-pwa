@@ -49,7 +49,10 @@ for (const money of ['yen', 'bare']) {
   test(`${money} another physical reference is not the same occurrence`, () => {
     held(parse(receipt(body({ money, values: [100, 150] }) + '\n' + ref('200', 50, { money }))));
   });
-  for (const barrier of ['', '\t', '注記', '対象外', '数量 2', '単価 ¥1000', '@1000', '(明細ID 000300)']) test(`${money} ${JSON.stringify(barrier)} between unit and total is not skipped`, () => {
+  for (const gap of ['', '\t']) test(`${money} ${JSON.stringify(gap)} between unit and total is formatting only within the bounded pair`, () => {
+    assigned(parse(receipt(body({ money }).replace('単価 ¥500\n', '単価 ¥500\n' + gap + '\n'))));
+  });
+  for (const barrier of ['注記', '対象外', '数量 2', '単価 ¥1000', '@1000', '(明細ID 000300)']) test(`${money} ${JSON.stringify(barrier)} between unit and total is not skipped`, () => {
     held(parse(receipt(body({ money }).replace('単価 ¥500\n', '単価 ¥500\n' + barrier + '\n'))));
   });
   for (const barrier of ['', '\t', '注記', '数量 3', '@1000', '(明細ID 000300)']) test(`${money} ${JSON.stringify(barrier)} after total does not preserve reference adjacency`, () => {

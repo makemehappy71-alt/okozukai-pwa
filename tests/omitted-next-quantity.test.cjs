@@ -51,7 +51,10 @@ for (const money of ['yen', 'bare']) {
   for (const barrier of ['', '\t', '注記', '対象外', '数量 3', '@1000', '単価 ¥1000', '(明細ID 000300)']) test(`${money} ${JSON.stringify(barrier)} between unit and full reference is not skipped`, () => {
     held(parse(receipt(body({ money }).replace('単価 ¥500\n', '単価 ¥500\n' + barrier + '\n'))));
   });
-  for (const barrier of ['', '\t', '注記', '数量 2']) test(`${money} ${JSON.stringify(barrier)} between total and unit is not skipped`, () => {
+  for (const gap of ['', '\t']) test(`${money} ${JSON.stringify(gap)} between total and unit is formatting only within the bounded pair`, () => {
+    assigned(parse(receipt(body({ money }).replace('単価 ¥500', gap + '\n単価 ¥500'))));
+  });
+  for (const barrier of ['注記', '数量 2']) test(`${money} ${JSON.stringify(barrier)} between total and unit is not skipped`, () => {
     held(parse(receipt(body({ money }).replace('単価 ¥500', barrier + '\n単価 ¥500'))));
   });
   for (const suffix of ['個', '%', '対象外', '200']) test(`${money} ${suffix} between discount and next product is not skipped`, () => {

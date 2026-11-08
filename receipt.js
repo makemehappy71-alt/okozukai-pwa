@@ -815,13 +815,17 @@ function receiptRecoverWrappedIds(text,shop){
     selected.forEach(function(p){
       [p,p.reference].filter(Boolean).forEach(function(change){trial[change.start]=change.text;for(var k=change.start+1;k<=change.end;k++)trial[k]=null});
       if(p.foldedProduct){
-        var detail=receiptOmittedQuantityDetail(lines[p.end+1],lines[p.end+2])||receiptOmittedQuantityDetail(lines[p.end+2],lines[p.end+1]),at=p.end+3;
+        var second=p.end+2;
+        // Only a single formatting-only row BETWEEN the two literal fields is
+        // allowed. Never skip annotations or gaps at either ID boundary.
+        if(second<limit&&/^[ \t]*$/.test(lines[second].normalize("NFKC")))second++;
+        var detail=second<limit&&(receiptOmittedQuantityDetail(lines[p.end+1],lines[second])||receiptOmittedQuantityDetail(lines[second],lines[p.end+1])),at=second+1;
         var following=at<limit?receiptPrintedMarker(lines[at]):null,inline=at<limit?receiptPrintedLineInfo(lines[at]):null,product=receiptPrintedMarker(p.text);
         var adjacent=p.reference?p.reference.start===at:inline&&inline.id===p.id&&inline.rest&&!receiptDiscountSummaryLine(inline.rest)&&!receiptIsPromotionalCoupon(inline.rest)&&discountAmountFromLine(inline.rest)>0&&following&&following.printedValue===product.printedValue;
         // A literal unit field belongs to this folded ID only when its original
-        // complete individual reference immediately follows the adjacent pair.
+        // complete individual reference immediately follows this bounded pair.
         // The pair may print unit before total; only the analysis copy is reordered.
-        if(detail&&adjacent){trial[p.end+1]=detail.text;trial[p.end+2]=null;omittedDetails[p.start]=detail}
+        if(detail&&adjacent){trial[p.end+1]=detail.text;for(var dk=p.end+2;dk<=second;dk++)trial[dk]=null;omittedDetails[p.start]=detail}
       }
     });
     var rewritten=trial.filter(function(line){return line!==null}).join("\n"),finalRows=itemRowsFromText(productSourceText(rewritten),1,shop);

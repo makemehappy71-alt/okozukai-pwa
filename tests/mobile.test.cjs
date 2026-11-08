@@ -189,9 +189,25 @@ for (const [role, unitLine, qty, money, referenceId, count, resolved] of [
   mobileCases.push({ width: 412, amount: 1700, adjustment: `preceding-close-${role}${resolved ? '' : '-unknown'}`, lineIds: ['100', '200'], originalIdFold: '00\n0200', itemQuantities: [1, qty], expectedUnits: [1000, 1000 / qty],
     body: `${items}\n小計 ${count}点 ¥1700\n合計 ¥1700\n楽天ペイ ¥1700` });
 }
-for (const { width, amount, body, mixedTax = false, codePrice = false, adjustment, lineIds, originalIdFold, unwrappedId = false, itemQuantity = 1, itemQuantities = [itemQuantity, itemQuantity], expectedUnits, productCodes = ['2200083271771', '2200083271771'], deductions = [100, 200] } of mobileCases) {
+for (const [role, order, gap, qty, money, referenceId, resolved] of [
+  ['unit-first', 'unit-first', '', 2, 'yen', '000200', true],
+  ['total-first', 'total-first', '\t', 2, 'yen', '000200', true],
+  ['one', 'unit-first', ' ', 1, 'yen', '000200', true],
+  ['bare', 'unit-first', '', 2, 'bare', '000200', true],
+  ['note', 'unit-first', '注記', 2, 'yen', '000200', false],
+  ['scope', 'total-first', '(単品)', 2, 'yen', '000200', false],
+  ['price', 'unit-first', '@1000', 2, 'yen', '000200', false],
+  ['zeros', 'unit-first', '', 2, 'yen', '200', false]
+]) {
+  const ref = (id, value) => `(明細ID ${id}) ${money === 'bare' ? '値引額（円）\n' : '値引\n¥'}${value}`;
+  const pair = [`単価 ¥${1000 / qty}`, '2200083271771 ¥1,000'];if (order === 'total-first') pair.reverse();
+  const items = `テスト"緑茶 (明細ID 00\n0100)\n2200083271771 1 ¥1,000\n${ref('000100', 100)}\nテスト"緑茶 (明細ID 00\n0200)\n${pair.join('\n' + gap + '\n')}\n${ref(referenceId, 200)}`;
+  mobileCases.push({ width: 412, amount: 1700, adjustment: `gap-close-${role}${resolved ? '' : '-unknown'}`, lineIds: ['100', '200'], originalIdFold: '00\n0200', originalPriceBlock: pair.join('\n' + gap + '\n'), itemQuantities: [1, qty], expectedUnits: [1000, 1000 / qty],
+    body: `${items}\n小計 ${qty + 1}点 ¥1700\n合計 ¥1700\n楽天ペイ ¥1700` });
+}
+for (const { width, amount, body, mixedTax = false, codePrice = false, adjustment, lineIds, originalIdFold, originalPriceBlock, unwrappedId = false, itemQuantity = 1, itemQuantities = [itemQuantity, itemQuantity], expectedUnits, productCodes = ['2200083271771', '2200083271771'], deductions = [100, 200] } of mobileCases) {
   const caseName = `${width}${adjustment ? '-' + adjustment : mixedTax ? '-mixed-tax' : codePrice ? '-product-code' : ''}`;
-  const separateCloseId = /^(?:separate|padded|discount|note|bare|split|amount|numeric|collision|identity|zero|witness|boundary|quantity|preceding)-close-/.test(adjustment || '');
+  const separateCloseId = /^(?:separate|padded|discount|note|bare|split|amount|numeric|collision|identity|zero|witness|boundary|quantity|preceding|gap)-close-/.test(adjustment || '');
   const separateCloseResolved = separateCloseId && !/-(?:ambiguous|unknown)$/.test(adjustment);
   const unresolvedSplitReference = (separateCloseId && !separateCloseResolved) || ['control-tab-reference', 'recovered-id-ambiguous', 'unmarked-id-ambiguous', 'longfold-id-ambiguous'].includes(adjustment);
   test(`mobile Chromium ${caseName}px: image crop, OCR review, apply, data safety`, { timeout: browserTestTimeout }, async () => {
@@ -337,6 +353,9 @@ for (const { width, amount, body, mixedTax = false, codePrice = false, adjustmen
         assert.equal(rows[0].unitPrice, codePrice ? 49 : 0);
         if (codePrice) assert.equal(rows[0].productCode, '2200083271771');
       }
+      // The UI shows the masked diagnostic text; preserve the full price block
+      // including its whitespace and notes while expecting the existing code mask.
+      if (originalPriceBlock) assert((await page.locator('#receiptRawText').inputValue()).includes(originalPriceBlock.replace('2200083271771', '[番号マスク]')));
       assert.equal(await page.locator('#receiptCameraBtn').isEnabled(), true);
       assert.equal(await page.evaluate(() => window.testOCRTerminated), 1);
       assert.equal(await page.evaluate(() => JSON.stringify(state.transactions)), snapshot.transactions);

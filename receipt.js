@@ -682,12 +682,23 @@ function receiptQuantityScopeMarker(line){
   var marker=receiptPrintedMarker(idText);
   return marker&&marker.id&&!marker.before&&!marker.after&&/^0[0-9]{1,5}$/.test(marker.printedValue)?marker:null;
 }
-function receiptWrappedQuantityScopeMarker(first,second){
-  var a=String(first||"").normalize("NFKC"),b=String(second||"").normalize("NFKC");
-  // Both original rows must print continuation punctuation. The complete label
-  // and ID must still fit on one original row; only the delimiter run is joined.
-  if(!/[:-][ \t]*$/.test(a)||!/^[ \t]*[:-]/.test(b))return null;
-  return receiptQuantityScopeMarker(a+" "+b);
+function receiptWrappedQuantityScopeMarker(lines,start,limit){
+  var first=String(lines[start]||"").normalize("NFKC");
+  if(!/商品|単品|明細ID/i.test(first)||!/[:-][ \t]*$/.test(first))return null;
+  var parts=[first];
+  // Each original seam prints punctuation on both sides. Only punctuation-only
+  // intermediate rows may continue; stop at the first other row or purchase end.
+  for(var at=start+1;at<limit;at++){
+    var next=String(lines[at]||"").normalize("NFKC");
+    if(!/^[ \t]*[:-]/.test(next))return null;
+    parts.push(next);
+    if(/^[ \t]*(?:[:-][ \t]*)+$/.test(next))continue;
+    // Join once, at the endpoint. The complete label and ID remain on one row.
+    var marker=receiptQuantityScopeMarker(parts.join(" "));
+    if(marker)marker.end=at;
+    return marker;
+  }
+  return null;
 }
 function receiptQuantityEvidenceMatches(target,evidence){
   return !!(evidence&&evidence.code===target.productCode&&evidence.qty===target.qty&&evidence.total===target.total&&evidence.unit===target.unitPrice);
@@ -833,11 +844,11 @@ function receiptRecoverWrappedIds(text,shop){
   var scopeMarkers=Object.create(null),fullIdCounts=Object.create(null);
   for(var si=0;si<limit;si++){
     var scopeMarker=receiptQuantityScopeMarker(lines[si]),scopeEnd=si;
-    if(!scopeMarker&&si+1<limit){scopeMarker=receiptWrappedQuantityScopeMarker(lines[si],lines[si+1]);if(scopeMarker)scopeEnd=si+1}
+    if(!scopeMarker&&si+1<limit){scopeMarker=receiptWrappedQuantityScopeMarker(lines,si,limit);if(scopeMarker)scopeEnd=scopeMarker.end}
     var fullMarker=scopeMarker||receiptPrintedMarker(lines[si]);
     if(scopeMarker){scopeMarker.end=scopeEnd;scopeMarkers[si]=scopeMarker}
     if(fullMarker&&fullMarker.id)fullIdCounts[fullMarker.id]=(fullIdCounts[fullMarker.id]||0)+1;
-    // A two-row scope contains one physical full ID, not two occurrences.
+    // A wrapped scope contains one physical full ID, regardless of its row count.
     si=scopeEnd;
   }
   while(selected.length){

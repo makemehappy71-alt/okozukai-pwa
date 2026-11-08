@@ -21,6 +21,7 @@ function assigned(p, qty = 2, gross = [900, 800]) {
   assert(p.itemRows.every(r => !Object.hasOwn(r, 'scopeMarker') && !Object.hasOwn(r, 'quantityEvidence')));
 }
 for (const order of ['unit-first', 'total-first']) for (const money of ['yen', 'bare']) {
+  for (const note of [forms[0] + '\n', '\n' + forms[0]]) test(`${order}/${money} formatting rows surround one uniquely identified scope ${JSON.stringify(note)}`, () => assigned(parse(fixture({ order, money, note }).text)));
   for (const note of forms) for (const qty of [1, 2]) test(`${order}/${money} bounded by whitespace and line: ${note}, quantity ${qty}`, () => assigned(parse(fixture({ note, order, money, qty }).text), qty));
   for (const note of ['商品明細ID000200', '明細ID000200商品']) test(`${order}/${money} fixed labels delimit the joined scope ${note}`, () => assigned(parse(fixture({ note, order, money }).text)));
   for (const note of ['商品', '単品', '商品 明細ID 000200 2', '商品 明細ID 000200 500円', '明細ID 000200 商品 税込', '単品 税抜 明細ID 000200', '商品 明細ID 0002000', '商品 明細ID 0002000000000', '商品 明細ID 200', '商品 明細ID 00200', '商品 明細ID 000201', '商品 明細ID 00 0200', '商品 明細ID 00\n0200', '商品 明細ID 0002O0', '商品 明細ID 000000', '商品 明細番号 000200', '商品 ID 000200', '(商品] 明細ID 000200', '商品 (明細ID 000200', '商品 明細ID 000200)', '商品 明細ID 000200 明細ID 000200', '商品 \f明細ID 000200', '明細ID 000200 商品\f', '商品 \uFEFF明細ID 000200']) test(`${order}/${money} ambiguous token boundary is not repaired ${JSON.stringify(note)}`, () => held(parse(fixture({ note, order, money }).text)));
@@ -30,7 +31,7 @@ for (const order of ['unit-first', 'total-first']) for (const money of ['yen', '
   test(`${order}/${money} a complete first product remains independently identified`, () => assigned(parse(fixture({ order, money, firstComplete: true }).text)));
   test(`${order}/${money} an inline original discount reference remains usable`, () => assigned(parse(fixture({ order, money, inline: true }).text)));
   test(`${order}/${money} light-tax marker and external tax are retained`, () => assigned(parse(fixture({ order, money, tax: 136 }).text.replace(code + ' ¥1,000', code + ' ¥1,000 軽')), 2, [972, 864]));
-  for (const note of [forms[0] + '\n', '\n' + forms[0], forms[0] + '\n' + forms[0]]) test(`${order}/${money} multiple intervening rows are not collapsed ${JSON.stringify(note)}`, () => held(parse(fixture({ order, money, note }).text)));
+  for (const note of [forms[0] + '\n' + forms[0]]) test(`${order}/${money} multiple intervening rows are not collapsed ${JSON.stringify(note)}`, () => held(parse(fixture({ order, money, note }).text)));
   test(`${order}/${money} another scope occurrence is not extra corroboration`, () => held(parse(fixture({ order, money }).text.replace('小計', '明細ID 000200 単品\n小計'))));
   test(`${order}/${money} another complete product with the same ID remains ambiguous`, () => held(parse(fixture({ order, money }).text.replace('小計', '別商品 (明細ID 000200)\n¥100\n小計'))));
   test(`${order}/${money} duplicate discount references remain ambiguous`, () => held(parse(fixture({ order, money }).text.replace('小計', '(明細ID 000200) 値引 ¥50\n小計'))));

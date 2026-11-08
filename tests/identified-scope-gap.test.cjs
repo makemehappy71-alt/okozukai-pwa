@@ -21,6 +21,7 @@ function assigned(p, qty = 2, gross = [900, 800]) {
   assert(p.itemRows.every(r => !Object.hasOwn(r, 'scopeMarker') && !Object.hasOwn(r, 'quantityEvidence')));
 }
 for (const order of ['unit-first', 'total-first']) for (const money of ['yen', 'bare']) {
+  test(`${order}/${money} a formatting row before the unique identified scope`, () => assigned(parse(fixture({ order, money, note: '\n' + forms[0] }).text)));
   for (const note of forms) for (const qty of [1, 2]) test(`${order}/${money} exact local ${note} identifies the pair, quantity ${qty}`, () => assigned(parse(fixture({ note, order, money, qty }).text), qty));
   test(`${order}/${money} whitespace-delimited unbracketed scope ID is independently verified`, () => assigned(parse(fixture({ note: '商品 明細ID 000200', order, money }).text)));
   for (const note of ['商品', '単品', '(単品)', '商品 (明細ID 200)', '商品 (明細ID 00200)', '商品 (明細ID 000201)', '商品 (明細ID 00\n0200)', '商品 (明細ID 00 0200)', '商品 (明細ID 000200) 税込', '単品 税抜 (明細ID 000200)', '商品 単品 (明細ID 000200)', '(単品] (明細ID 000200)', '商品 (明細ID 000200]', '商品 (明細番号 000200)', '商品 (明細ID 000200) (明細ID 000200)', '(商品 明細ID 000200)', '(明細ID 000200) 商品 500円']) test(`${order}/${money} an uncertain note remains manual: ${JSON.stringify(note)}`, () => held(parse(fixture({ note, order, money }).text)));
@@ -31,7 +32,7 @@ for (const order of ['unit-first', 'total-first']) for (const money of ['yen', '
   test(`${order}/${money} a complete first product keeps its original evidence`, () => assigned(parse(fixture({ order, money, firstComplete: true }).text)));
   test(`${order}/${money} an original inline discount reference can bound the pair`, () => assigned(parse(fixture({ order, money, inline: true }).text)));
   test(`${order}/${money} literal tax marker and external tax survive`, () => assigned(parse(fixture({ order, money, tax: 136 }).text.replace(code + ' ¥1,000', code + ' ¥1,000 軽')), 2, [972, 864]));
-  for (const gap of ['\n', '\n注記\n', '\n単品\n']) test(`${order}/${money} surrounding rows are not scanned past ${JSON.stringify(gap)}`, () => held(parse(fixture({ order, money, note: gap + forms[0] }).text)));
+  for (const gap of ['\n注記\n', '\n単品\n']) test(`${order}/${money} surrounding rows are not scanned past ${JSON.stringify(gap)}`, () => held(parse(fixture({ order, money, note: gap + forms[0] }).text)));
   test(`${order}/${money} a duplicate scope note is not independent evidence`, () => held(parse(fixture({ order, money }).text.replace('小計', forms[0] + '\n小計'))));
   test(`${order}/${money} another complete merchandise ID with the same value remains ambiguous`, () => held(parse(fixture({ order, money }).text.replace('小計', '別商品 (明細ID 000200)\n¥100\n小計'))));
   test(`${order}/${money} an extra discount reference remains ambiguous`, () => held(parse(fixture({ order, money }).text.replace('小計', '(明細ID 000200) 値引 ¥50\n小計'))));

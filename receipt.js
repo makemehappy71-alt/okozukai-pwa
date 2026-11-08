@@ -642,13 +642,23 @@ function receiptDiscountContinuation(lines,index,limit,note){
   if(!bare||Number(bare[1])>100000)return null;
   return{text:label+" ¥"+bare[1],end:amountIndex,bareAmount:Number(bare[1]),bareYenUnit:yenUnit};
 }
-function receiptCompleteDiscountContinuation(lines,index,limit){
+function receiptCompleteDiscountContinuation(lines,index,limit,allowLabelGap){
   var first=lines[index].normalize("NFKC"),tail=first.match(/^(.*?[)\]】])(.*)$/),base=tail?tail[1]:first;
   var complete=/[)\]】][ \t]*$/.test(base)?receiptPrintedLineInfo(base):null;
-  var continuation=complete&&complete.id&&!complete.rest?receiptDiscountContinuation(lines,index,limit,tail?tail[2]:""):null;
+  var marker=complete&&complete.id&&!complete.rest?receiptPrintedMarker(base):null,labelIndex=index;
+  // Only original padded complete IDs may attest merchandise folds across layout
+  // rows. General reference normalization and scope/amount rows stay strict.
+  if(allowLabelGap&&marker&&/^0[0-9]{1,5}$/.test(marker.printedValue)&&/^[ \t]*$/.test(tail?tail[2]:"")){
+    var labelAt=index+1;
+    while(labelAt<limit&&/^[ \t]*$/.test(lines[labelAt].normalize("NFKC")))labelAt++;
+    if(labelAt>index+1){
+      if(labelAt>=limit||!receiptDiscountLabelOnly(lines[labelAt].normalize("NFKC")))return null;
+      labelIndex=labelAt-1;
+    }
+  }
+  var continuation=marker?receiptDiscountContinuation(lines,labelIndex,limit,tail?tail[2]:""):null;
   if(!continuation)return null;
-  var marker=receiptPrintedMarker(base);
-  return{id:complete.id,printedValue:marker.printedValue,start:index,end:continuation.end,text:base+" "+continuation.text,bareAmount:continuation.bareAmount||0,bareYenUnit:!!continuation.bareYenUnit};
+  return{id:complete.id,printedValue:marker.printedValue,start:index,end:continuation.end,text:base+" "+continuation.text,bareAmount:continuation.bareAmount||0,bareYenUnit:!!continuation.bareYenUnit,labelGap:labelIndex!==index};
 }
 function receiptDiscountAmountBoundary(source,rows){
   var following=String(source.following||"").normalize("NFKC"),nextProduct=receiptPrintedProductInfo(following);
@@ -751,7 +761,7 @@ function receiptRecoverWrappedIds(text,shop){
   // These IDs are complete in the original source. Their currency evidence
   // must be independent of any proposed merchandise-ID reconstruction.
   for(var wi=0;wi<limit;wi++){
-    var witness=receiptCompleteDiscountContinuation(lines,wi,limit);
+    var witness=receiptCompleteDiscountContinuation(lines,wi,limit,true);
     if(!witness)continue;
     known.push(witness.id);
     // End boundaries are certified below; a complete ID alone never certifies one.
@@ -912,6 +922,7 @@ function receiptRecoverWrappedIds(text,shop){
     }
     var valid=selected.filter(function(p){
       var target=targetFor(p);if(!target||grounded.indexOf(p)<0)return false;
+      if(p.reference&&p.reference.labelGap&&!receiptQuantityEvidenceMatches(target,omittedDetails[p.start]))return false;
       var ref=p.reference||p.bareReference;
       if(ref&&ref.bareAmount){
         // The original full reference attests the ID. Check literal merchandise

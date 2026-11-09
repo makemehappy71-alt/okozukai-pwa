@@ -1,10 +1,10 @@
-const CACHE = "okozukai-v3.71.19-prod-1";
+const CACHE = "okozukai-v3.71.20-prod-1";
 const ASSETS = [
   "./",
   "./index.html",
-  "./styles.css?v=3287119",
-  "./app.js?v=3287119",
-  "./receipt.js?v=3287119",
+  "./styles.css?v=3287120",
+  "./app.js?v=3287120",
+  "./receipt.js?v=3287120",
   "./manifest.webmanifest",
   "./icon.svg",
   "./icon-192.png",
@@ -26,7 +26,7 @@ self.addEventListener("message", event => {
 self.addEventListener("activate", event => {
   event.waitUntil(
     caches.keys()
-      .then(keys => Promise.all(keys.filter(key => key !== CACHE).map(key => caches.delete(key))))
+      .then(keys => Promise.all(keys.filter(key => key.startsWith("okozukai-") && key !== CACHE).map(key => caches.delete(key))))
       .then(() => self.clients.claim())
   );
 });

@@ -3559,7 +3559,7 @@ function receiptDiagnosticSummary(p){
   var rows=Array.isArray(p.itemRows)?p.itemRows:[],cat=p.categoryCandidate||{},meta=p.ocrMeta||{};
   var balance=receiptBalanceComparison(p);
   var lines=[
-    "お小遣い家計簿 "+(typeof VERSION==="string"?VERSION:"v3.71.19")+" レシート診断（OCR r3.71.19）",
+    "お小遣い家計簿 "+(typeof VERSION==="string"?VERSION:"v3.71.20")+" レシート診断（OCR r3.71.20）",
     "日付: "+String(p.date||"未判定（手動確認）")+" / 根拠: "+String(p.dateSource||"missing"),
     "店名: "+String(p.shop||"未判定"),
     "合計: "+String(Number(p.amount||0))+"円",
@@ -5543,7 +5543,7 @@ function receiptTests(){
     ["receipt v3.71.8 misprinted date from product OCR",fkActualNoSubtotal.date==="2026-10-10"&&fkActualNoSubtotal.dateSource==="product_pass"],
     ["receipt v3.71.8 missing date never defaults today",fkDateMissing.date===""&&fkDateMissing.dateSource==="missing"],
     ["receipt v3.71.8 different product never guessed as potato",!fkWrongProduct.items.some(function(x){return /フレーバーポテト/.test(x)})],
-    ["receipt v3.71.8 diagnostic includes build and safe stage hints",/v3.71.19 レシート診断/.test(receiptDiagnosticSummary(fkActualNoSubtotal))&&/抽出経路/.test(receiptDiagnosticSummary(fkActualNoSubtotal))&&!/(?:カード番号|取引ID|会員ID)\s*[:：]/.test(receiptDiagnosticSummary(fkActualNoSubtotal))],
+    ["receipt v3.71.8 diagnostic includes build and safe stage hints",receiptDiagnosticSummary(fkActualNoSubtotal).includes((typeof VERSION==="string"?VERSION:"v3.71.20")+" レシート診断")&&/抽出経路/.test(receiptDiagnosticSummary(fkActualNoSubtotal))&&!/(?:カード番号|取引ID|会員ID)\s*[:：]/.test(receiptDiagnosticSummary(fkActualNoSubtotal))],
     ["receipt malformed subtotal glyphs excluded from product text v3.71.3",receiptBrokenTotalLabel("計 て ¥290")&&receiptBrokenTotalLabel("計 て")&&isGarbageProductName("計 て")&&!itemRowsFromText("計 て ¥290",1).length],
     ["receipt First Kitchen corrupted total stays review only v3.71.3",pFkAccountingNoise.amount===290&&pFkAccountingNoise.itemRows.length===1&&/フレーバーポテトL/.test(pFkAccountingNoise.itemRows[0].name)&&pFkAccountingNoise.itemRows[0].lowConfidence===true&&!pFkAccountingNoise.itemRows[0].autoConfirmed&&!pFkAccountingNoise.itemSetComplete],
     ["receipt First Kitchen different 290yen product not guessed v3.71.3",!fkOtherProduct.items.some(function(x){return /フレーバーポテト/.test(x)})],

@@ -52,7 +52,10 @@ for (const order of ['unit-first', 'total-first']) for (const money of ['yen', '
   for (const refGap of ['', '\n', ' \n', '\t\n', ' \t\n', '　\n', '\n \t\n\n', '\t\n\n \t\n']) test(`${order}/${money} full original reference after formatting rows ${JSON.stringify(refGap)}`, () => assigned(parse(fixture({ order, money, refGap }).text)));
   for (const size of [1, 2, 8, 32, 128]) test(`${order}/${money} ${size} formatting rows preserve a single original reference`, () => assigned(parse(fixture({ order, money, refGap: Array.from({length:size}, (_, i) => i % 2 ? ' \t' : '').join('\n') + '\n' }).text)));
   for (const row of ['商品', '単品', '注記', '数量 2', code, '200', '¥200', '単価 ¥500', '---', ':', '(明細ID 000200)', '商品 明細ID000200', '(明細ID 000201) 値引 ¥30', '別商品 (明細ID 000300)', '\v', '\f', '\u200b', '\uFEFF']) test(`${order}/${money} first non-formatting row before the reference is not skipped ${JSON.stringify(row)}`, () => held(parse(fixture({ order, money, refGap: '\n' + row + '\n' }).text)));
-  for (const broken of ['(明細ID 000\n\n200)', '(明細ID 000200)\n\n値引', '(明細ID 000200) 値引\n\n¥200']) test(`${order}/${money} the reference block itself cannot be completed with formatting gaps ${JSON.stringify(broken)}`, () => {
+  test(`${order}/${money} original same-row ID and label retain an amount after layout`, () => {
+    const {text,referenceText}=fixture({order,money});assigned(parse(text.replace(referenceText,'(明細ID 000200) 値引\n\n¥200')));
+  });
+  for (const broken of ['(明細ID 000\n\n200)', '(明細ID 000200)\n\n値引']) test(`${order}/${money} the reference block itself cannot be completed with formatting gaps ${JSON.stringify(broken)}`, () => {
     const {text,referenceText}=fixture({ order, money });held(parse(text.replace(referenceText, broken)));
   });
   for (const idGap of ['', '\n', ' \n', '\t\n', ' \t\n', '　\n', '\n \t\n\n', '\t\n\n \t\n']) test(`${order}/${money} original complete ID and label separated only by layout ${JSON.stringify(idGap)}`, () => assigned(parse(fixture({ order, money, idGap }).text)));

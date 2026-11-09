@@ -54,6 +54,7 @@ V3.71.19を基準にした調査とローカル改善です。公開版の更新
 - [第47段階：商品ID直後の空行と価格項目の調査と修正](docs/商品ID直後の空行と価格項目の調査と修正.md)
 - [第48段階：価格項目と値引参照の間の空行の調査と修正](docs/価格項目と値引参照の間の空行の調査と修正.md)
 - [第49段階：完全参照IDと値引ラベルの間の空行の調査と修正](docs/完全参照IDと値引ラベルの間の空行の調査と修正.md)
+- [第50段階：値引ラベルと金額の間の空行の調査と修正](docs/値引ラベルと金額の間の空行の調査と修正.md)
 - 既存テスト: `node tests/run.cjs`
 - 追加回帰: `node --test tests/regression.test.cjs`
 - 改善前後の比較: `node tests/compare.cjs`
@@ -106,6 +107,7 @@ V3.71.19を基準にした調査とローカル改善です。公開版の更新
 - 折り返し商品ID直後の空行と最初の価格項目の回帰: `node --test tests/product-id-price-gap.test.cjs`
 - 2つ目の価格項目と完全な値引参照の間の空行の回帰: `node --test tests/price-reference-gap.test.cjs`
 - 完全な値引参照IDとラベルの間の空行の回帰: `node --test tests/reference-id-label-gap.test.cjs`
+- 値引ラベルと金額の間の空行の回帰: `node --test tests/discount-label-amount-gap.test.cjs`
 - モバイル表示の操作テスト: `node --test tests/mobile.test.cjs`（Playwright・Chromium系ブラウザが必要）
 
 schemaVersion 12と保存形式を維持しています。Android実機のOCR速度・認識精度測定は次段階です。
